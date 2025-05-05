@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "28969528270",
+    "project_id": "lightnet-d2de9",
+    "storage_bucket": "lightnet-d2de9.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:28969528270:android:9f8aefdf6b3d183e64999f",
+        "android_client_info": {
+          "package_name": "com.tz.lightnet.lightnetwork"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAqLOpWA1l93NmfP9Ra5SbrBfnlgaRXO7o"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
