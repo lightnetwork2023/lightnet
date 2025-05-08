@@ -14,7 +14,7 @@ class _CacheEntry {
 }
 
 class ApiService {
-  static const String baseUrl = 'http://167.179.100.104:5000';
+  static const String baseUrl = 'http://lightnet.lightnetwork.pro:5000';
   
   // Cache storage
   static final Map<String, _CacheEntry> _cache = {};
@@ -142,17 +142,6 @@ class ApiService {
       return vouchers;
     } catch (e) {
       throw Exception('Failed to fetch vouchers: $e');
-    }
-  }
-
-  // Fetch and cache all valid users for all locations
-  static Future<void> fetchAllValidUsers(List<String> locations) async {
-    for (final location in locations) {
-      try {
-        await fetchValidUsers(location); // This will cache the result
-      } catch (e) {
-        // Optionally log or handle error per location
-      }
     }
   }
 }

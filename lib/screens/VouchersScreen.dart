@@ -50,7 +50,7 @@ class _VouchersScreenState extends State<VouchersScreen> {
     }
     try {
       // Try HTTP date format (e.g., Sun, 04 May 2025 16:38:23 GMT)
-      return _httpDateFormat.parse(dateTimeStr, true).toLocal(); // Parse as UTC, convert to local
+      return _httpDateFormat.parse(dateTimeStr, true); // Use as-is, do not convert to local
     } catch (e) {
       debugPrint('Error parsing date "$dateTimeStr" with format E, dd MMM yyyy HH:mm:ss GMT: $e');
       try {

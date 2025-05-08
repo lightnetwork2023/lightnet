@@ -48,7 +48,7 @@ class _VouchersByLocationScreenState extends State<VouchersByLocationScreen> {
       return null;
     }
     try {
-      return _httpDateFormat.parse(dateTimeStr, true).toLocal();
+      return _httpDateFormat.parse(dateTimeStr, true);
     } catch (e) {
       debugPrint('Error parsing date "$dateTimeStr" with format E, dd MMM yyyy HH:mm:ss GMT: $e');
       try {
@@ -127,11 +127,10 @@ class _VouchersByLocationScreenState extends State<VouchersByLocationScreen> {
         final voucherLocation = voucher['location']?.toString() ?? 'Unknown';
         final normalizedVoucherLocation = _normalizeLocationName(voucherLocation);
         
-        // Find the matching location from our locations list
+        // Find the matching location from our locations list using exact match
         final matchedLocation = normalizedToOriginal.entries
             .firstWhere(
-              (entry) => normalizedVoucherLocation.contains(entry.key) || 
-                        entry.key.contains(normalizedVoucherLocation),
+              (entry) => entry.key == normalizedVoucherLocation,
               orElse: () => MapEntry(normalizedVoucherLocation, voucherLocation)
             )
             .value;

@@ -3,7 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:lightnetwork/screens/payments.dart';
 import 'package:lightnetwork/screens/valid_users.dart';
-
+import 'package:get/get.dart';
+import '../controllers/location_controller.dart';
 
 import '../controllers/ApiService.dart';
 import 'GenerateUserScreen.dart';
@@ -23,6 +24,8 @@ class _HomeScreenState extends State<HomeScreen> {
   int activeSessionsCount = 0;
   int recentLoginsCount = 0;
   int recentPaymentsCount = 0;
+  Map<String, int> paymentsByLocation = {};
+  Map<String, int> recentPaymentsByLocation = {};
   final DateFormat _mysqlDateFormat = DateFormat('yyyy-MM-dd HH:mm:ss');
   final DateFormat _httpDateFormat = DateFormat("E, dd MMM yyyy HH:mm:ss 'GMT'");
 
@@ -32,6 +35,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _loadActiveSessions();
     _loadRecentLogins();
     _loadRecentPayments();
+    _cacheAllValidUsers();
   }
 
   DateTime? _parseDateTime(String? dateTimeStr) {
@@ -41,7 +45,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     try {
       // Try HTTP date format (e.g., Sun, 04 May 2025 16:38:23 GMT)
-      return _httpDateFormat.parse(dateTimeStr, true).toLocal(); // Parse as UTC, convert to local
+      return _httpDateFormat.parse(dateTimeStr, true); // Use as-is, do not convert to local
     } catch (e) {
       debugPrint('Error parsing date "$dateTimeStr" with format E, dd MMM yyyy HH:mm:ss GMT: $e');
       try {
@@ -82,6 +86,7 @@ class _HomeScreenState extends State<HomeScreen> {
       setState(() => recentLoginsCount = recentCount);
     } catch (e) {
       debugPrint('Error loading recent logins: $e');
+      setState(() => recentLoginsCount = 0);
     }
   }
 
@@ -92,25 +97,66 @@ class _HomeScreenState extends State<HomeScreen> {
       final last24Hours = now.subtract(const Duration(hours: 24));
       
       int recentCount = 0;
+      Map<String, int> tempPaymentsByLocation = {};
+      Map<String, int> tempRecentPaymentsByLocation = {};
+      
       for (var payment in payments) {
         final paymentTime = _parseDateTime(payment['timestamp']?.toString());
+        final location = payment['location']?.toString() ?? 'Unknown';
+        
+        // Count total payments by location
+        tempPaymentsByLocation[location] = (tempPaymentsByLocation[location] ?? 0) + 1;
+        
+        // Count recent payments
         if (paymentTime != null && paymentTime.isAfter(last24Hours)) {
           recentCount++;
+          tempRecentPaymentsByLocation[location] = (tempRecentPaymentsByLocation[location] ?? 0) + 1;
         }
       }
       
-      setState(() => recentPaymentsCount = recentCount);
+      setState(() {
+        recentPaymentsCount = recentCount;
+        paymentsByLocation = tempPaymentsByLocation;
+        recentPaymentsByLocation = tempRecentPaymentsByLocation;
+      });
     } catch (e) {
       debugPrint('Error loading recent payments: $e');
+      setState(() {
+        recentPaymentsCount = 0;
+        paymentsByLocation = {};
+        recentPaymentsByLocation = {};
+      });
     }
   }
 
+  Future<void> _cacheAllValidUsers() async {
+    final locationController = Get.find<LocationController>();
+    // Ensure locations are loaded
+    if (locationController.locations.isEmpty) {
+      await locationController.loadLocations();
+    }
+    await ApiService.fetchAllValidUsers(locationController.locations);
+  }
+
   Future<void> _refreshData() async {
-    await Future.wait([
-      _loadActiveSessions(),
-      _loadRecentLogins(),
-      _loadRecentPayments(),
-    ]);
+    try {
+      await Future.wait([
+        _loadActiveSessions(),
+        _loadRecentLogins(),
+        _loadRecentPayments(),
+      ]);
+    } catch (e) {
+      debugPrint('Error refreshing data: $e');
+      // Show error to user
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error refreshing data: $e'),
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
+    }
   }
 
   @override
@@ -122,7 +168,7 @@ class _HomeScreenState extends State<HomeScreen> {
           children: [
             const DrawerHeader(
               decoration: BoxDecoration(color: Colors.green),
-              child: Text('Lightnet Navigation', style: TextStyle(color: Colors.white, fontSize: 24)),
+              child: Text('lightNET', style: TextStyle(color: Colors.white, fontSize: 24)),
             ),
             ListTile(
               leading: const Icon(Icons.add_circle_outline),
@@ -158,7 +204,7 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ),
       appBar: AppBar(
-        title: const Text("LIGHTNET"),
+        title: const Text("lightNET"),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -192,11 +238,62 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             Card(
               elevation: 4,
-              child: ListTile(
-                leading: const Icon(Icons.payment, size: 40, color: Colors.orange),
-                title: const Text("Recent Payments"),
-                subtitle: Text("$recentPaymentsCount payments in last 24h"),
-                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => PaymentsScreen())),
+              child: Column(
+                children: [
+                  ListTile(
+                    leading: const Icon(Icons.payment, size: 40, color: Colors.orange),
+                    title: const Text("Recent Payments"),
+                    subtitle: Text("$recentPaymentsCount payments in last 24h"),
+                    onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => PaymentsScreen())),
+                  ),
+                  if (recentPaymentsByLocation.isNotEmpty) ...[
+                    const Divider(),
+                    Padding(
+                      padding: const EdgeInsets.all(8.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            "Recent Payments by Location:",
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          ...recentPaymentsByLocation.entries.map((entry) => Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4.0),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    entry.key,
+                                    style: const TextStyle(fontSize: 14),
+                                  ),
+                                ),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: Colors.orange.shade100,
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Text(
+                                    "${entry.value} recent",
+                                    style: const TextStyle(
+                                      color: Colors.orange,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          )).toList(),
+                        ],
+                      ),
+                    ),
+                  ],
+                ],
               ),
             ),
             const SizedBox(height: 10),
