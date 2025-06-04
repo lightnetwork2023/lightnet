@@ -9,6 +9,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import '../controllers/auth_controller.dart';
 
 class ValidUsersScreen extends StatefulWidget {
   @override
@@ -17,6 +18,7 @@ class ValidUsersScreen extends StatefulWidget {
 
 class _ValidUsersScreenState extends State<ValidUsersScreen> {
   final LocationController locationController = Get.find();
+  final AuthController authController = Get.find<AuthController>();
   final Map<String, int> userCounts = {};
   bool loading = true;
 
@@ -57,6 +59,13 @@ class _ValidUsersScreenState extends State<ValidUsersScreen> {
   }
 
   Future<void> _shareLocationUsersPdf(String location) async {
+    if (!authController.isBoss) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Only boss can generate PDF reports")),
+      );
+      return;
+    }
+
     final users = await ApiService.fetchValidUsers(location);
 
     if (users.isEmpty) {
@@ -121,7 +130,7 @@ class _ValidUsersScreenState extends State<ValidUsersScreen> {
               leading: const Icon(Icons.location_on),
               title: Text(location),
               subtitle: Text("👥 $count users"),
-              trailing: Wrap(
+              trailing: authController.isBoss ? Wrap(
                 spacing: 12,
                 children: [
                   IconButton(
@@ -130,15 +139,15 @@ class _ValidUsersScreenState extends State<ValidUsersScreen> {
                   ),
                   const Icon(Icons.arrow_forward_ios),
                 ],
-              ),
-              onTap: () {
+              ) : const Icon(Icons.arrow_forward_ios),
+              onTap: authController.isBoss ? () {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
                     builder: (_) => ValidUsersListScreen(location: location),
                   ),
                 );
-              },
+              } : null,
             ),
           );
         },

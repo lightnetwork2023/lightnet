@@ -5,13 +5,17 @@ import 'package:lightnetwork/screens/payments.dart';
 import 'package:lightnetwork/screens/valid_users.dart';
 import 'package:get/get.dart';
 import '../controllers/location_controller.dart';
-
 import '../controllers/ApiService.dart';
 import 'GenerateUserScreen.dart';
+import 'LoginScreen.dart';
 import 'VouchersScreen.dart';
 import 'VouchersByLocationScreen.dart';
 import 'active_sessions.dart';
 import 'delete_screen.dart';
+import '../controllers/auth_controller.dart';
+import 'UserManagementScreen.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'NetworkDevicesScreen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -21,11 +25,18 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  final AuthController _authController = Get.find<AuthController>();
   int activeSessionsCount = 0;
   int recentLoginsCount = 0;
+  int todayLoginsCount = 0;
+  int last24hLoginsCount = 0;
   int recentPaymentsCount = 0;
+  int todayPaymentsCount = 0;
+  int last24hPaymentsCount = 0;
   Map<String, int> paymentsByLocation = {};
   Map<String, int> recentPaymentsByLocation = {};
+  Map<String, int> todayPaymentsByLocation = {};
+  Map<String, int> yesterdayPaymentsByLocation = {};
   final DateFormat _mysqlDateFormat = DateFormat('yyyy-MM-dd HH:mm:ss');
   final DateFormat _httpDateFormat = DateFormat("E, dd MMM yyyy HH:mm:ss 'GMT'");
 
@@ -38,31 +49,6 @@ class _HomeScreenState extends State<HomeScreen> {
     _cacheAllValidUsers();
   }
 
-  DateTime? _parseDateTime(String? dateTimeStr) {
-    if (dateTimeStr == null || dateTimeStr.isEmpty) {
-      debugPrint('Date string is null or empty');
-      return null;
-    }
-    try {
-      // Try HTTP date format (e.g., Sun, 04 May 2025 16:38:23 GMT)
-      return _httpDateFormat.parse(dateTimeStr, true); // Use as-is, do not convert to local
-    } catch (e) {
-      debugPrint('Error parsing date "$dateTimeStr" with format E, dd MMM yyyy HH:mm:ss GMT: $e');
-      try {
-        // Fallback to MySQL format
-        return _mysqlDateFormat.parse(dateTimeStr);
-      } catch (e2) {
-        debugPrint('Error parsing date "$dateTimeStr" with format yyyy-MM-dd HH:mm:ss: $e2');
-        try {
-          // Fallback to ISO format
-          return DateTime.parse(dateTimeStr);
-        } catch (e3) {
-          debugPrint('Error parsing date "$dateTimeStr" with ISO format: $e3');
-          return null;
-        }
-      }
-    }
-  }
 
   Future<void> _loadActiveSessions() async {
     final data = await ApiService.fetchActiveSessions();
@@ -71,59 +57,54 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _loadRecentLogins() async {
     try {
-      final vouchers = await ApiService.fetchVouchers();
-      final now = DateTime.now();
-      final last24Hours = now.subtract(const Duration(hours: 24));
-      
-      int recentCount = 0;
-      for (var voucher in vouchers) {
-        final loginTime = _parseDateTime(voucher['first_login_time']?.toString());
-        if (loginTime != null && loginTime.isAfter(last24Hours)) {
-          recentCount++;
-        }
-      }
-      
-      setState(() => recentLoginsCount = recentCount);
+      final recentVouchers = await ApiService.fetchRecentVouchers();
+      final todayVouchers = await ApiService.fetchVouchersToday();
+
+      setState(() {
+        todayLoginsCount = todayVouchers.length;
+        last24hLoginsCount = recentVouchers.length;
+      });
     } catch (e) {
-      debugPrint('Error loading recent logins: $e');
-      setState(() => recentLoginsCount = 0);
+      debugPrint('Error loading logins: $e');
+      setState(() {
+        todayLoginsCount = 0;
+        last24hLoginsCount = 0;
+      });
     }
   }
 
   Future<void> _loadRecentPayments() async {
     try {
-      final payments = await ApiService.fetchPayments();
-      final now = DateTime.now();
-      final last24Hours = now.subtract(const Duration(hours: 24));
+      final recentPayments = await ApiService.fetchRecentPayments();
+      final todayPayments = await ApiService.fetchPaymentsToday();
       
-      int recentCount = 0;
-      Map<String, int> tempPaymentsByLocation = {};
-      Map<String, int> tempRecentPaymentsByLocation = {};
+      Map<String, int> tempTodayPaymentsByLocation = {};
+      Map<String, int> tempLast24hPaymentsByLocation = {};
       
-      for (var payment in payments) {
-        final paymentTime = _parseDateTime(payment['timestamp']?.toString());
+      // Process today's payments by location
+      for (var payment in todayPayments) {
         final location = payment['location']?.toString() ?? 'Unknown';
-        
-        // Count total payments by location
-        tempPaymentsByLocation[location] = (tempPaymentsByLocation[location] ?? 0) + 1;
-        
-        // Count recent payments
-        if (paymentTime != null && paymentTime.isAfter(last24Hours)) {
-          recentCount++;
-          tempRecentPaymentsByLocation[location] = (tempRecentPaymentsByLocation[location] ?? 0) + 1;
-        }
+        tempTodayPaymentsByLocation[location] = (tempTodayPaymentsByLocation[location] ?? 0) + 1;
+      }
+      
+      // Process last 24h payments by location
+      for (var payment in recentPayments) {
+        final location = payment['location']?.toString() ?? 'Unknown';
+        tempLast24hPaymentsByLocation[location] = (tempLast24hPaymentsByLocation[location] ?? 0) + 1;
       }
       
       setState(() {
-        recentPaymentsCount = recentCount;
-        paymentsByLocation = tempPaymentsByLocation;
-        recentPaymentsByLocation = tempRecentPaymentsByLocation;
+        todayPaymentsCount = todayPayments.length;
+        last24hPaymentsCount = recentPayments.length;
+        todayPaymentsByLocation = tempTodayPaymentsByLocation;
+        recentPaymentsByLocation = tempLast24hPaymentsByLocation;
       });
     } catch (e) {
-      debugPrint('Error loading recent payments: $e');
+      debugPrint('Error loading payments: $e');
       setState(() {
-        recentPaymentsCount = 0;
-        paymentsByLocation = {};
+        todayPaymentsCount = 0;
+        last24hPaymentsCount = 0;
+        todayPaymentsByLocation = {};
         recentPaymentsByLocation = {};
       });
     }
@@ -139,6 +120,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _refreshData() async {
+    ApiService.clearCache(); // Clear cache before refresh
     try {
       await Future.wait([
         _loadActiveSessions(),
@@ -147,7 +129,6 @@ class _HomeScreenState extends State<HomeScreen> {
       ]);
     } catch (e) {
       debugPrint('Error refreshing data: $e');
-      // Show error to user
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -170,11 +151,35 @@ class _HomeScreenState extends State<HomeScreen> {
               decoration: BoxDecoration(color: Colors.green),
               child: Text('lightNET', style: TextStyle(color: Colors.white, fontSize: 24)),
             ),
+            if (_authController.isBoss) ...[
+              ListTile(
+                leading: const Icon(Icons.add_circle_outline),
+                title: const Text('Generate Users'),
+                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => GenerateUserScreen())),
+              ),
+            ],
             ListTile(
-              leading: const Icon(Icons.add_circle_outline),
-              title: const Text('Generate Users'),
-              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => GenerateUserScreen())),
+              leading: const Icon(Icons.people),
+              title: const Text('Valid Users'),
+              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ValidUsersScreen())),
             ),
+            ListTile(
+              leading: const Icon(Icons.location_on),
+              title: const Text('Vouchers by Location'),
+              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const VouchersByLocationScreen())),
+            ),
+            if (_authController.isBoss) ...[
+              ListTile(
+                leading: const Icon(Icons.card_membership),
+                title: const Text('Vouchers'),
+                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const VouchersScreen())),
+              ),
+              ListTile(
+                leading: const Icon(Icons.admin_panel_settings),
+                title: const Text('User Management'),
+                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const UserManagementScreen())),
+              ),
+            ],
             ListTile(
               leading: const Icon(Icons.payment),
               title: const Text('View Payments'),
@@ -186,19 +191,31 @@ class _HomeScreenState extends State<HomeScreen> {
               onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ActiveSessionsScreen())),
             ),
             ListTile(
-              leading: const Icon(Icons.people),
-              title: const Text('Valid Users'),
-              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ValidUsersScreen())),
+              leading: const Icon(Icons.router),
+              title: const Text('Network Devices'),
+              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => NetworkDevicesScreen())),
             ),
+            const Divider(),
             ListTile(
-              leading: const Icon(Icons.card_membership),
-              title: const Text('Vouchers'),
-              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const VouchersScreen())),
-            ),
-            ListTile(
-              leading: const Icon(Icons.location_on),
-              title: const Text('Vouchers by Location'),
-              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const VouchersByLocationScreen())),
+              leading: const Icon(Icons.logout),
+              title: const Text('Logout'),
+              onTap: () async {
+                try {
+                  await _authController.logout();
+                  if (mounted) {
+                    Navigator.pushReplacement(
+                      context,
+                      MaterialPageRoute(builder: (_) => const LoginScreen()),
+                    );
+                  }
+                } catch (e) {
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Logout failed: $e')),
+                    );
+                  }
+                }
+              },
             ),
           ],
         ),
@@ -231,22 +248,44 @@ class _HomeScreenState extends State<HomeScreen> {
               elevation: 4,
               child: ListTile(
                 leading: const Icon(Icons.login, size: 40, color: Colors.blue),
-                title: const Text("Recent Logins"),
-                subtitle: Text("$recentLoginsCount logins in last 24h"),
-                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const VouchersScreen())),
+                title: const Text("Logins"),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text("$todayLoginsCount logins today"),
+                    Text("$last24hLoginsCount logins in last 24h"),
+                  ],
+                ),
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => VouchersScreen(
+                      showOnlyUsed: !_authController.isBoss,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            Card(
+              elevation: 4,
+              child: ListTile(
+                leading: const Icon(Icons.payment, size: 40, color: Colors.orange),
+                title: const Text("Payments"),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text("$todayPaymentsCount payments today"),
+                    Text("$last24hPaymentsCount payments in last 24h"),
+                  ],
+                ),
+                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => PaymentsScreen())),
               ),
             ),
             Card(
               elevation: 4,
               child: Column(
                 children: [
-                  ListTile(
-                    leading: const Icon(Icons.payment, size: 40, color: Colors.orange),
-                    title: const Text("Recent Payments"),
-                    subtitle: Text("$recentPaymentsCount payments in last 24h"),
-                    onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => PaymentsScreen())),
-                  ),
-                  if (recentPaymentsByLocation.isNotEmpty) ...[
+                  if (todayPaymentsByLocation.isNotEmpty || recentPaymentsByLocation.isNotEmpty) ...[
                     const Divider(),
                     Padding(
                       padding: const EdgeInsets.all(8.0),
@@ -254,13 +293,41 @@ class _HomeScreenState extends State<HomeScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           const Text(
-                            "Recent Payments by Location:",
+                            "Payments by Location:",
                             style: TextStyle(
                               fontWeight: FontWeight.bold,
                               fontSize: 16,
                             ),
                           ),
                           const SizedBox(height: 8),
+                          ...todayPaymentsByLocation.entries.map((entry) => Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4.0),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    entry.key,
+                                    style: const TextStyle(fontSize: 14),
+                                  ),
+                                ),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: Colors.green.shade100,
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Text(
+                                    "${entry.value} today",
+                                    style: const TextStyle(
+                                      color: Colors.green,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          )).toList(),
                           ...recentPaymentsByLocation.entries.map((entry) => Padding(
                             padding: const EdgeInsets.symmetric(vertical: 4.0),
                             child: Row(
@@ -296,14 +363,16 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
               ),
             ),
-            const SizedBox(height: 10),
-            Card(
-              child: ListTile(
-                leading: const Icon(Icons.add_circle_outline),
-                title: const Text("Generate Users"),
-                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => GenerateUserScreen())),
+            Text('Current Role: ${_authController.userRole}'),
+            const SizedBox(height: 20),
+            if (_authController.isBoss) ...[
+              ElevatedButton(
+                onPressed: () {
+                  Get.to(() => const UserManagementScreen());
+                },
+                child: const Text('User Management'),
               ),
-            ),
+            ],
           ],
         ),
       ),

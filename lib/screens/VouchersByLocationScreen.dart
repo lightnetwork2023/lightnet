@@ -2,13 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import '../controllers/ApiService.dart';
 import '../controllers/location_controller.dart';
+import '../controllers/auth_controller.dart';
 import 'package:intl/intl.dart';
-import 'package:pdf/pdf.dart';
-import 'package:pdf/widgets.dart' as pw;
-import 'package:printing/printing.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:share_plus/share_plus.dart';
-import 'dart:io';
 
 class VouchersByLocationScreen extends StatefulWidget {
   const VouchersByLocationScreen({super.key});
@@ -19,6 +14,7 @@ class VouchersByLocationScreen extends StatefulWidget {
 
 class _VouchersByLocationScreenState extends State<VouchersByLocationScreen> {
   final LocationController locationController = Get.find();
+  final AuthController authController = Get.find<AuthController>();
   final Map<String, List<dynamic>> vouchersByLocation = {};
   final Map<String, int> recentLoginCounts = {};
   final Map<String, DateTime?> latestCreationTimes = {};
@@ -88,52 +84,34 @@ class _VouchersByLocationScreenState extends State<VouchersByLocationScreen> {
     
     final now = DateTime.now();
     final difference = now.difference(dateTime);
-
-    if (difference.inDays == 0) {
-      if (difference.inHours == 0) {
-        return 'Created ${difference.inMinutes} minutes ago';
-      }
-      return 'Created ${difference.inHours} hours ago';
-    } else if (difference.inDays == 1) {
-      return 'Created yesterday';
-    } else if (difference.inDays < 7) {
-      return 'Created ${difference.inDays} days ago';
-    } else if (difference.inDays < 30) {
-      final weeks = (difference.inDays / 7).floor();
-      return 'Created $weeks ${weeks == 1 ? 'week' : 'weeks'} ago';
+    
+    if (difference.inDays > 0) {
+      return '${difference.inDays}d ago';
+    } else if (difference.inHours > 0) {
+      return '${difference.inHours}h ago';
+    } else if (difference.inMinutes > 0) {
+      return '${difference.inMinutes}m ago';
     } else {
-      final months = (difference.inDays / 30).floor();
-      return 'Created $months ${months == 1 ? 'month' : 'months'} ago';
+      return 'Just now';
     }
   }
 
   Future<void> _loadVouchers() async {
     try {
       final vouchers = await ApiService.fetchVouchers();
-      final Map<String, List<dynamic>> tempVouchersByLocation = {};
-      final Map<String, int> tempRecentLoginCounts = {};
-      final Map<String, DateTime?> tempLatestCreationTimes = {};
       final now = DateTime.now();
       final last24Hours = now.subtract(const Duration(hours: 24));
+      
+      final tempVouchersByLocation = <String, List<dynamic>>{};
+      final tempRecentLoginCounts = <String, int>{};
+      final tempLatestCreationTimes = <String, DateTime?>{};
 
-      // Create a map of normalized location names to their original forms
-      final Map<String, String> normalizedToOriginal = {};
-      for (final location in locationController.locations) {
-        final normalized = _normalizeLocationName(location);
-        normalizedToOriginal[normalized] = location;
-      }
-
-      for (var voucher in vouchers) {
-        final voucherLocation = voucher['location']?.toString() ?? 'Unknown';
-        final normalizedVoucherLocation = _normalizeLocationName(voucherLocation);
-        
-        // Find the matching location from our locations list using exact match
-        final matchedLocation = normalizedToOriginal.entries
-            .firstWhere(
-              (entry) => entry.key == normalizedVoucherLocation,
-              orElse: () => MapEntry(normalizedVoucherLocation, voucherLocation)
-            )
-            .value;
+      for (final voucher in vouchers) {
+        final location = voucher['location']?.toString() ?? 'Unknown';
+        final matchedLocation = locationController.locations.firstWhere(
+          (loc) => _normalizeLocationName(loc) == _normalizeLocationName(location),
+          orElse: () => location,
+        );
 
         if (!tempVouchersByLocation.containsKey(matchedLocation)) {
           tempVouchersByLocation[matchedLocation] = [];
@@ -184,43 +162,6 @@ class _VouchersByLocationScreenState extends State<VouchersByLocationScreen> {
 
   String _normalizeLocationName(String location) {
     return location.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
-  }
-
-  Future<void> _shareLocationVouchersPdf(String location) async {
-    final vouchers = vouchersByLocation[location] ?? [];
-    if (vouchers.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("No vouchers found for $location")),
-      );
-      return;
-    }
-
-    final pdf = pw.Document();
-    pdf.addPage(
-      pw.MultiPage(
-        pageFormat: PdfPageFormat.a4,
-        build: (context) => [
-          pw.Text("Vouchers - $location", style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold)),
-          pw.SizedBox(height: 12),
-          pw.Table.fromTextArray(
-            headers: ["Username", "Speed Limit", "First Login", "Expires", "MAC", "Status"],
-            data: vouchers.map((voucher) => [
-              voucher['username'] ?? 'N/A',
-              voucher['speed_limit'] ?? 'No limit',
-              _formatDateTime(voucher['first_login_time']?.toString()),
-              _formatDateTime(voucher['expire_time']?.toString()),
-              voucher['mac_address'] ?? 'Not registered',
-              voucher['used'] == 1 ? 'Used' : 'Unused',
-            ]).toList(),
-          ),
-        ],
-      ),
-    );
-
-    final output = await getTemporaryDirectory();
-    final file = File("${output.path}/$location-vouchers.pdf");
-    await file.writeAsBytes(await pdf.save());
-    await Share.shareXFiles([XFile(file.path)], text: 'Vouchers for $location');
   }
 
   @override
@@ -298,85 +239,69 @@ class _VouchersByLocationScreenState extends State<VouchersByLocationScreen> {
                             ],
                           ),
                           subtitle: Text("${vouchers.length} vouchers"),
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              IconButton(
-                                icon: const Icon(Icons.share),
-                                onPressed: () => _shareLocationVouchersPdf(location),
-                                tooltip: 'Share PDF',
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.arrow_forward),
-                                onPressed: () {
-                                  showModalBottomSheet(
-                                    context: context,
-                                    isScrollControlled: true,
-                                    builder: (context) => DraggableScrollableSheet(
-                                      initialChildSize: 0.9,
-                                      minChildSize: 0.5,
-                                      maxChildSize: 0.95,
-                                      expand: false,
-                                      builder: (context, scrollController) => Container(
-                                        color: Colors.white,
-                                        child: Column(
-                                          children: [
-                                            AppBar(
-                                              title: Text("Vouchers in $location"),
-                                              actions: [
-                                                IconButton(
-                                                  icon: const Icon(Icons.share),
-                                                  onPressed: () => _shareLocationVouchersPdf(location),
-                                                ),
-                                              ],
-                                            ),
-                                            Expanded(
-                                              child: ListView.builder(
-                                                controller: scrollController,
-                                                itemCount: vouchers.length,
-                                                itemBuilder: (context, index) {
-                                                  final voucher = vouchers[index];
-                                                  final isRecent = _isRecentLogin(voucher['first_login_time']?.toString());
-
-                                                  return Card(
-                                                    margin: const EdgeInsets.symmetric(
-                                                      horizontal: 8.0,
-                                                      vertical: 4.0,
-                                                    ),
-                                                    color: isRecent ? Colors.green.shade50 : null,
-                                                    child: ListTile(
-                                                      title: Text(
-                                                        voucher['username']?.toString() ?? 'N/A',
-                                                        style: TextStyle(
-                                                          fontWeight: FontWeight.bold,
-                                                          color: isRecent ? Colors.green : null,
-                                                        ),
-                                                      ),
-                                                      subtitle: Column(
-                                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                                        children: [
-                                                          Text("⚡ Speed Limit: ${voucher['speed_limit']?.toString() ?? 'No limit'}"),
-                                                          Text("⏱️ First Login: ${_formatDateTime(voucher['first_login_time']?.toString())}"),
-                                                          Text("⌛ Expires: ${_formatDateTime(voucher['expire_time']?.toString())}"),
-                                                          Text("📱 MAC: ${voucher['mac_address']?.toString() ?? 'Not registered'}"),
-                                                          Text("Status: ${voucher['used'] == 1 ? '🟢 Used' : '⚪ Unused'}"),
-                                                        ],
-                                                      ),
-                                                      isThreeLine: true,
-                                                    ),
-                                                  );
-                                                },
-                                              ),
-                                            ),
-                                          ],
+                          trailing: authController.isBoss ? IconButton(
+                            icon: const Icon(Icons.arrow_forward),
+                            onPressed: () {
+                              showModalBottomSheet(
+                                context: context,
+                                isScrollControlled: true,
+                                builder: (context) => DraggableScrollableSheet(
+                                  initialChildSize: 0.9,
+                                  minChildSize: 0.5,
+                                  maxChildSize: 0.95,
+                                  expand: false,
+                                  builder: (context, scrollController) => Container(
+                                    color: Colors.white,
+                                    child: Column(
+                                      children: [
+                                        AppBar(
+                                          title: Text("Vouchers in $location"),
                                         ),
-                                      ),
+                                        Expanded(
+                                          child: ListView.builder(
+                                            controller: scrollController,
+                                            itemCount: vouchers.length,
+                                            itemBuilder: (context, index) {
+                                              final voucher = vouchers[index];
+                                              final isRecent = _isRecentLogin(voucher['first_login_time']?.toString());
+
+                                              return Card(
+                                                margin: const EdgeInsets.symmetric(
+                                                  horizontal: 8.0,
+                                                  vertical: 4.0,
+                                                ),
+                                                color: isRecent ? Colors.green.shade50 : null,
+                                                child: ListTile(
+                                                  title: Text(
+                                                    voucher['username']?.toString() ?? 'N/A',
+                                                    style: TextStyle(
+                                                      fontWeight: FontWeight.bold,
+                                                      color: isRecent ? Colors.green : null,
+                                                    ),
+                                                  ),
+                                                  subtitle: Column(
+                                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                                    children: [
+                                                      Text("⚡ Speed Limit: ${voucher['speed_limit']?.toString() ?? 'No limit'}"),
+                                                      Text("⏱️ First Login: ${_formatDateTime(voucher['first_login_time']?.toString())}"),
+                                                      Text("⌛ Expires: ${_formatDateTime(voucher['expire_time']?.toString())}"),
+                                                      Text("📱 MAC: ${voucher['mac_address']?.toString() ?? 'Not registered'}"),
+                                                      Text("Status: ${voucher['used'] == 1 ? '🟢 Used' : '⚪ Unused'}"),
+                                                    ],
+                                                  ),
+                                                  isThreeLine: true,
+                                                ),
+                                              );
+                                            },
+                                          ),
+                                        ),
+                                      ],
                                     ),
-                                  );
-                                },
-                              ),
-                            ],
-                          ),
+                                  ),
+                                ),
+                              );
+                            },
+                          ) : null,
                         ),
                       );
                     },

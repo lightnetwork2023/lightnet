@@ -1,0 +1,260 @@
+import 'package:flutter/cupertino.dart';
+import 'package:flutter/material.dart';
+
+class DeviceForm extends StatefulWidget {
+  final VoidCallback onSave;
+  final Map<String, dynamic>? device;
+  final bool bypassFetchAfterAdd;
+  final String selectedZoneName; // <-- ADDED: To know which zone this device belongs to
+
+  const DeviceForm({
+    Key? key,
+    required this.onSave,
+    this.device,
+    this.bypassFetchAfterAdd = false,
+    required this.selectedZoneName, // <-- ADDED
+  }) : super(key: key);
+
+  @override
+  _DeviceFormState createState() => _DeviceFormState();
+}
+
+class _DeviceFormState extends State<DeviceForm> {
+  // ... (existing controllers and variables) ...
+  // final _newSubLocationController = TextEditingController(); // Rename from _newLocationController
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.device != null) {
+      _nameeController.text = widget.device!['namee'] ?? '';
+      _macAddressController.text = widget.device!['mac_address'] != 'N/A' ? widget.device!['mac_address'] ?? '' : '';
+      _selectedType = widget.device!['type'];
+      // 'location' is now sub-location, 'zoneName' is passed via widget.selectedZoneName
+      _selectedLocation = widget.device!['location'] != 'N/A' ? widget.device!['location'] : null;
+    }
+  }
+
+  // ... (_pickImage, _uploadImage methods remain the same) ...
+
+  Future<void> _addOrUpdateSubLocation() async { // Renamed from _addLocation
+    final newSubLocation = _newLocationController.text.trim(); // _newLocationController is fine for the sub-location name
+    if (newSubLocation.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please enter a sub-location name')),
+        );
+      }
+      return;
+    }
+
+    if (!mounted) return;
+    setState(() => _isSubmitting = true); // Use a more general submitting flag if needed
+    try {
+      final querySnapshot = await _firestore
+          .collection('deviceLocations')
+          .where('zoneName', isEqualTo: widget.selectedZoneName) // <-- Filter by zone
+          .where('name_lowercase', isEqualTo: newSubLocation.toLowerCase())
+          .limit(1)
+          .get();
+
+      if (querySnapshot.docs.isNotEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Sub-location "$newSubLocation" already exists in this zone.')),
+          );
+        }
+        return;
+      }
+
+      await _firestore.collection('deviceLocations').add({
+        'name': newSubLocation,
+        'name_lowercase': newSubLocation.toLowerCase(),
+        'zoneName': widget.selectedZoneName, // <-- Associate with the current zone
+        'created_at': FieldValue.serverTimestamp(),
+      });
+      _newLocationController.clear();
+      if (mounted) {
+        setState(() {
+          _selectedLocation = newSubLocation; // This is the sub-location
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Sub-location added. Select it from the dropdown.')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to add sub-location: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+      }
+    }
+  }
+
+  Future<void> _saveDevice() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    if (!mounted) return;
+    setState(() => _isSubmitting = true);
+    try {
+      String? imageUrl = widget.device?['image_url']; // Existing image URL if editing
+      if (_imageFile != null) { // If a new image is picked
+        // Delete old image if it exists and we are editing
+        if (widget.device != null && imageUrl != null && imageUrl.isNotEmpty) {
+          try {
+            if (imageUrl.startsWith('gs://') || imageUrl.startsWith('http')) {
+              await _storage.refFromURL(imageUrl).delete().catchError((e){
+                print("Warning: Failed to delete old image (it might not exist or permissions issue): $e");
+              });
+            }
+          } catch (e) {
+            print("Error trying to delete old image: $e");
+          }
+        }
+        imageUrl = await _uploadImage(); // Upload the new image
+      }
+
+
+      final deviceData = {
+        'namee': _nameeController.text.trim(),
+        'type': _selectedType!,
+        'mac_address': _macAddressController.text.trim().isEmpty ? null : _macAddressController.text.trim().toUpperCase(),
+        'location': _selectedLocation ?? 'N/A', // This is the SUB-LOCATION
+        'zoneName': widget.selectedZoneName,   // <-- ADDED: Save the zone name
+        'image_url': imageUrl, // This will be the new URL or existing one if no change
+        'updated_at': FieldValue.serverTimestamp(),
+      };
+
+      if (widget.device == null) { // Adding new device
+        deviceData['created_at'] = FieldValue.serverTimestamp();
+        await _firestore.collection('devices').add(deviceData);
+      } else { // Updating existing device
+        // Preserve original created_at if it exists
+        deviceData['created_at'] = widget.device!['created_at'] ?? FieldValue.serverTimestamp();
+        await _firestore.collection('devices').doc(widget.device!['id']).update(deviceData);
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(widget.device == null ? 'Device added successfully' : 'Device updated successfully')),
+        );
+        Navigator.pop(context); // Close the modal bottom sheet
+      }
+      if (!widget.bypassFetchAfterAdd) {
+        widget.onSave(); // This callback should refresh the device list in NetworkDevicesScreen
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to save device: $e')),
+        );
+      }
+      print("Error saving device: $e");
+    } finally {
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+      }
+    }
+  }
+
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      // ... (existing Padding)
+      child: SingleChildScrollView(
+        child: Form(
+          key: _formKey,
+          child: Column(
+            // ... (Existing Name, Type, MAC Address fields) ...
+
+            // Device Sub-Location Dropdown
+            children: [
+              StreamBuilder<QuerySnapshot>(
+                // Fetch sub-locations for the specific zone this device belongs to
+                stream: _firestore
+                    .collection('deviceLocations')
+                    .where('zoneName', isEqualTo: widget.selectedZoneName) // <-- Filter by zone
+                    .orderBy('name_lowercase')
+                    .snapshots(),
+                builder: (context, snapshot) {
+                  if (snapshot.hasError) {
+                    print('Error loading sub-locations for form: ${snapshot.error}');
+                    return Text('Error: ${snapshot.error}');
+                  }
+
+                  String? currentHintText = 'Select Sub-Location';
+                  List<DropdownMenuItem<String>> locationItems = [];
+
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    currentHintText = 'Loading sub-locations...';
+                  } else if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                    currentHintText = 'No sub-locations in this zone yet';
+                  } else {
+                    final List<String> fetchedLocations = [];
+                    for (var doc in snapshot.data!.docs) {
+                      final data = doc.data() as Map<String, dynamic>?;
+                      if (data != null && data.containsKey('name')) {
+                        final nameValue = data['name'];
+                        if (nameValue is String && nameValue.isNotEmpty) {
+                          fetchedLocations.add(nameValue);
+                        }
+                      }
+                    }
+                    locationItems = fetchedLocations.map((loc) {
+                      return DropdownMenuItem(value: loc, child: Text(loc));
+                    }).toList();
+                    // Ensure _selectedLocation is still valid if it was pre-filled
+                    if (_selectedLocation != null && !fetchedLocations.contains(_selectedLocation)) {
+                      // _selectedLocation = null; // Or handle as needed
+                    }
+                  }
+
+                  return DropdownButtonFormField<String>(
+                    value: _selectedLocation,
+                    decoration: InputDecoration(
+                      labelText: 'Device Sub-Location (within ${widget.selectedZoneName})',
+                      border: const OutlineInputBorder(),
+                      prefixIcon: const Icon(Icons.pin_drop_outlined),
+                    ),
+                    items: locationItems,
+                    onChanged: (value) => setState(() => _selectedLocation = value),
+                    hint: Text(currentHintText),
+                  );
+                },
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextFormField(
+                      controller: _newLocationController, // This controller is for the new sub-location name
+                      decoration: const InputDecoration(
+                        labelText: 'Or Add New Sub-Location',
+                        border: OutlineInputBorder(),
+                        prefixIcon: Icon(Icons.add_location_alt_outlined),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton(
+                    icon: const Icon(Icons.add_circle, color: Colors.green, size: 30),
+                    onPressed: _isSubmitting ? null : _addOrUpdateSubLocation, // Updated method name
+                    tooltip: 'Add New Sub-Location to this Zone',
+                  ),
+                ],
+              ),
+              // ... (Image picking and Save Button fields) ...
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+// ... (dispose method)
+}

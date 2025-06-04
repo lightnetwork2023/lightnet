@@ -1,0 +1,2 @@
+C:/Users/LITtech/AndroidStudioProjects/lightnetwork/android/app/.cxx/Debug/693tv65u/armeabi-v7a/CMakeFiles/edit_cache.dir
+C:/Users/LITtech/AndroidStudioProjects/lightnetwork/android/app/.cxx/Debug/693tv65u/armeabi-v7a/CMakeFiles/rebuild_cache.dir

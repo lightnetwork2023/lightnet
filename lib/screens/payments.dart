@@ -15,7 +15,7 @@ class _PaymentsScreenState extends State<PaymentsScreen> {
 
   void _fetchPayments() async {
     setState(() => _loading = true);
-    final payments = await ApiService.fetchPayments();
+    final payments = await ApiService.fetchRecentPayments();
     setState(() {
       _payments = payments.reversed.toList(); // Newest at the top
       _applySearch();
@@ -41,11 +41,19 @@ class _PaymentsScreenState extends State<PaymentsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("💰 Payments")),
+      appBar: AppBar(
+        title: const Text("🔄 Recent Payments (24h)"),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _fetchPayments,
+          ),
+        ],
+      ),
       body: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(8.0),
             child: TextField(
               decoration: const InputDecoration(
                 labelText: 'Search by phone number',
@@ -53,8 +61,10 @@ class _PaymentsScreenState extends State<PaymentsScreen> {
                 border: OutlineInputBorder(),
               ),
               onChanged: (value) {
-                _searchText = value;
-                _applySearch();
+                setState(() {
+                  _searchText = value;
+                  _applySearch();
+                });
               },
             ),
           ),
@@ -62,39 +72,33 @@ class _PaymentsScreenState extends State<PaymentsScreen> {
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
                 : _filteredPayments.isEmpty
-                ? const Center(child: Text("No payments found."))
-                : ListView.builder(
-              padding: const EdgeInsets.all(16),
-              itemCount: _filteredPayments.length,
-              itemBuilder: (context, index) {
-                final p = _filteredPayments[index];
-                return Card(
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  elevation: 2,
-                  margin: const EdgeInsets.symmetric(vertical: 8),
-                  child: ListTile(
-                    leading: const Icon(Icons.account_balance_wallet, size: 36, color: Colors.green),
-                    title: Text(
-                      p['username'] ?? 'N/A',
-                      style: const TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    subtitle: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const SizedBox(height: 4),
-                        Text("📍 Location: ${p['location']}"),
-                        Text("💵 Amount: ${p['amount']}"),
-                        Text("⏳ Duration: ${p['duration']}"),
-                        Text("📞 Phone: ${p['phone']}"),
-                        Text("🕒 Timestamp: ${p['timestamp']}"),
-                      ],
-                    ),
-                  ),
-                );
-              },
-            ),
+                    ? const Center(child: Text("No recent payments found."))
+                    : ListView.builder(
+                        itemCount: _filteredPayments.length,
+                        itemBuilder: (context, index) {
+                          final payment = _filteredPayments[index];
+                          return Card(
+                            margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            child: ListTile(
+                              leading: const Icon(Icons.payment, color: Colors.green),
+                              title: Text(payment['username'] ?? 'Unknown'),
+                              subtitle: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text("Phone: ${payment['phone'] ?? 'N/A'}"),
+                                  Text("Location: ${payment['location'] ?? 'N/A'}"),
+                                  Text("Amount: ${payment['amount'] ?? 'N/A'}"),
+                                  Text("Duration: ${payment['duration'] ?? 'N/A'}"),
+                                ],
+                              ),
+                              trailing: Text(
+                                payment['timestamp']?.toString().split('.')[0] ?? 'N/A',
+                                style: const TextStyle(fontSize: 12),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
           ),
         ],
       ),

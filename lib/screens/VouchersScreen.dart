@@ -3,7 +3,8 @@ import '../controllers/ApiService.dart';
 import 'package:intl/intl.dart';
 
 class VouchersScreen extends StatefulWidget {
-  const VouchersScreen({super.key});
+  final bool showOnlyUsed;
+  const VouchersScreen({super.key, this.showOnlyUsed = false});
 
   @override
   State<VouchersScreen> createState() => _VouchersScreenState();
@@ -40,6 +41,12 @@ class _VouchersScreenState extends State<VouchersScreen> {
           return username.contains(query.toLowerCase());
         }).toList();
       }
+      // Always sort filtered vouchers by newest first
+      _filteredVouchers.sort((a, b) {
+        final aTime = _parseDateTime(a['first_login_time']?.toString()) ?? DateTime.fromMillisecondsSinceEpoch(0);
+        final bTime = _parseDateTime(b['first_login_time']?.toString()) ?? DateTime.fromMillisecondsSinceEpoch(0);
+        return bTime.compareTo(aTime);
+      });
     });
   }
 
@@ -49,17 +56,14 @@ class _VouchersScreenState extends State<VouchersScreen> {
       return null;
     }
     try {
-      // Try HTTP date format (e.g., Sun, 04 May 2025 16:38:23 GMT)
-      return _httpDateFormat.parse(dateTimeStr, true); // Use as-is, do not convert to local
+      return _httpDateFormat.parse(dateTimeStr, true);
     } catch (e) {
       debugPrint('Error parsing date "$dateTimeStr" with format E, dd MMM yyyy HH:mm:ss GMT: $e');
       try {
-        // Fallback to MySQL format
         return _mysqlDateFormat.parse(dateTimeStr);
       } catch (e2) {
         debugPrint('Error parsing date "$dateTimeStr" with format yyyy-MM-dd HH:mm:ss: $e2');
         try {
-          // Fallback to ISO format
           return DateTime.parse(dateTimeStr);
         } catch (e3) {
           debugPrint('Error parsing date "$dateTimeStr" with ISO format: $e3');
@@ -72,84 +76,39 @@ class _VouchersScreenState extends State<VouchersScreen> {
   Future<void> _loadVouchers() async {
     setState(() => _loading = true);
     try {
-      final vouchers = await ApiService.fetchVouchers();
-      final now = DateTime.now();
-      final last24Hours = now.subtract(const Duration(hours: 24));
-      
-      int recentCount = 0;
-      for (var voucher in vouchers) {
-        final loginTime = _parseDateTime(voucher['first_login_time']?.toString());
-        if (loginTime != null && loginTime.isAfter(last24Hours)) {
-          recentCount++;
-        }
-      }
-
+      final vouchers = await ApiService.fetchRecentVouchers();
+      // Sort by first_login_time descending (newest first)
+      vouchers.sort((a, b) {
+        final aTime = _parseDateTime(a['first_login_time']?.toString()) ?? DateTime.fromMillisecondsSinceEpoch(0);
+        final bTime = _parseDateTime(b['first_login_time']?.toString()) ?? DateTime.fromMillisecondsSinceEpoch(0);
+        return bTime.compareTo(aTime);
+      });
       setState(() {
         _vouchers = vouchers;
-        _filteredVouchers = List.from(vouchers); // Initialize filtered list
-        _recentLoginCount = recentCount;
+        // Filter vouchers if showOnlyUsed is true
+        _filteredVouchers = widget.showOnlyUsed 
+            ? vouchers.where((voucher) => voucher['used'] == 1).toList()
+            : List.from(vouchers);
+        _recentLoginCount = vouchers.length; // All vouchers are from last 24h
         _loading = false;
       });
     } catch (e) {
-      setState(() => _loading = false);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error loading vouchers: $e'),
-            duration: const Duration(seconds: 5),
-            action: SnackBarAction(
-              label: 'Retry',
-              onPressed: _loadVouchers,
-            ),
-          ),
-        );
-      }
+      debugPrint('Error loading vouchers: $e');
+      setState(() {
+        _loading = false;
+        _vouchers = [];
+        _filteredVouchers = [];
+        _recentLoginCount = 0;
+      });
     }
-  }
-
-  String _formatDateTime(String? dateTimeStr) {
-    if (dateTimeStr == null || dateTimeStr.isEmpty) return 'N/A';
-    final dateTime = _parseDateTime(dateTimeStr);
-    if (dateTime == null) {
-      debugPrint('Failed to format date: $dateTimeStr');
-      return 'Invalid Date (Check Console)';
-    }
-    return DateFormat('yyyy-MM-dd HH:mm').format(dateTime);
-  }
-
-  bool _isRecentLogin(String? dateTimeStr) {
-    if (dateTimeStr == null || dateTimeStr.isEmpty) return false;
-    final loginTime = _parseDateTime(dateTimeStr);
-    if (loginTime == null) return false;
-    final last24Hours = DateTime.now().subtract(const Duration(hours: 24));
-    return loginTime.isAfter(last24Hours);
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("🎫 Vouchers"),
+        title: const Text("🔄 Recent Vouchers (24h)"),
         actions: [
-          Center(
-            child: Padding(
-              padding: const EdgeInsets.all(8.0),
-              child: Container(
-                padding: const EdgeInsets.all(8.0),
-                decoration: BoxDecoration(
-                  color: Colors.green.shade100,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  "Recent Logins: $_recentLoginCount",
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    color: Colors.green,
-                  ),
-                ),
-              ),
-            ),
-          ),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _loadVouchers,
@@ -162,23 +121,10 @@ class _VouchersScreenState extends State<VouchersScreen> {
             padding: const EdgeInsets.all(8.0),
             child: TextField(
               controller: _searchController,
-              decoration: InputDecoration(
-                hintText: 'Search by username...',
-                prefixIcon: const Icon(Icons.search),
-                suffixIcon: _searchController.text.isNotEmpty
-                    ? IconButton(
-                        icon: const Icon(Icons.clear),
-                        onPressed: () {
-                          _searchController.clear();
-                          _filterVouchers('');
-                        },
-                      )
-                    : null,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                filled: true,
-                fillColor: Colors.grey.shade100,
+              decoration: const InputDecoration(
+                labelText: 'Search by username',
+                prefixIcon: Icon(Icons.search),
+                border: OutlineInputBorder(),
               ),
               onChanged: _filterVouchers,
             ),
@@ -187,66 +133,38 @@ class _VouchersScreenState extends State<VouchersScreen> {
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
                 : _filteredVouchers.isEmpty
-                    ? Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Text(
-                              _searchController.text.isEmpty
-                                  ? "No vouchers found"
-                                  : "No vouchers match '${_searchController.text}'",
-                              style: const TextStyle(fontSize: 18),
+                    ? const Center(child: Text("No recent vouchers found."))
+                    : ListView.builder(
+                        itemCount: _filteredVouchers.length,
+                        itemBuilder: (context, index) {
+                          final voucher = _filteredVouchers[index];
+                          final loginTime = _parseDateTime(voucher['first_login_time']?.toString());
+                          final expireTime = _parseDateTime(voucher['expire_time']?.toString());
+                          
+                          return Card(
+                            margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            child: ListTile(
+                              leading: const Icon(Icons.person, color: Colors.blue),
+                              title: Text(voucher['username'] ?? 'Unknown'),
+                              subtitle: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text("Location: ${voucher['location'] ?? 'N/A'}"),
+                                  Text("Speed Limit: ${voucher['speed_limit'] ?? 'N/A'}"),
+                                  Text("Session Timeout: ${voucher['session_timeout'] ?? 'N/A'}"),
+                                  if (loginTime != null)
+                                    Text("First Login: ${loginTime.toString().split('.')[0]}"),
+                                  if (expireTime != null)
+                                    Text("Expires: ${expireTime.toString().split('.')[0]}"),
+                                ],
+                              ),
+                              trailing: Icon(
+                                voucher['used'] == 1 ? Icons.check_circle : Icons.pending,
+                                color: voucher['used'] == 1 ? Colors.green : Colors.orange,
+                              ),
                             ),
-                            const SizedBox(height: 16),
-                            if (_searchController.text.isEmpty)
-                              ElevatedButton.icon(
-                                onPressed: _loadVouchers,
-                                icon: const Icon(Icons.refresh),
-                                label: const Text("Retry"),
-                              ),
-                          ],
-                        ),
-                      )
-                    : RefreshIndicator(
-                        onRefresh: _loadVouchers,
-                        child: ListView.builder(
-                          itemCount: _filteredVouchers.length,
-                          itemBuilder: (context, index) {
-                            final voucher = _filteredVouchers[index];
-                            final isRecent = _isRecentLogin(voucher['first_login_time']?.toString());
-
-                            return Card(
-                              margin: const EdgeInsets.symmetric(
-                                horizontal: 8.0,
-                                vertical: 4.0,
-                              ),
-                              color: isRecent ? Colors.green.shade50 : null,
-                              child: ListTile(
-                                title: Text(
-                                  voucher['username']?.toString() ?? 'N/A',
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    color: isRecent ? Colors.green : null,
-                                  ),
-                                ),
-                                subtitle: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text("📍 Location: ${voucher['location']?.toString() ?? 'N/A'}"),
-                                    Text("⚡ Speed Limit: ${voucher['speed_limit']?.toString() ?? 'No limit'}"),
-                                    Text("⏱️ First Login: ${_formatDateTime(voucher['first_login_time']?.toString())}"),
-                                    Text("⌛ Expires: ${_formatDateTime(voucher['expire_time']?.toString())}"),
-                                    Text("📱 MAC: ${voucher['mac_address']?.toString() ?? 'Not registered'}"),
-                                    Text("Status: ${voucher['used'] == 1 ? '🟢 Used' : '⚪ Unused'}"),
-                                    Text("Created: ${_formatDateTime(voucher['created_at']?.toString())}"),
-                                    Text("Updated: ${_formatDateTime(voucher['updated_at']?.toString())}"),
-                                  ],
-                                ),
-                                isThreeLine: true,
-                              ),
-                            );
-                          },
-                        ),
+                          );
+                        },
                       ),
           ),
         ],
