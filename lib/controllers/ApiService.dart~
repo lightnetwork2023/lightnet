@@ -384,7 +384,7 @@ class ApiService {
     required String location,
   }) async {
     final response = await http.post(
-      Uri.parse('$baseUrl/make-paymentagent'),
+      Uri.parse('$baseUrl/make-payment'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
         'provider': provider,

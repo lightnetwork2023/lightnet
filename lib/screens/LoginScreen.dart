@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:get/get.dart';
 import '../controllers/auth_controller.dart';
 import 'HomeScreen.dart';
@@ -16,6 +15,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _isLoading = false;
+  // Get.find() is correct here as AuthController is already initialized
   final AuthController _authController = Get.find<AuthController>();
 
   @override
@@ -29,29 +29,21 @@ class _LoginScreenState extends State<LoginScreen> {
     if (_formKey.currentState!.validate()) {
       setState(() => _isLoading = true);
       try {
-        final userCredential = await _authController.login(
+        // 1. Just call the login method from the controller.
+        await _authController.login(
           _emailController.text.trim(),
           _passwordController.text,
         );
-        
-        if (userCredential != null) {
-          // Get user role from Firestore
-          final userDoc = await FirebaseFirestore.instance
-              .collection('users')
-              .doc(userCredential.user!.uid)
-              .get();
 
-          if (userDoc.exists) {
-            final userData = userDoc.data() as Map<String, dynamic>;
-            final role = userData['role'] ?? 'employee';
-            _authController.setUserRole(role);
-            
-            if (mounted) {
-              // Force rebuild of HomeScreen
-              Get.offAll(() => const HomeScreen());
-            }
-          }
+        // 2. The AuthController's built-in listener will automatically
+        //    fetch the user's role and update its state. We don't need to do it here.
+
+        if (mounted) {
+          // 3. Navigate to the HomeScreen. GetX will ensure the UI
+          //    rebuilds with the correct role information from the controller.
+          Get.offAll(() => const HomeScreen());
         }
+
       } catch (e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -136,12 +128,12 @@ class _LoginScreenState extends State<LoginScreen> {
                     child: _isLoading
                         ? const CircularProgressIndicator(color: Colors.white)
                         : const Text(
-                            'Login',
-                            style: TextStyle(
-                              fontSize: 16,
-                              color: Colors.white,
-                            ),
-                          ),
+                      'Login',
+                      style: TextStyle(
+                        fontSize: 16,
+                        color: Colors.white,
+                      ),
+                    ),
                   ),
                 ],
               ),
@@ -151,4 +143,4 @@ class _LoginScreenState extends State<LoginScreen> {
       ),
     );
   }
-} 
+}

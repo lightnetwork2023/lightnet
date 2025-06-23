@@ -12,8 +12,12 @@ class LocationController extends GetxController {
   }
 
   Future<void> loadLocations() async {
+    print('LocationController: Loading locations from Firestore...');
     final snapshot = await _firestore.collection('locations').get();
+    print('LocationController: Got ${snapshot.docs.length} locations from Firestore');
+    print('LocationController: Location IDs: ${snapshot.docs.map((doc) => doc.id).toList()}');
     locations.assignAll(snapshot.docs.map((doc) => doc.id).toList());
+    print('LocationController: Updated locations list: ${locations}');
   }
 
   Future<void> addLocation(String newLocation) async {

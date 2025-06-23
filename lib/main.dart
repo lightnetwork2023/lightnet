@@ -3,6 +3,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:get/get.dart';
 import 'package:lightnetwork/screens/HomeScreen.dart';
 import 'package:lightnetwork/screens/LoginScreen.dart';
+import 'package:lightnetwork/screens/AgentHomeScreen.dart';
 import 'controllers/location_controller.dart';
 import 'controllers/auth_controller.dart';
 import 'firebase_options.dart';
@@ -39,11 +40,24 @@ class AuthWrapper extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final authController = Get.find<AuthController>();
-    
     return Obx(() {
-      if (authController.user != null) {
-        return const HomeScreen();
+      // If user is logged in but role is not yet determined, show loading screen
+      if (authController.user != null && authController.userRole.isEmpty) {
+        return const Scaffold(
+          body: Center(child: CircularProgressIndicator()),
+        );
       }
+      
+      // If user is logged in and role is determined, show the correct screen
+      if (authController.user != null) {
+        if (authController.isAgent) {
+          return const AgentHomeScreen();
+        } else {
+          return const HomeScreen(); // For 'boss' or 'technician'
+        }
+      }
+      
+      // Otherwise, show login screen
       return const LoginScreen();
     });
   }

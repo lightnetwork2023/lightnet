@@ -16,6 +16,10 @@ import '../controllers/auth_controller.dart';
 import 'UserManagementScreen.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'NetworkDevicesScreen.dart';
+import 'DeviceReachabilityScreen.dart';
+import 'ActiveMacsScreen.dart';
+import 'OfflineDevicesScreen.dart';
+import 'BundleManagementScreen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -39,16 +43,42 @@ class _HomeScreenState extends State<HomeScreen> {
   Map<String, int> yesterdayPaymentsByLocation = {};
   final DateFormat _mysqlDateFormat = DateFormat('yyyy-MM-dd HH:mm:ss');
   final DateFormat _httpDateFormat = DateFormat("E, dd MMM yyyy HH:mm:ss 'GMT'");
+  List<dynamic> activeMacs = [];
+  int offlineDevicesCount = 0;
+  List<Map<String, dynamic>> allDevices = [];
 
   @override
   void initState() {
     super.initState();
+    _loadActiveMacs();
+    _loadOfflineDevices();
     _loadActiveSessions();
     _loadRecentLogins();
     _loadRecentPayments();
     _cacheAllValidUsers();
   }
 
+  Future<void> _loadActiveMacs() async {
+    try {
+      final data = await ApiService.fetchActiveMacs();
+      setState(() => activeMacs = data);
+    } catch (e) {
+      setState(() => activeMacs = []);
+    }
+  }
+
+  Future<void> _loadOfflineDevices() async {
+    final snapshot = await FirebaseFirestore.instance.collection('devices').get();
+    final all = snapshot.docs.map((doc) => {
+      'id': doc.id,
+      ...doc.data(),
+    }).toList();
+    final offline = all.where((d) => d['status'] == 'offline').toList();
+    setState(() {
+      offlineDevicesCount = offline.length;
+      allDevices = all;
+    });
+  }
 
   Future<void> _loadActiveSessions() async {
     final data = await ApiService.fetchActiveSessions();
@@ -123,6 +153,8 @@ class _HomeScreenState extends State<HomeScreen> {
     ApiService.clearCache(); // Clear cache before refresh
     try {
       await Future.wait([
+        _loadActiveMacs(),
+        _loadOfflineDevices(),
         _loadActiveSessions(),
         _loadRecentLogins(),
         _loadRecentPayments(),
@@ -179,6 +211,11 @@ class _HomeScreenState extends State<HomeScreen> {
                 title: const Text('User Management'),
                 onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const UserManagementScreen())),
               ),
+              ListTile(
+                leading: const Icon(Icons.inventory_2),
+                title: const Text('Manage Bundles'),
+                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const BundleManagementScreen())),
+              ),
             ],
             ListTile(
               leading: const Icon(Icons.payment),
@@ -194,6 +231,11 @@ class _HomeScreenState extends State<HomeScreen> {
               leading: const Icon(Icons.router),
               title: const Text('Network Devices'),
               onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => NetworkDevicesScreen())),
+            ),
+            ListTile(
+              leading: const Icon(Icons.network_check),
+              title: const Text('Device Reachability'),
+              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const DeviceReachabilityScreen())),
             ),
             const Divider(),
             ListTile(
@@ -239,9 +281,18 @@ class _HomeScreenState extends State<HomeScreen> {
               elevation: 4,
               child: ListTile(
                 leading: const Icon(Icons.computer, size: 40, color: Colors.green),
-                title: const Text("Active Sessions"),
-                subtitle: Text("$activeSessionsCount sessions running"),
-                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ActiveSessionsScreen())),
+                title: const Text("Active Devices"),
+                subtitle: Text("${activeMacs.length} devices online"),
+                onTap: activeMacs.isNotEmpty
+                    ? () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => ActiveMacsScreen(activeMacs: activeMacs),
+                          ),
+                        );
+                      }
+                    : null,
               ),
             ),
             Card(
@@ -363,7 +414,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
               ),
             ),
-            Text('Current Role: ${_authController.userRole}'),
+            Text('Current Role: ${_authController.userRole == "technician" ? "Technician" : _authController.userRole}'),
             const SizedBox(height: 20),
             if (_authController.isBoss) ...[
               ElevatedButton(
@@ -373,6 +424,29 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: const Text('User Management'),
               ),
             ],
+            Card(
+              elevation: 4,
+              child: ListTile(
+                leading: const Icon(Icons.warning, size: 40, color: Colors.red),
+                title: const Text("Offline Devices"),
+                subtitle: Text(
+                  "$offlineDevicesCount devices offline",
+                  style: const TextStyle(
+                    color: Colors.red,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                  ),
+                ),
+                onTap: allDevices.isNotEmpty
+                    ? () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => OfflineDevicesScreen(devices: allDevices),
+                          ),
+                        )
+                    : null,
+              ),
+            ),
           ],
         ),
       ),
