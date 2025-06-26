@@ -16,10 +16,10 @@ import '../controllers/auth_controller.dart';
 import 'UserManagementScreen.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'NetworkDevicesScreen.dart';
-import 'DeviceReachabilityScreen.dart';
 import 'ActiveMacsScreen.dart';
 import 'OfflineDevicesScreen.dart';
 import 'BundleManagementScreen.dart';
+import 'PurchaseForAgentScreen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -217,6 +217,13 @@ class _HomeScreenState extends State<HomeScreen> {
                 onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const BundleManagementScreen())),
               ),
             ],
+            if (_authController.isBoss || _authController.userRole == 'technician') ...[
+              ListTile(
+                leading: const Icon(Icons.shopping_cart),
+                title: const Text('Purchase for Agent'),
+                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PurchaseForAgentScreen())),
+              ),
+            ],
             ListTile(
               leading: const Icon(Icons.payment),
               title: const Text('View Payments'),
@@ -231,11 +238,6 @@ class _HomeScreenState extends State<HomeScreen> {
               leading: const Icon(Icons.router),
               title: const Text('Network Devices'),
               onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => NetworkDevicesScreen())),
-            ),
-            ListTile(
-              leading: const Icon(Icons.network_check),
-              title: const Text('Device Reachability'),
-              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const DeviceReachabilityScreen())),
             ),
             const Divider(),
             ListTile(

@@ -142,21 +142,7 @@ class _AgentHomeScreenState extends State<AgentHomeScreen> {
         return;
       }
 
-      // If payment is successful, generate users
-     /* final response = await ApiService.generateUsers(
-        numUsers: quantity,
-        numDays: 1, // 1 day
-        location: location,
-      );*/
 
-    /*  if (response != null) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Vouchers generated successfully!')),
-          );
-          _loadData(); // Refresh data after generating vouchers
-        }
-      }*/
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

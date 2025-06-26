@@ -21,33 +21,15 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
   final _nameController = TextEditingController();
   String _selectedRole = 'technician';
   String _selectedLocation = '';
+  String _searchQuery = '';
   bool _isLoading = false;
 
   @override
   void initState() {
     super.initState();
-    print('UserManagementScreen initState - locations count: ${locationController.locations.length}');
-    // Ensure locations are loaded, but do not set a default
     if (locationController.locations.isEmpty) {
-      print('Locations empty, loading locations...');
       locationController.loadLocations();
     }
-    // Set initial location if available
-    if (locationController.locations.isNotEmpty) {
-      _selectedLocation = locationController.locations.first;
-      print('Set initial location: $_selectedLocation');
-    }
-    
-    // Add listener to see when locations are updated
-    ever(locationController.locations, (locations) {
-      print('Locations updated: ${locations.length} locations');
-      if (locations.isNotEmpty && _selectedLocation.isEmpty) {
-        setState(() {
-          _selectedLocation = locations.first;
-          print('Updated selected location to: $_selectedLocation');
-        });
-      }
-    });
   }
 
   @override
@@ -99,175 +81,261 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
   }
 
   void _showCreateAccountDialog() {
-    showDialog(
+    showGeneralDialog(
       context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Create New Account'),
-          content: Form(
-            key: _formKey,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextFormField(
-                    controller: _emailController,
-                    decoration: const InputDecoration(
-                      labelText: 'Email',
-                      border: OutlineInputBorder(),
-                    ),
-                    validator: (value) {
-                      if (value == null || value.isEmpty) {
-                        return 'Please enter an email';
-                      }
-                      if (!GetUtils.isEmail(value)) {
-                        return 'Please enter a valid email';
-                      }
-                      return null;
-                    },
-                  ),
-                  const SizedBox(height: 16),
-                  TextFormField(
-                    controller: _passwordController,
-                    decoration: const InputDecoration(
-                      labelText: 'Password',
-                      border: OutlineInputBorder(),
-                    ),
-                    obscureText: true,
-                    validator: (value) {
-                      if (value == null || value.isEmpty) {
-                        return 'Please enter a password';
-                      }
-                      if (value.length < 6) {
-                        return 'Password must be at least 6 characters';
-                      }
-                      return null;
-                    },
-                  ),
-                  const SizedBox(height: 16),
-                  TextFormField(
-                    controller: _confirmPasswordController,
-                    decoration: const InputDecoration(
-                      labelText: 'Confirm Password',
-                      border: OutlineInputBorder(),
-                    ),
-                    obscureText: true,
-                    validator: (value) {
-                      if (value == null || value.isEmpty) {
-                        return 'Please confirm your password';
-                      }
-                      if (value != _passwordController.text) {
-                        return 'Passwords do not match';
-                      }
-                      return null;
-                    },
-                  ),
-                  const SizedBox(height: 16),
-                  DropdownButtonFormField<String>(
-                    value: _selectedRole,
-                    decoration: const InputDecoration(
-                      labelText: 'Role',
-                      border: OutlineInputBorder(),
-                    ),
-                    items: <DropdownMenuItem<String>>[
-                      const DropdownMenuItem<String>(value: 'technician', child: Text('Technician')),
-                      const DropdownMenuItem<String>(value: 'agent', child: Text('Agent')),
-                      const DropdownMenuItem<String>(value: 'boss', child: Text('Boss')),
-                    ],
-                    onChanged: (String? value) {
-                      if (value != null) {
-                        setState(() => _selectedRole = value);
-                        setDialogState(() {}); // Rebuild dialog
-                      }
-                    },
-                  ),
-                  if (_selectedRole == 'agent') ...[
-                    const SizedBox(height: 16),
-                    TextFormField(
-                      controller: _nameController,
-                      decoration: const InputDecoration(
-                        labelText: 'Name',
-                        border: OutlineInputBorder(),
-                      ),
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Please enter a name';
-                        }
-                        return null;
-                      },
-                    ),
-                    const SizedBox(height: 16),
-                    Row(
+      barrierDismissible: false,
+      barrierLabel: 'Create Account',
+      transitionDuration: const Duration(milliseconds: 300),
+      pageBuilder: (context, anim1, anim2) {
+        return Align(
+          alignment: Alignment.bottomCenter,
+          child: Material(
+            color: Colors.transparent,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeOut,
+              height: MediaQuery.of(context).size.height * 0.95,
+              width: MediaQuery.of(context).size.width,
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
+              ),
+              child: SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                  child: StatefulBuilder(
+                    builder: (context, setDialogState) => Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Expanded(
-                          child: DropdownButtonFormField<String>(
-                            value: _selectedLocation.isNotEmpty ? _selectedLocation : null,
-                            hint: const Text("Select Location"),
-                            decoration: const InputDecoration(
-                              labelText: 'Location',
-                              border: OutlineInputBorder(),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text('Create New Account', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                            IconButton(
+                              icon: const Icon(Icons.close),
+                              onPressed: () => Navigator.pop(context),
                             ),
-                            items: locationController.locations.isEmpty 
-                              ? [
-                                  const DropdownMenuItem<String>(
-                                    value: null,
-                                    child: Text('No locations available'),
-                                  )
-                                ]
-                              : locationController.locations.map((location) {
-                                  return DropdownMenuItem<String>(
-                                    value: location,
-                                    child: Text(location),
-                                  );
-                                }).toList(),
-                            onChanged: locationController.locations.isEmpty ? null : (String? value) {
-                              if (value != null) {
-                                setState(() => _selectedLocation = value);
-                                setDialogState(() {}); // Rebuild dialog
-                              }
-                            },
-                            validator: (value) {
-                              if (value == null || value.isEmpty) {
-                                return 'Please select a location';
-                              }
-                              return null;
-                            },
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Expanded(
+                          child: SingleChildScrollView(
+                            child: Form(
+                              key: _formKey,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text('Account Details', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                                  const SizedBox(height: 8),
+                                  TextFormField(
+                                    controller: _emailController,
+                                    decoration: InputDecoration(
+                                      labelText: 'Email',
+                                      prefixIcon: const Icon(Icons.email_outlined),
+                                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+                                      filled: true,
+                                    ),
+                                    validator: (value) {
+                                      if (value == null || value.isEmpty) {
+                                        return 'Please enter an email';
+                                      }
+                                      if (!GetUtils.isEmail(value)) {
+                                        return 'Please enter a valid email';
+                                      }
+                                      return null;
+                                    },
+                                  ),
+                                  const SizedBox(height: 16),
+                                  TextFormField(
+                                    controller: _passwordController,
+                                    decoration: InputDecoration(
+                                      labelText: 'Password',
+                                      prefixIcon: const Icon(Icons.lock_outline),
+                                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+                                      filled: true,
+                                    ),
+                                    obscureText: true,
+                                    validator: (value) {
+                                      if (value == null || value.isEmpty) {
+                                        return 'Please enter a password';
+                                      }
+                                      if (value.length < 6) {
+                                        return 'Password must be at least 6 characters';
+                                      }
+                                      return null;
+                                    },
+                                  ),
+                                  const SizedBox(height: 16),
+                                  TextFormField(
+                                    controller: _confirmPasswordController,
+                                    decoration: InputDecoration(
+                                      labelText: 'Confirm Password',
+                                      prefixIcon: const Icon(Icons.lock_reset),
+                                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+                                      filled: true,
+                                    ),
+                                    obscureText: true,
+                                    validator: (value) {
+                                      if (value == null || value.isEmpty) {
+                                        return 'Please confirm your password';
+                                      }
+                                      if (value != _passwordController.text) {
+                                        return 'Passwords do not match';
+                                      }
+                                      return null;
+                                    },
+                                  ),
+                                  const SizedBox(height: 16),
+                                  DropdownButtonFormField<String>(
+                                    value: _selectedRole,
+                                    decoration: InputDecoration(
+                                      labelText: 'Role',
+                                      prefixIcon: const Icon(Icons.person_outline),
+                                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+                                      filled: true,
+                                    ),
+                                    items: <DropdownMenuItem<String>>[
+                                      const DropdownMenuItem<String>(value: 'technician', child: Text('Technician')),
+                                      const DropdownMenuItem<String>(value: 'agent', child: Text('Agent')),
+                                      const DropdownMenuItem<String>(value: 'boss', child: Text('Boss')),
+                                    ],
+                                    onChanged: (String? value) {
+                                      if (value != null) {
+                                        setState(() => _selectedRole = value);
+                                        setDialogState(() {});
+                                      }
+                                    },
+                                  ),
+                                  if (_selectedRole == 'agent') ...[
+                                    const SizedBox(height: 16),
+                                    TextFormField(
+                                      controller: _nameController,
+                                      decoration: InputDecoration(
+                                        labelText: 'Name',
+                                        prefixIcon: const Icon(Icons.badge_outlined),
+                                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+                                        filled: true,
+                                      ),
+                                      validator: (value) {
+                                        if (value == null || value.isEmpty) {
+                                          return 'Please enter a name';
+                                        }
+                                        return null;
+                                      },
+                                    ),
+                                    const SizedBox(height: 16),
+                                    GestureDetector(
+                                      onTap: () async {
+                                        // Show modal bottom sheet for location selection
+                                        final selected = await showModalBottomSheet<String>(
+                                          context: context,
+                                          isScrollControlled: true,
+                                          shape: const RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+                                          ),
+                                          builder: (context) => Container(
+                                            height: MediaQuery.of(context).size.height * 0.7,
+                                            child: Column(
+                                              children: [
+                                                const SizedBox(height: 16),
+                                                const Text('Select Location', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+                                                const Divider(),
+                                                Expanded(
+                                                  child: ListView(
+                                                    children: locationController.locations.map((location) => ListTile(
+                                                      title: Text(location),
+                                                      onTap: () => Navigator.pop(context, location),
+                                                      selected: _selectedLocation == location,
+                                                      trailing: _selectedLocation == location ? const Icon(Icons.check, color: Colors.blue) : null,
+                                                    )).toList(),
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        );
+                                        if (selected != null) {
+                                          setState(() => _selectedLocation = selected);
+                                          setDialogState(() {});
+                                        }
+                                      },
+                                      child: AbsorbPointer(
+                                        child: TextFormField(
+                                          decoration: InputDecoration(
+                                            labelText: 'Location',
+                                            prefixIcon: const Icon(Icons.location_on_outlined),
+                                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+                                            filled: true,
+                                            hintText: 'Select Location',
+                                          ),
+                                          controller: TextEditingController(text: _selectedLocation),
+                                          validator: (value) {
+                                            if (value == null || value.isEmpty) {
+                                              return 'Please select a location';
+                                            }
+                                            return null;
+                                          },
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Align(
+                                      alignment: Alignment.centerRight,
+                                      child: IconButton(
+                                        icon: const Icon(Icons.refresh),
+                                        onPressed: () async {
+                                          await locationController.loadLocations();
+                                          setDialogState(() {});
+                                        },
+                                        tooltip: 'Refresh locations',
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ),
                           ),
                         ),
-                        IconButton(
-                          icon: const Icon(Icons.refresh),
-                          onPressed: () async {
-                            await locationController.loadLocations();
-                            setDialogState(() {
-                              // Just rebuild the dialog, don't set a default
-                            });
-                          },
-                          tooltip: 'Refresh locations',
+                        const SizedBox(height: 16),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            TextButton(
+                              onPressed: () => Navigator.pop(context),
+                              child: const Text('Cancel'),
+                            ),
+                            const SizedBox(width: 16),
+                            ElevatedButton(
+                              style: ElevatedButton.styleFrom(
+                                minimumSize: const Size(120, 48),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                                backgroundColor: Colors.blue,
+                              ),
+                              onPressed: _isLoading ? null : () {
+                                Navigator.pop(context);
+                                _createNewAccount();
+                              },
+                              child: _isLoading
+                                  ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                                  : const Text('Create', style: TextStyle(fontSize: 18)),
+                            ),
+                          ],
                         ),
                       ],
                     ),
-                  ],
-                ],
+                  ),
+                ),
               ),
             ),
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              onPressed: _isLoading ? null : () {
-                Navigator.pop(context);
-                _createNewAccount();
-              },
-              child: _isLoading
-                  ? const CircularProgressIndicator()
-                  : const Text('Create'),
-            ),
-          ],
-        ),
-      ),
+        );
+      },
+      transitionBuilder: (context, anim1, anim2, child) {
+        return SlideTransition(
+          position: Tween<Offset>(begin: const Offset(0, 1), end: Offset.zero).animate(anim1),
+          child: child,
+        );
+      },
     );
   }
 
@@ -390,65 +458,149 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('User Management'),
+        backgroundColor: Colors.white,
+        elevation: 0,
+        foregroundColor: Colors.black,
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: _showCreateAccountDialog,
-        child: const Icon(Icons.add),
+        backgroundColor: Colors.blue,
+        shape: const CircleBorder(),
+        child: const Icon(Icons.person_add_alt_1, size: 28),
       ),
-      body: StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance.collection('users').snapshots(),
-        builder: (context, snapshot) {
-          if (snapshot.hasError) {
-            return Center(child: Text('Error: ${snapshot.error}'));
-          }
-
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-
-          final users = snapshot.data!.docs;
-
-          return ListView.builder(
-            itemCount: users.length,
-            itemBuilder: (context, index) {
-              final user = users[index];
-              final userData = user.data() as Map<String, dynamic>;
-              final currentRole = userData['role']?.toString() ?? 'technician';
-              final email = userData['email'] as String? ?? 'No email';
-
-              return ListTile(
-                title: Text(email),
-                subtitle: Text('Role: $currentRole'),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (currentRole == 'agent')
-                      IconButton(
-                        icon: Icon(Icons.edit, color: Colors.blue),
-                        onPressed: () => _showEditAgentDialog(user),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: TextField(
+              decoration: InputDecoration(
+                hintText: 'Search users...',
+                prefixIcon: const Icon(Icons.search),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+                filled: true,
+              ),
+              onChanged: (value) => setState(() => _searchQuery = value),
+            ),
+          ),
+          Expanded(
+            child: StreamBuilder<QuerySnapshot>(
+              stream: FirebaseFirestore.instance.collection('users').snapshots(),
+              builder: (context, snapshot) {
+                if (snapshot.hasError) {
+                  return Center(child: Text('Error: ${snapshot.error}'));
+                }
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                final users = snapshot.data!.docs.where((doc) {
+                  final data = doc.data() as Map<String, dynamic>;
+                  final email = data['email']?.toString() ?? '';
+                  final name = data['name']?.toString() ?? '';
+                  return email.toLowerCase().contains(_searchQuery.toLowerCase()) ||
+                      name.toLowerCase().contains(_searchQuery.toLowerCase());
+                }).toList();
+                if (users.isEmpty) {
+                  return const Center(child: Text('No users found.'));
+                }
+                return ListView.separated(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  itemCount: users.length,
+                  separatorBuilder: (context, idx) => const SizedBox(height: 12),
+                  itemBuilder: (context, index) {
+                    final user = users[index];
+                    final userData = user.data() as Map<String, dynamic>;
+                    final currentRole = userData['role']?.toString() ?? 'technician';
+                    final email = userData['email'] as String? ?? 'No email';
+                    final name = userData['name'] as String? ?? '';
+                    final badgeColor = currentRole == 'boss'
+                        ? Colors.deepPurple
+                        : currentRole == 'agent'
+                            ? Colors.blue
+                            : Colors.green;
+                    return Card(
+                      elevation: 2,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        child: Row(
+                          children: [
+                            CircleAvatar(
+                              backgroundColor: badgeColor.withOpacity(0.15),
+                              child: Icon(
+                                currentRole == 'boss'
+                                    ? Icons.star
+                                    : currentRole == 'agent'
+                                        ? Icons.person
+                                        : Icons.build,
+                                color: badgeColor,
+                              ),
+                            ),
+                            const SizedBox(width: 16),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    name.isNotEmpty ? name : email,
+                                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(email, style: const TextStyle(color: Colors.grey)),
+                                  const SizedBox(height: 4),
+                                  Row(
+                                    children: [
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: badgeColor.withOpacity(0.15),
+                                          borderRadius: BorderRadius.circular(8),
+                                        ),
+                                        child: Text(
+                                          currentRole.toUpperCase(),
+                                          style: TextStyle(
+                                            color: badgeColor,
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                            if (currentRole == 'agent')
+                              IconButton(
+                                icon: const Icon(Icons.edit, color: Colors.blue),
+                                onPressed: () => _showEditAgentDialog(user),
+                              ),
+                            DropdownButton<String>(
+                              value: currentRole,
+                              underline: const SizedBox(),
+                              items: <DropdownMenuItem<String>>[
+                                const DropdownMenuItem<String>(
+                                    value: 'technician', child: Text('Technician')),
+                                const DropdownMenuItem<String>(
+                                    value: 'agent', child: Text('Agent')),
+                                const DropdownMenuItem<String>(
+                                    value: 'boss', child: Text('Boss')),
+                              ],
+                              onChanged: (String? newRole) {
+                                if (newRole != null && newRole != currentRole) {
+                                  authController.updateUserRole(user.id, newRole);
+                                }
+                              },
+                            ),
+                          ],
+                        ),
                       ),
-                    DropdownButton<String>(
-                      value: currentRole,
-                      items: <DropdownMenuItem<String>>[
-                        const DropdownMenuItem<String>(
-                            value: 'technician', child: Text('Technician')),
-                        const DropdownMenuItem<String>(
-                            value: 'agent', child: Text('Agent')),
-                        const DropdownMenuItem<String>(
-                            value: 'boss', child: Text('Boss')),
-                      ],
-                      onChanged: (String? newRole) {
-                        if (newRole != null && newRole != currentRole) {
-                          authController.updateUserRole(user.id, newRole);
-                        }
-                      },
-                    ),
-                  ],
-                ),
-              );
-            },
-          );
-        },
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }
