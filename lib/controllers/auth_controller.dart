@@ -11,17 +11,21 @@ class AuthController extends GetxController {
   final RxString _userRole = ''.obs;
   final RxString _userName = ''.obs;
   final RxString _userLocation = ''.obs;
-  final RxMap<String, num> _allowedBundles = <String, num>{}.obs;
+  final RxMap<String, dynamic> _allowedBundles = <String, dynamic>{}.obs;
+  final RxList<String> _userLocations = <String>[].obs;
 
   User? get user => _user.value;
   String get userRole => _userRole.value;
   String get userName => _userName.value;
   String get userLocation => _userLocation.value;
+  List<String> get userLocations => _userLocations.toList();
   RxString get userLocationStream => _userLocation;
-  RxMap<String, num> get allowedBundlesStream => _allowedBundles;
-  Map<String, num> get allowedBundles => _allowedBundles;
+  RxList<String> get userLocationsStream => _userLocations;
+  RxMap<String, dynamic> get allowedBundlesStream => _allowedBundles;
+  Map<String, dynamic> get allowedBundles => _allowedBundles;
   bool get isBoss => _userRole.value == 'boss';
   bool get isAgent => _userRole.value == 'agent';
+  bool get isSuperAgent => _userRole.value == 'superagent';
 
   @override
   void onInit() {
@@ -49,8 +53,25 @@ class AuthController extends GetxController {
       _userName.value = userData['name'] ?? '';
       _userLocation.value = userData['location'] ?? '';
       if (userData['allowed_bundles'] != null) {
-        final bundlesData = Map<String, dynamic>.from(userData['allowed_bundles']);
-        _allowedBundles.value = bundlesData.map((key, value) => MapEntry(key, value as num));
+        try {
+          // Handle both List and Map types for allowed_bundles
+          final bundlesRaw = userData['allowed_bundles'];
+          if (bundlesRaw is Map) {
+            final bundlesData = Map<String, dynamic>.from(bundlesRaw);
+            _allowedBundles.value = bundlesData;
+          } else if (bundlesRaw is List) {
+            // Convert List to Map if needed, or handle as appropriate for your app
+            _allowedBundles.clear();
+            print('Warning: allowed_bundles is a List, expected Map. Data: $bundlesRaw');
+          } else {
+            _allowedBundles.clear();
+            print('Warning: allowed_bundles has unexpected type: ${bundlesRaw.runtimeType}');
+          }
+        } catch (e) {
+          print('Error processing allowed_bundles: $e');
+          _allowedBundles.clear();
+        }
+        // Moved to try-catch block above
       } else {
         _allowedBundles.clear();
       }
@@ -80,6 +101,12 @@ class AuthController extends GetxController {
   void setUserRole(String role) {
     _userRole.value = role;
     _saveUserRoleToPrefs(role);
+  }
+
+  void setCurrentLocation(String location) {
+    if (_userLocations.contains(location)) {
+      _userLocation.value = location;
+    }
   }
 
   Future<UserCredential?> login(String email, String password) async {

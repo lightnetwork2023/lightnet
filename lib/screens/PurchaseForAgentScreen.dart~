@@ -180,13 +180,13 @@ class _PurchaseForAgentScreenState extends State<PurchaseForAgentScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Confirm by Entering your PIN'),
+            content: Text('Bundle purchased successfully for ${selectedAgent['name']}!'),
             backgroundColor: Colors.green,
           ),
         );
         _phoneController.clear();
       }
-
+      
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

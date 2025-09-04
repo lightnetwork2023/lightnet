@@ -21,7 +21,7 @@ class _GenerateUserScreenState extends State<GenerateUserScreen> {
   void _generateUsers() async {
     if (_formKey.currentState!.validate()) {
       final numUsers = int.parse(_numUsersController.text);
-      final numDays = double.parse(_numDaysController.text);
+      final numDays = int.parse(_numDaysController.text);
 
       final result = await ApiService.generateUsers(
         numUsers: numUsers,

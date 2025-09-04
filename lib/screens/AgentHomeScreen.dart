@@ -6,6 +6,7 @@ import '../controllers/ApiService.dart';
 import 'package:intl/intl.dart';
 
 import 'AgentUsersScreen.dart';
+import 'PaymentAnalyticsPage.dart';
 
 class AgentHomeScreen extends StatefulWidget {
   const AgentHomeScreen({super.key});
@@ -22,6 +23,11 @@ class _AgentHomeScreenState extends State<AgentHomeScreen> {
   bool _isGenerating = false;
   String _selectedQuantity = '';
   String _selectedProvider = 'Mpesa';
+  int _selectedDays = 1; // Track selected days for the bundle
+
+  // Store GetX workers for proper disposal
+  late Worker _bundlesWorker;
+  late Worker _locationWorker;
 
   // This list now only defines which bundles are possible, not their prices.
   final List<String> _masterBundleQuantities = ['40', '12'];
@@ -40,37 +46,59 @@ class _AgentHomeScreenState extends State<AgentHomeScreen> {
     super.initState();
 
     _buildAvailableBundles(); // Initial setup
-    ever(_authController.allowedBundlesStream, (_) => _buildAvailableBundles());
+    
+    // Store workers for proper disposal
+    _bundlesWorker = ever(_authController.allowedBundlesStream, (_) {
+      if (mounted) {
+        _buildAvailableBundles();
+      }
+    });
 
     // Use a listener to load data when userLocation is available
-    ever(_authController.userLocationStream, (String location) {
-      if (location.isNotEmpty) {
+    _locationWorker = ever(_authController.userLocationStream, (String location) {
+      if (mounted && location.isNotEmpty) {
         _loadData();
       }
     });
+    
     // Initial load just in case location is already available
     if (_authController.userLocation.isNotEmpty) {
       _loadData();
     }
   }
 
+  @override
+  void dispose() {
+    // Dispose GetX workers to prevent memory leaks
+    _bundlesWorker.dispose();
+    _locationWorker.dispose();
+    _phoneController.dispose();
+    super.dispose();
+  }
+
   void _buildAvailableBundles() {
+    if (!mounted) return; // Check if widget is still mounted
     final allowedBundlesMap = _authController.allowedBundles;
-    
     setState(() {
       _availableAmountOptions = allowedBundlesMap.entries.map((entry) {
-        return {'quantity': entry.key, 'price': entry.value};
+        final bundle = entry.value;
+        return {
+          'quantity': entry.key,
+          'price': bundle['price'],
+          'days': bundle['days'],
+        };
       }).toList();
-
-      // If there are available options, set a default selection
       if (_availableAmountOptions.isNotEmpty) {
-        // If the current selection is no longer valid or is empty, reset it
         if (_selectedQuantity.isEmpty || !_availableAmountOptions.any((opt) => opt['quantity'] == _selectedQuantity)) {
           _selectedQuantity = _availableAmountOptions.first['quantity'];
+          _selectedDays = _availableAmountOptions.first['days'];
+        } else {
+          final selected = _availableAmountOptions.firstWhere((opt) => opt['quantity'] == _selectedQuantity);
+          _selectedDays = selected['days'];
         }
       } else {
-        // No bundles available for this agent
         _selectedQuantity = '';
+        _selectedDays = 1;
       }
     });
   }
@@ -119,7 +147,8 @@ class _AgentHomeScreenState extends State<AgentHomeScreen> {
       );
       final int price = selectedOption['price'];
       final int quantity = int.parse(selectedOption['quantity']);
-      final int durationSeconds = 86400; // 1 day
+      final int days = selectedOption['days'];
+      final double durationSeconds = days * 86400;
       final String phone = _phoneController.text.trim();
       final String provider = _selectedProvider;
       final String location = _authController.userLocation;
@@ -132,6 +161,7 @@ class _AgentHomeScreenState extends State<AgentHomeScreen> {
         quantity: quantity,
         durationSeconds: durationSeconds,
         location: location,
+        days: days,
       );
       if (paymentResult['error'] != null) {
         if (mounted) {
@@ -141,8 +171,15 @@ class _AgentHomeScreenState extends State<AgentHomeScreen> {
         }
         return;
       }
-
-
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Confirm by Entering your PIN'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        _phoneController.clear();
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -197,6 +234,7 @@ class _AgentHomeScreenState extends State<AgentHomeScreen> {
                 // Navigate to payments screen filtered by agent's location
               },
             ),
+
             const Divider(),
             ListTile(
               leading: const Icon(Icons.logout),
@@ -294,13 +332,17 @@ class _AgentHomeScreenState extends State<AgentHomeScreen> {
                                 return DropdownMenuItem<String>(
                                   value: option['quantity'],
                                   child: Text(
-                                    '${option['quantity']} vouchers - ${option['price']} TSH',
+                                    '	${option['quantity']} vouchers - ${option['price']} TSH - ${option['days']} day${option['days'] > 1 ? 's' : ''}',
                                   ),
                                 );
                               }).toList(),
                               onChanged: _availableAmountOptions.isEmpty ? null : (value) {
                                 if (value != null) {
-                                  setState(() => _selectedQuantity = value);
+                                  setState(() {
+                                    _selectedQuantity = value;
+                                    final selected = _availableAmountOptions.firstWhere((opt) => opt['quantity'] == value);
+                                    _selectedDays = selected['days'];
+                                  });
                                 }
                               },
                             ),

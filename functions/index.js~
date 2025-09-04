@@ -227,58 +227,6 @@ exports.storeUserLocation = onRequest(async (req, res) => {
   }
 });
 
-// --- New: Delete User From Location Function ---
-/**
- * HTTP Cloud Function to delete a user from a specific location's subcollection in Firestore.
- * This function expects a JSON payload in the request body containing 'username' and 'location'.
- *
- * @param req The Express Request object.
- * @param res The Express Response object.
- */
-exports.deleteUserFromLocation = onRequest(async (req, res) => {
-  logger.info('Received request for deleteUserFromLocation:', req.method, req.body);
-
-  if (req.method !== 'POST') {
-    logger.warn(`Method Not Allowed for deleteUserFromLocation: Received a ${req.method} request.`);
-    return res.status(405).send('Method Not Allowed');
-  }
-
-  if (!req.body || typeof req.body !== 'object') {
-    logger.error('Bad Request for deleteUserFromLocation: Request body is missing or not a JSON object.');
-    return res.status(400).send('Bad Request: Request body must be a JSON object.');
-  }
-
-  const { username, location } = req.body;
-
-  if (!username || !location) {
-    logger.error('Bad Request for deleteUserFromLocation: Missing required data (username, location).', req.body);
-    return res.status(400).send('Bad Request: Missing required data (username, location).');
-  }
-
-  try {
-    // Reference the specific user document within the location's subcollection.
-    const userDocRef = db.collection('locations').doc(location).collection('users').doc(username);
-
-    // Check if the document exists before attempting to delete it.
-    const docSnapshot = await userDocRef.get();
-    if (!docSnapshot.exists) {
-      logger.warn(`User ${username} not found under location ${location}. No deletion performed.`);
-      return res.status(404).send({ message: `User ${username} not found under location ${location}.` });
-    }
-
-    // Delete the document.
-    await userDocRef.delete();
-
-    logger.info(`Successfully deleted user ${username} from location '${location}' in Firestore.`);
-    return res.status(200).send({ message: `User ${username} deleted successfully from location '${location}'.` });
-
-  } catch (error) {
-    logger.error('Error deleting user from Firestore via deleteUserFromLocation:', error);
-    return res.status(500).send('Internal Server Error: Failed to delete user data.');
-  }
-});
-
-
 // --- MikroTik API Configuration ---
 const mikrotikConfig = {
   host: "41.59.115.231",

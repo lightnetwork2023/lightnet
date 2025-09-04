@@ -21,8 +21,11 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
   final _nameController = TextEditingController();
   String _selectedRole = 'technician';
   String _selectedLocation = '';
+  List<String> _selectedLocations = [];
   String _searchQuery = '';
   bool _isLoading = false;
+  List<Map<String, dynamic>> _availableAmountOptions = [];
+  String _selectedQuantity = '';
 
   @override
   void initState() {
@@ -49,8 +52,9 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
           _emailController.text.trim(),
           _passwordController.text,
           _selectedRole,
-          name: _selectedRole == 'agent' ? _nameController.text.trim() : null,
-          location: _selectedRole == 'agent' ? _selectedLocation : null,
+          name: (_selectedRole == 'agent' || _selectedRole == 'superagent') ? _nameController.text.trim() : null,
+          location: _selectedRole == 'agent' ? _selectedLocation : (_selectedRole == 'superagent' && _selectedLocations.isNotEmpty ? _selectedLocations.first : null),
+          locations: _selectedRole == 'superagent' ? _selectedLocations : null,
         );
 
         if (mounted) {
@@ -64,6 +68,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
           setState(() {
             _selectedRole = 'technician';
             _selectedLocation = ''; // Reset to blank
+            _selectedLocations.clear(); // Reset selected locations
           });
         }
       } catch (e) {
@@ -197,6 +202,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                                     items: <DropdownMenuItem<String>>[
                                       const DropdownMenuItem<String>(value: 'technician', child: Text('Technician')),
                                       const DropdownMenuItem<String>(value: 'agent', child: Text('Agent')),
+                                      const DropdownMenuItem<String>(value: 'superagent', child: Text('Super Agent')),
                                       const DropdownMenuItem<String>(value: 'boss', child: Text('Boss')),
                                     ],
                                     onChanged: (String? value) {
@@ -206,7 +212,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                                       }
                                     },
                                   ),
-                                  if (_selectedRole == 'agent') ...[
+                                  if (_selectedRole == 'agent' || _selectedRole == 'superagent') ...[
                                     const SizedBox(height: 16),
                                     TextFormField(
                                       controller: _nameController,
@@ -224,60 +230,142 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                                       },
                                     ),
                                     const SizedBox(height: 16),
-                                    GestureDetector(
-                                      onTap: () async {
-                                        // Show modal bottom sheet for location selection
-                                        final selected = await showModalBottomSheet<String>(
-                                          context: context,
-                                          isScrollControlled: true,
-                                          shape: const RoundedRectangleBorder(
-                                            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-                                          ),
-                                          builder: (context) => Container(
-                                            height: MediaQuery.of(context).size.height * 0.7,
-                                            child: Column(
-                                              children: [
-                                                const SizedBox(height: 16),
-                                                const Text('Select Location', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-                                                const Divider(),
-                                                Expanded(
-                                                  child: ListView(
-                                                    children: locationController.locations.map((location) => ListTile(
-                                                      title: Text(location),
-                                                      onTap: () => Navigator.pop(context, location),
-                                                      selected: _selectedLocation == location,
-                                                      trailing: _selectedLocation == location ? const Icon(Icons.check, color: Colors.blue) : null,
-                                                    )).toList(),
-                                                  ),
-                                                ),
-                                              ],
+                                    if (_selectedRole == 'agent') 
+                                      // Single location selection for agent
+                                      GestureDetector(
+                                        onTap: () async {
+                                          final selected = await showModalBottomSheet<String>(
+                                            context: context,
+                                            isScrollControlled: true,
+                                            shape: const RoundedRectangleBorder(
+                                              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
                                             ),
+                                            builder: (context) => Container(
+                                              height: MediaQuery.of(context).size.height * 0.7,
+                                              child: Column(
+                                                children: [
+                                                  const SizedBox(height: 16),
+                                                  const Text('Select Location', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+                                                  const Divider(),
+                                                  Expanded(
+                                                    child: ListView(
+                                                      children: locationController.locations.map((location) => ListTile(
+                                                        title: Text(location),
+                                                        onTap: () => Navigator.pop(context, location),
+                                                        selected: _selectedLocation == location,
+                                                        trailing: _selectedLocation == location ? const Icon(Icons.check, color: Colors.blue) : null,
+                                                      )).toList(),
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          );
+                                          if (selected != null) {
+                                            setState(() => _selectedLocation = selected);
+                                            setDialogState(() {});
+                                          }
+                                        },
+                                        child: AbsorbPointer(
+                                          child: TextFormField(
+                                            decoration: InputDecoration(
+                                              labelText: 'Location',
+                                              prefixIcon: const Icon(Icons.location_on_outlined),
+                                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+                                              filled: true,
+                                              hintText: 'Select Location',
+                                            ),
+                                            controller: TextEditingController(text: _selectedLocation),
+                                            validator: (value) {
+                                              if (value == null || value.isEmpty) {
+                                                return 'Please select a location';
+                                              }
+                                              return null;
+                                            },
                                           ),
-                                        );
-                                        if (selected != null) {
-                                          setState(() => _selectedLocation = selected);
-                                          setDialogState(() {});
-                                        }
-                                      },
-                                      child: AbsorbPointer(
-                                        child: TextFormField(
-                                          decoration: InputDecoration(
-                                            labelText: 'Location',
-                                            prefixIcon: const Icon(Icons.location_on_outlined),
-                                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
-                                            filled: true,
-                                            hintText: 'Select Location',
+                                        ),
+                                      )
+                                    else if (_selectedRole == 'superagent')
+                                      // Multiple location selection for superagent
+                                      GestureDetector(
+                                        onTap: () async {
+                                          await showModalBottomSheet(
+                                            context: context,
+                                            isScrollControlled: true,
+                                            shape: const RoundedRectangleBorder(
+                                              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+                                            ),
+                                            builder: (context) => StatefulBuilder(
+                                              builder: (context, setBottomSheetState) => Container(
+                                                height: MediaQuery.of(context).size.height * 0.7,
+                                                child: Column(
+                                                  children: [
+                                                    const SizedBox(height: 16),
+                                                    const Text('Select Locations', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+                                                    const Text('Super Agent can work in multiple locations', style: TextStyle(color: Colors.grey)),
+                                                    const Divider(),
+                                                    Expanded(
+                                                      child: ListView(
+                                                        children: locationController.locations.map((location) => CheckboxListTile(
+                                                          title: Text(location),
+                                                          value: _selectedLocations.contains(location),
+                                                          onChanged: (bool? value) {
+                                                            setBottomSheetState(() {
+                                                              if (value == true) {
+                                                                _selectedLocations.add(location);
+                                                              } else {
+                                                                _selectedLocations.remove(location);
+                                                              }
+                                                            });
+                                                          },
+                                                        )).toList(),
+                                                      ),
+                                                    ),
+                                                    Padding(
+                                                      padding: const EdgeInsets.all(16.0),
+                                                      child: Row(
+                                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                                        children: [
+                                                          Text('${_selectedLocations.length} locations selected'),
+                                                          ElevatedButton(
+                                                            onPressed: () {
+                                                              Navigator.pop(context);
+                                                              setDialogState(() {});
+                                                            },
+                                                            child: const Text('Done'),
+                                                          ),
+                                                        ],
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                            ),
+                                          );
+                                        },
+                                        child: AbsorbPointer(
+                                          child: TextFormField(
+                                            decoration: InputDecoration(
+                                              labelText: 'Locations',
+                                              prefixIcon: const Icon(Icons.location_on_outlined),
+                                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+                                              filled: true,
+                                              hintText: 'Select Multiple Locations',
+                                            ),
+                                            controller: TextEditingController(
+                                              text: _selectedLocations.isEmpty 
+                                                ? '' 
+                                                : '${_selectedLocations.length} location${_selectedLocations.length == 1 ? '' : 's'} selected'
+                                            ),
+                                            validator: (value) {
+                                              if (_selectedLocations.isEmpty) {
+                                                return 'Please select at least one location';
+                                              }
+                                              return null;
+                                            },
                                           ),
-                                          controller: TextEditingController(text: _selectedLocation),
-                                          validator: (value) {
-                                            if (value == null || value.isEmpty) {
-                                              return 'Please select a location';
-                                            }
-                                            return null;
-                                          },
                                         ),
                                       ),
-                                    ),
                                     const SizedBox(height: 8),
                                     Align(
                                       alignment: Alignment.centerRight,
@@ -341,10 +429,23 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
 
   void _showEditAgentDialog(DocumentSnapshot user) {
     final userData = user.data() as Map<String, dynamic>;
-    final Map<String, num> currentAgentBundles =
-        userData.containsKey('allowed_bundles')
-            ? Map<String, num>.from(userData['allowed_bundles'])
-            : {};
+    final allowedBundlesMap = Map<String, dynamic>.from(userData['allowed_bundles'] ?? {});
+    setState(() {
+      _availableAmountOptions = allowedBundlesMap.entries.map((entry) {
+        final bundle = entry.value;
+        return {
+          'quantity': entry.key,
+          'price': bundle is Map ? bundle['price'] : bundle,
+          'days': bundle is Map ? bundle['days'] : 1,
+        };
+      }).toList();
+
+      if (_availableAmountOptions.isNotEmpty) {
+        _selectedQuantity = _availableAmountOptions.first['quantity'];
+      } else {
+        _selectedQuantity = '';
+      }
+    });
     
     showDialog(
       context: context,
@@ -367,24 +468,35 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
             }
 
             final allMasterBundles = snapshot.data!.docs;
-            final bundleControllers = {
+            final priceControllers = {
               for (var doc in allMasterBundles)
                 doc.id: TextEditingController(
-                  text: currentAgentBundles[doc.id]?.toString(),
+                  text: allowedBundlesMap[doc.id] is Map ?
+                    (allowedBundlesMap[doc.id]['price']?.toString() ?? '') :
+                    (allowedBundlesMap[doc.id]?.toString() ?? ''),
+                )
+            };
+            final daysControllers = {
+              for (var doc in allMasterBundles)
+                doc.id: TextEditingController(
+                  text: allowedBundlesMap[doc.id] is Map ?
+                    (allowedBundlesMap[doc.id]['days']?.toString() ?? '1') :
+                    '1',
                 )
             };
 
             return StatefulBuilder(
               builder: (context, setDialogState) {
                 return AlertDialog(
-                  title: Text('Edit Agent Bundles & Prices'),
+                  title: Text('Edit Agent Bundles, Prices & Days'),
                   content: SingleChildScrollView(
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: allMasterBundles.map((bundleDoc) {
                         final bundleId = bundleDoc.id;
-                        final controller = bundleControllers[bundleId]!;
-                        bool isEnabled = currentAgentBundles.containsKey(bundleId);
+                        final priceController = priceControllers[bundleId]!;
+                        final daysController = daysControllers[bundleId]!;
+                        bool isEnabled = allowedBundlesMap.containsKey(bundleId);
 
                         return Column(
                           children: [
@@ -394,9 +506,12 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                               onChanged: (bool? isChecked) {
                                 setDialogState(() {
                                   if (isChecked == true) {
-                                    currentAgentBundles[bundleId] = num.tryParse(controller.text) ?? 0;
+                                    allowedBundlesMap[bundleId] = {
+                                      'price': num.tryParse(priceController.text) ?? 0,
+                                      'days': int.tryParse(daysController.text) ?? 1,
+                                    };
                                   } else {
-                                    currentAgentBundles.remove(bundleId);
+                                    allowedBundlesMap.remove(bundleId);
                                   }
                                 });
                               },
@@ -404,16 +519,38 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                             if (isEnabled)
                               Padding(
                                 padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                                child: TextFormField(
-                                  controller: controller,
-                                  keyboardType: TextInputType.number,
-                                  decoration: InputDecoration(
-                                    labelText: 'Price for Bundle $bundleId',
-                                    prefixText: 'TSH ',
-                                  ),
-                                  onChanged: (value) {
-                                    currentAgentBundles[bundleId] = num.tryParse(value) ?? 0;
-                                  },
+                                child: Column(
+                                  children: [
+                                    TextFormField(
+                                      controller: priceController,
+                                      keyboardType: TextInputType.number,
+                                      decoration: InputDecoration(
+                                        labelText: 'Price for Bundle $bundleId',
+                                        prefixText: 'TSH ',
+                                      ),
+                                      onChanged: (value) {
+                                        allowedBundlesMap[bundleId] = {
+                                          'price': num.tryParse(value) ?? 0,
+                                          'days': int.tryParse(daysController.text) ?? 1,
+                                        };
+                                      },
+                                    ),
+                                    const SizedBox(height: 8),
+                                    TextFormField(
+                                      controller: daysController,
+                                      keyboardType: TextInputType.number,
+                                      decoration: InputDecoration(
+                                        labelText: 'Days for Bundle $bundleId',
+                                        prefixIcon: Icon(Icons.calendar_today),
+                                      ),
+                                      onChanged: (value) {
+                                        allowedBundlesMap[bundleId] = {
+                                          'price': num.tryParse(priceController.text) ?? 0,
+                                          'days': int.tryParse(value) ?? 1,
+                                        };
+                                      },
+                                    ),
+                                  ],
                                 ),
                               ),
                           ],
@@ -428,9 +565,11 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                     ),
                     ElevatedButton(
                       onPressed: () async {
-                        final newBundles = Map<String, num>.from(currentAgentBundles)
-                          ..removeWhere((key, value) => value <= 0);
-
+                        // Remove bundles with price <= 0 or days <= 0
+                        final newBundles = Map<String, dynamic>.from(allowedBundlesMap)
+                          ..removeWhere((key, value) =>
+                            (value is Map && ((value['price'] ?? 0) <= 0 || (value['days'] ?? 0) <= 0))
+                          );
                         await FirebaseFirestore.instance
                             .collection('users')
                             .doc(user.id)

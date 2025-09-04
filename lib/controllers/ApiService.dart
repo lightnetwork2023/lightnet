@@ -1,4 +1,7 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:cloud_firestore/cloud_firestore.dart';
 
@@ -13,10 +16,11 @@ class _CacheEntry {
     return DateTime.now().difference(timestamp) < cacheDuration;
   }
 }
+// New Data Model for Payment Analytics
 
 class ApiService {
   static const String baseUrl = 'http://167.179.100.104:5000';
-  
+
   // Cache storage
   static final Map<String, _CacheEntry> _cache = {};
   static const Duration _cacheDuration = Duration(minutes: 2);
@@ -42,7 +46,7 @@ class ApiService {
 
   static Future<Map<String, dynamic>> generateUsers({
     required int numUsers,
-    required double numDays,
+    required int numDays,
     required String location,
     String? speedLimit,
   }) async {
@@ -127,6 +131,9 @@ class ApiService {
   }
 
   static Future<List<dynamic>> fetchVouchers() async {
+    // Legacy: fetch all vouchers (may be slow for large datasets)
+    // Use fetchVouchersByName for filtered vouchers
+  
     const cacheKey = 'vouchers';
     final cachedData = _getCachedData<List<dynamic>>(cacheKey);
     if (cachedData != null) {
@@ -145,16 +152,51 @@ class ApiService {
       throw Exception('Failed to fetch vouchers: $e');
     }
   }
+  /// Fetches combined payment analytics summary from backend
+  static Future<Map<String, dynamic>> fetchPaymentsSummary() async {
+    const cacheKey = 'payments_summary';
+    final cachedData = _getCachedData<Map<String, dynamic>>(cacheKey);
+    if (cachedData != null) {
+      return cachedData;
+    }
+    final response = await http.get(Uri.parse('$baseUrl/fetch_payments_summary'));
+    if (response.statusCode != 200) {
+      throw Exception('Failed to fetch payment summary: ${response.body}');
+    }
+    final data = jsonDecode(response.body);
+    if (data['success'] != true) {
+      throw Exception('Payment summary error: ${data['error'] ?? 'Unknown error'}');
+    }
+    final summary = data['summary'] as Map<String, dynamic>;
+    _cacheData(cacheKey, summary);
+    return summary;
+  }
+
+  static Future<List<dynamic>> fetchVouchersByName() async {
+    final response = await http.get(Uri.parse('$baseUrl/get_vouchers_by_name'));
+    if (response.statusCode == 404) {
+      return [];
+    }
+    final data = jsonDecode(response.body);
+    if (data is Map<String, dynamic> && data.containsKey('vouchers')) {
+      return data['vouchers'];
+    }
+    throw Exception('Unexpected response from server');
+  }
 
   // Fetch and cache all valid users for all locations
   static Future<void> fetchAllValidUsers(List<String> locations) async {
-    for (final location in locations) {
+    // Make all requests in parallel instead of sequential
+    final futures = locations.map((location) async {
       try {
         await fetchValidUsers(location); // This will cache the result
       } catch (e) {
-        // Optionally log or handle error per location
+        debugPrint('Error fetching users for $location: $e');
       }
-    }
+    });
+    
+    // Wait for all requests to complete
+    await Future.wait(futures);
   }
 
   static Future<List<dynamic>> fetchRecentVouchers() async {
@@ -219,6 +261,77 @@ class ApiService {
       throw Exception('Failed to fetch today\'s vouchers: $e');
     }
   }
+
+  /// Fetches the total payment amount for today.
+  static Future<double> fetchTotalPaymentsToday() async {
+    const cacheKey = 'total_payments_today';
+    final cachedData = _getCachedData<double>(cacheKey);
+    if (cachedData != null) {
+      return cachedData;
+    }
+
+    try {
+      final response = await http.get(Uri.parse('$baseUrl/fetch_payments_today'));
+      if (response.statusCode != 200) {
+        throw Exception('Failed to load today\'s total payments: ${response.body}');
+      }
+      final data = json.decode(response.body);
+      final totalAmount = (data['total_amount'] as num).toDouble();
+      _cacheData(cacheKey, totalAmount);
+      return totalAmount;
+    } catch (e) {
+      print('Error fetching total payments today: $e');
+      rethrow;
+    }
+  }
+
+  /// Fetches the total payment amount for the current month.
+  static Future<double> fetchTotalPaymentsThisMonth() async {
+    const cacheKey = 'total_payments_this_month';
+    final cachedData = _getCachedData<double>(cacheKey);
+    if (cachedData != null) {
+      return cachedData;
+    }
+
+    try {
+      final response = await http.get(Uri.parse('$baseUrl/fetch_payments_this_month'));
+      if (response.statusCode != 200) {
+        throw Exception('Failed to load this month\'s total payments: ${response.body}');
+      }
+      final data = json.decode(response.body);
+      final totalAmount = (data['total_amount'] as num).toDouble();
+      _cacheData(cacheKey, totalAmount);
+      return totalAmount;
+    } catch (e) {
+      print('Error fetching total payments this month: $e');
+      rethrow;
+    }
+  }
+
+  /// Fetches the total payment amount for the last month.
+  static Future<double> fetchTotalPaymentsLastMonth() async {
+    const cacheKey = 'total_payments_last_month';
+    final cachedData = _getCachedData<double>(cacheKey);
+    if (cachedData != null) {
+      return cachedData;
+    }
+
+    try {
+      final response = await http.get(Uri.parse('$baseUrl/fetch_payments_last_month'));
+      if (response.statusCode != 200) {
+        throw Exception('Failed to load last month\'s total payments: ${response.body}');
+      }
+      final data = json.decode(response.body);
+      final totalAmount = (data['total_amount'] as num).toDouble();
+      _cacheData(cacheKey, totalAmount);
+      return totalAmount;
+    } catch (e) {
+      print('Error fetching total payments last month: $e');
+      rethrow;
+    }
+  }
+
+
 
   static Future<List<dynamic>> fetchPaymentsToday() async {
     const cacheKey = 'payments_today';
@@ -380,8 +493,9 @@ class ApiService {
     required String phone,
     required int amount,
     required int quantity,
-    required int durationSeconds,
+    required double durationSeconds,
     required String location,
+    int? days,
   }) async {
     final response = await http.post(
       Uri.parse('$baseUrl/make-paymentagent'),
@@ -393,9 +507,84 @@ class ApiService {
         'quantity': quantity,
         'durationSeconds': durationSeconds,
         'location': location,
+        if (days != null) 'days': days,
       }),
     );
     final result = jsonDecode(response.body);
     return result;
+  }
+
+  static Future<Map<String, dynamic>> insertVoucher({
+    required String macAddress,
+    String? name,
+    DateTime? expireTime,
+  }) async {
+    final Map<String, dynamic> body = {
+      'mac_address': macAddress,
+      if (name != null) 'name': name,
+      if (expireTime != null) 'expire_time': expireTime.toIso8601String(),
+    };
+  
+    final response = await http.post(
+      Uri.parse('$baseUrl/insert_voucher'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(body),
+    );
+    return jsonDecode(response.body);
+  }
+
+  static Future<Map<String, dynamic>> deleteVoucherByMac(String macAddress) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/delete_voucher_by_mac'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'mac_address': macAddress}),
+    );
+    return jsonDecode(response.body);
+  }
+
+  static Future<Map<String, dynamic>> deleteVoucherByUsername(String username) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/delete_voucher_by_username'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'username': username}),
+    );
+    return jsonDecode(response.body);
+  }
+
+  static Future<Map<String, dynamic>> updateVoucher({
+    required String username,
+    String? newMacAddress,
+    String? name,
+    DateTime? expireTime,
+  }) async {
+    final Map<String, dynamic> body = {
+      'username': username,
+      if (newMacAddress != null) 'new_mac_address': newMacAddress,
+      if (name != null) 'name': name,
+      if (expireTime != null) 'expire_time': expireTime.toIso8601String(),
+    };
+    final response = await http.post(
+      Uri.parse('$baseUrl/update_voucher'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(body),
+    );
+    return jsonDecode(response.body);
+  }
+
+  static Future<Map<String, dynamic>> updateVoucherByMac({
+    required String macAddress,
+    String? name,
+    DateTime? expireTime,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/update_voucher_by_mac'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'mac_address': macAddress,
+        'name': name ?? 'DefaultName',
+        if (expireTime != null) 'expire_time': expireTime.toIso8601String(),
+      }),
+    );
+    return jsonDecode(response.body);
   }
 }
