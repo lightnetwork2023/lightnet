@@ -7,6 +7,8 @@ import 'package:intl/intl.dart';
 
 import 'AgentUsersScreen.dart';
 import 'PaymentAnalyticsPage.dart';
+import 'AgentRecentLoginsScreen.dart';
+import 'AgentRecentPaymentsScreen.dart';
 
 class AgentHomeScreen extends StatefulWidget {
   const AgentHomeScreen({super.key});
@@ -228,10 +230,22 @@ class _AgentHomeScreenState extends State<AgentHomeScreen> {
             ),
             ListTile(
               leading: const Icon(Icons.payment),
-              title: const Text('View Payments'),
+              title: const Text('Recent Payments'),
               onTap: () {
                 Navigator.pop(context);
-                // Navigate to payments screen filtered by agent's location
+                Get.to(() => AgentRecentPaymentsScreen(
+                  location: _authController.userLocation,
+                ));
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.login),
+              title: const Text('Recent Logins'),
+              onTap: () {
+                Navigator.pop(context);
+                Get.to(() => AgentRecentLoginsScreen(
+                  location: _authController.userLocation,
+                ));
               },
             ),
 

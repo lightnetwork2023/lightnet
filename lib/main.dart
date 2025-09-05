@@ -4,6 +4,7 @@ import 'package:get/get.dart';
 import 'package:lightnetwork/screens/HomeScreen.dart';
 import 'package:lightnetwork/screens/LoginScreen.dart';
 import 'package:lightnetwork/screens/AgentHomeScreen.dart';
+import 'package:lightnetwork/screens/SuperAgentHomeScreen.dart';
 import 'controllers/location_controller.dart';
 import 'controllers/auth_controller.dart';
 import 'firebase_options.dart';
@@ -89,7 +90,9 @@ class AuthWrapper extends StatelessWidget {
       
       // If user is logged in and role is determined, show the correct screen
       if (authController.user != null) {
-        if (authController.isAgent) {
+        if (authController.isSuperAgent) {
+          return const SuperAgentHomeScreen();
+        } else if (authController.isAgent) {
           return const AgentHomeScreen();
         } else {
           return const HomeScreen(); // For 'boss' or 'technician'

@@ -26,6 +26,7 @@ class AuthController extends GetxController {
   bool get isBoss => _userRole.value == 'boss';
   bool get isAgent => _userRole.value == 'agent';
   bool get isSuperAgent => _userRole.value == 'superagent';
+  bool get isTechnician => _userRole.value == 'technician';
 
   @override
   void onInit() {
@@ -52,6 +53,20 @@ class AuthController extends GetxController {
       _userRole.value = userData['role'] ?? 'technician';
       _userName.value = userData['name'] ?? '';
       _userLocation.value = userData['location'] ?? '';
+      
+      // Handle locations for superagents and technicians
+      if (userData['locations'] != null && userData['locations'] is List) {
+        _userLocations.assignAll(List<String>.from(userData['locations']));
+        // Set current location to first location if available
+        if (_userLocations.isNotEmpty) {
+          _userLocation.value = _userLocations.first;
+        }
+      } else if (userData['location'] != null && userData['location'].isNotEmpty) {
+        _userLocations.assignAll([userData['location']]);
+      } else {
+        _userLocations.clear();
+      }
+      
       if (userData['allowed_bundles'] != null) {
         try {
           // Handle both List and Map types for allowed_bundles
@@ -126,7 +141,7 @@ class AuthController extends GetxController {
     }
   }
 
-  Future<UserCredential?> createNewAccount(String email, String password, String role, {String? name, String? location}) async {
+  Future<UserCredential?> createNewAccount(String email, String password, String role, {String? name, String? location, List<String>? locations}) async {
     print('AuthController: Starting user creation for email: $email, role: $role');
     
     if (!isBoss) {
@@ -148,6 +163,7 @@ class AuthController extends GetxController {
           'role': role,
           'name': name,
           'location': location,
+          'locations': locations,
         }),
       );
 

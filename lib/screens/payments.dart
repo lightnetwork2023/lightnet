@@ -15,6 +15,7 @@ class _PaymentsScreenState extends State<PaymentsScreen> {
   List<dynamic> _payments = [];
   List<dynamic> _filteredPayments = [];
   bool _loading = false;
+  bool _searching = false;
   String _searchText = '';
 
   void _fetchPayments() async {
@@ -25,18 +26,43 @@ class _PaymentsScreenState extends State<PaymentsScreen> {
     }
     setState(() {
       _payments = payments.reversed.toList(); // Newest at the top
-      _applySearch();
+      _filteredPayments = _payments; // Show all recent payments initially
       _loading = false;
     });
   }
 
-  void _applySearch() {
-    setState(() {
-      _filteredPayments = _payments.where((p) {
-        final phone = p['phone']?.toString().toLowerCase() ?? '';
-        return phone.contains(_searchText.toLowerCase());
-      }).toList();
-    });
+  void _performSearch(String searchText) async {
+    if (searchText.isEmpty) {
+      // If search is cleared, show recent payments
+      setState(() {
+        _filteredPayments = _payments;
+        _searching = false;
+      });
+      return;
+    }
+
+    setState(() => _searching = true);
+    
+    try {
+      final searchResults = await ApiService.searchPayments(searchText);
+      setState(() {
+        _filteredPayments = searchResults; // Backend already orders by timestamp DESC
+        _searching = false;
+      });
+    } catch (e) {
+      setState(() {
+        _filteredPayments = [];
+        _searching = false;
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Search failed: $e'),
+            backgroundColor: AppTheme.errorColor,
+          ),
+        );
+      }
+    }
   }
 
   @override
@@ -79,23 +105,25 @@ class _PaymentsScreenState extends State<PaymentsScreen> {
         children: [
           // Search Bar
           ModernSearchBar(
-            hintText: 'Search by phone number or username...',
+            hintText: 'Search by phone number (searches all payments)...',
             onChanged: (value) {
               setState(() {
                 _searchText = value;
-                _applySearch();
               });
+              _performSearch(value);
             },
           ),
           
           // Results Count
-          if (!_loading && _payments.isNotEmpty)
+          if (!_loading && !_searching)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Row(
                 children: [
                   Text(
-                    'Showing ${_filteredPayments.length} of ${_payments.length} payments',
+                    _searchText.isEmpty 
+                        ? 'Showing ${_filteredPayments.length} recent payments (24h)'
+                        : 'Found ${_filteredPayments.length} payments matching "$_searchText"',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: AppTheme.textSecondary,
                     ),
@@ -110,24 +138,26 @@ class _PaymentsScreenState extends State<PaymentsScreen> {
           Expanded(
             child: _loading
                 ? const ModernLoading(message: 'Loading recent payments...')
-                : _filteredPayments.isEmpty
-                    ? EmptyState(
-                        icon: Icons.payment_outlined,
-                        title: _searchText.isEmpty 
-                            ? 'No Recent Payments' 
-                            : 'No Payments Found',
-                        subtitle: _searchText.isEmpty
-                            ? 'No payments have been made in the last 24 hours.'
-                            : 'Try adjusting your search criteria.',
-                      )
-                    : ListView.builder(
-                        padding: const EdgeInsets.only(bottom: 16),
-                        itemCount: _filteredPayments.length,
-                        itemBuilder: (context, index) {
-                          final payment = _filteredPayments[index];
-                          return _buildPaymentCard(payment);
-                        },
-                      ),
+                : _searching
+                    ? const ModernLoading(message: 'Searching all payments...')
+                    : _filteredPayments.isEmpty
+                        ? EmptyState(
+                            icon: Icons.payment_outlined,
+                            title: _searchText.isEmpty 
+                                ? 'No Recent Payments' 
+                                : 'No Payments Found',
+                            subtitle: _searchText.isEmpty
+                                ? 'No payments have been made in the last 24 hours.'
+                                : 'No payments found matching "$_searchText".',
+                          )
+                        : ListView.builder(
+                            padding: const EdgeInsets.only(bottom: 16),
+                            itemCount: _filteredPayments.length,
+                            itemBuilder: (context, index) {
+                              final payment = _filteredPayments[index];
+                              return _buildPaymentCard(payment);
+                            },
+                          ),
           ),
         ],
       ),

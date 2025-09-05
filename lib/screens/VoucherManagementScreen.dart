@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:intl/intl.dart';
@@ -132,6 +133,31 @@ class _VoucherManagementScreenState extends State<VoucherManagementScreen> {
     setState(() {
       _selectedExpireTime = null;
     });
+  }
+
+  Future<void> _copyToClipboard(String text, String label) async {
+    try {
+      await Clipboard.setData(ClipboardData(text: text));
+      Get.snackbar(
+        'Copied!',
+        '$label copied to clipboard',
+        snackPosition: SnackPosition.BOTTOM,
+        backgroundColor: AppTheme.successColor,
+        colorText: Colors.white,
+        duration: const Duration(seconds: 2),
+        margin: const EdgeInsets.all(16),
+      );
+    } catch (e) {
+      Get.snackbar(
+        'Error',
+        'Failed to copy $label',
+        snackPosition: SnackPosition.BOTTOM,
+        backgroundColor: AppTheme.errorColor,
+        colorText: Colors.white,
+        duration: const Duration(seconds: 2),
+        margin: const EdgeInsets.all(16),
+      );
+    }
   }
 
   Future<void> _showAddVoucherDialog() async {
@@ -571,12 +597,34 @@ class _VoucherManagementScreenState extends State<VoucherManagementScreen> {
                       ),
                     ),
                     const SizedBox(height: 4),
-                    Text(
-                      'Code: ${voucher['username']?.toString() ?? 'N/A'}',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: AppTheme.textSecondary,
-                        fontFamily: 'monospace',
-                      ),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Code: ${voucher['username']?.toString() ?? 'N/A'}',
+                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: AppTheme.textSecondary,
+                              fontFamily: 'monospace',
+                            ),
+                          ),
+                        ),
+                        if (voucher['username']?.toString().isNotEmpty == true)
+                          InkWell(
+                            onTap: () => _copyToClipboard(
+                              voucher['username'].toString(),
+                              'Voucher code',
+                            ),
+                            borderRadius: BorderRadius.circular(4),
+                            child: Container(
+                              padding: const EdgeInsets.all(4),
+                              child: Icon(
+                                Icons.copy_rounded,
+                                size: 16,
+                                color: AppTheme.primaryColor,
+                              ),
+                            ),
+                          ),
+                      ],
                     ),
                   ],
                 ),
@@ -627,6 +675,22 @@ class _VoucherManagementScreenState extends State<VoucherManagementScreen> {
                         ),
                       ),
                     ),
+                    if (hasMAC)
+                      InkWell(
+                        onTap: () => _copyToClipboard(
+                          voucher['mac_address'].toString(),
+                          'MAC address',
+                        ),
+                        borderRadius: BorderRadius.circular(4),
+                        child: Container(
+                          padding: const EdgeInsets.all(4),
+                          child: Icon(
+                            Icons.copy_rounded,
+                            size: 16,
+                            color: AppTheme.successColor,
+                          ),
+                        ),
+                      ),
                   ],
                 ),
                 const SizedBox(height: 8),

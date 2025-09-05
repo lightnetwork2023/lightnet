@@ -52,9 +52,9 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
           _emailController.text.trim(),
           _passwordController.text,
           _selectedRole,
-          name: (_selectedRole == 'agent' || _selectedRole == 'superagent') ? _nameController.text.trim() : null,
-          location: _selectedRole == 'agent' ? _selectedLocation : (_selectedRole == 'superagent' && _selectedLocations.isNotEmpty ? _selectedLocations.first : null),
-          locations: _selectedRole == 'superagent' ? _selectedLocations : null,
+          name: (_selectedRole == 'agent' || _selectedRole == 'superagent' || _selectedRole == 'technician') ? _nameController.text.trim() : null,
+          location: _selectedRole == 'agent' ? _selectedLocation : ((_selectedRole == 'superagent' || _selectedRole == 'technician') && _selectedLocations.isNotEmpty ? _selectedLocations.first : null),
+          locations: (_selectedRole == 'superagent' || _selectedRole == 'technician') ? _selectedLocations : null,
         );
 
         if (mounted) {
@@ -212,7 +212,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                                       }
                                     },
                                   ),
-                                  if (_selectedRole == 'agent' || _selectedRole == 'superagent') ...[
+                                  if (_selectedRole == 'agent' || _selectedRole == 'superagent' || _selectedRole == 'technician') ...[
                                     const SizedBox(height: 16),
                                     TextFormField(
                                       controller: _nameController,
@@ -285,8 +285,8 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                                           ),
                                         ),
                                       )
-                                    else if (_selectedRole == 'superagent')
-                                      // Multiple location selection for superagent
+                                    else if (_selectedRole == 'superagent' || _selectedRole == 'technician')
+                                      // Multiple location selection for superagent and technician
                                       GestureDetector(
                                         onTap: () async {
                                           await showModalBottomSheet(
@@ -302,7 +302,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                                                   children: [
                                                     const SizedBox(height: 16),
                                                     const Text('Select Locations', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-                                                    const Text('Super Agent can work in multiple locations', style: TextStyle(color: Colors.grey)),
+                                                    Text(_selectedRole == 'superagent' ? 'Super Agent can work in multiple locations' : 'Technician can work in multiple locations', style: const TextStyle(color: Colors.grey)),
                                                     const Divider(),
                                                     Expanded(
                                                       child: ListView(
@@ -424,6 +424,186 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
           child: child,
         );
       },
+    );
+  }
+
+  void _showEditUserDialog(DocumentSnapshot user) {
+    final userData = user.data() as Map<String, dynamic>;
+    final currentRole = userData['role']?.toString() ?? 'agent';
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Edit ${currentRole == 'superagent' ? 'Super Agent' : 'Agent'}'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.settings),
+              title: const Text('Edit Bundles & Pricing'),
+              subtitle: const Text('Manage allowed voucher bundles'),
+              onTap: () {
+                Navigator.pop(context);
+                _showEditAgentDialog(user);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.location_on),
+              title: Text('Edit ${currentRole == 'superagent' ? 'Locations' : 'Location'}'),
+              subtitle: Text('Manage assigned ${currentRole == 'superagent' ? 'locations' : 'location'}'),
+              onTap: () {
+                Navigator.pop(context);
+                _showEditLocationDialog(user);
+              },
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showEditLocationDialog(DocumentSnapshot user) {
+    final userData = user.data() as Map<String, dynamic>;
+    final currentRole = userData['role']?.toString() ?? 'agent';
+    
+    if (currentRole == 'superagent') {
+      _showEditSuperAgentLocationsDialog(user);
+    } else {
+      _showEditAgentLocationDialog(user);
+    }
+  }
+
+  void _showEditAgentLocationDialog(DocumentSnapshot user) {
+    final userData = user.data() as Map<String, dynamic>;
+    final currentLocation = userData['location']?.toString() ?? '';
+    String selectedLocation = currentLocation;
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Edit Agent Location'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Select new location for this agent:'),
+            const SizedBox(height: 16),
+            Obx(() {
+              final locations = locationController.locations;
+              return DropdownButtonFormField<String>(
+                value: selectedLocation.isEmpty ? null : selectedLocation,
+                decoration: const InputDecoration(
+                  labelText: 'Location',
+                  border: OutlineInputBorder(),
+                ),
+                items: locations.map((location) => DropdownMenuItem<String>(
+                  value: location,
+                  child: Text(location),
+                )).toList(),
+                onChanged: (String? newLocation) {
+                  selectedLocation = newLocation ?? '';
+                },
+              );
+            }),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              if (selectedLocation.isNotEmpty) {
+                await FirebaseFirestore.instance
+                    .collection('users')
+                    .doc(user.id)
+                    .update({'location': selectedLocation});
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Agent location updated successfully!')),
+                );
+              }
+            },
+            child: const Text('Update'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showEditSuperAgentLocationsDialog(DocumentSnapshot user) {
+    final userData = user.data() as Map<String, dynamic>;
+    final currentLocations = List<String>.from(userData['locations'] ?? []);
+    final selectedLocations = Set<String>.from(currentLocations);
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Edit Super Agent Locations'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('Select locations for this super agent:'),
+                const SizedBox(height: 16),
+                Flexible(
+                  child: Obx(() {
+                    final locations = locationController.locations;
+                    return ListView.builder(
+                      shrinkWrap: true,
+                      itemCount: locations.length,
+                      itemBuilder: (context, index) {
+                        final location = locations[index];
+                        final isSelected = selectedLocations.contains(location);
+                        return CheckboxListTile(
+                          title: Text(location),
+                          value: isSelected,
+                          onChanged: (bool? checked) {
+                            setDialogState(() {
+                              if (checked == true) {
+                                selectedLocations.add(location);
+                              } else {
+                                selectedLocations.remove(location);
+                              }
+                            });
+                          },
+                        );
+                      },
+                    );
+                  }),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: selectedLocations.isEmpty ? null : () async {
+                await FirebaseFirestore.instance
+                    .collection('users')
+                    .doc(user.id)
+                    .update({'locations': selectedLocations.toList()});
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Super agent locations updated successfully!')),
+                );
+              },
+              child: const Text('Update'),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -653,9 +833,11 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                     final name = userData['name'] as String? ?? '';
                     final badgeColor = currentRole == 'boss'
                         ? Colors.deepPurple
-                        : currentRole == 'agent'
-                            ? Colors.blue
-                            : Colors.green;
+                        : currentRole == 'superagent'
+                            ? Colors.purple
+                            : currentRole == 'agent'
+                                ? Colors.blue
+                                : Colors.green;
                     return Card(
                       elevation: 2,
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -668,9 +850,11 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                               child: Icon(
                                 currentRole == 'boss'
                                     ? Icons.star
-                                    : currentRole == 'agent'
-                                        ? Icons.person
-                                        : Icons.build,
+                                    : currentRole == 'superagent'
+                                        ? Icons.supervisor_account
+                                        : currentRole == 'agent'
+                                            ? Icons.person
+                                            : Icons.build,
                                 color: badgeColor,
                               ),
                             ),
@@ -708,10 +892,10 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                                 ],
                               ),
                             ),
-                            if (currentRole == 'agent')
+                            if (currentRole == 'agent' || currentRole == 'superagent')
                               IconButton(
                                 icon: const Icon(Icons.edit, color: Colors.blue),
-                                onPressed: () => _showEditAgentDialog(user),
+                                onPressed: () => _showEditUserDialog(user),
                               ),
                             DropdownButton<String>(
                               value: currentRole,
@@ -721,6 +905,8 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                                     value: 'technician', child: Text('Technician')),
                                 const DropdownMenuItem<String>(
                                     value: 'agent', child: Text('Agent')),
+                                const DropdownMenuItem<String>(
+                                    value: 'superagent', child: Text('Super Agent')),
                                 const DropdownMenuItem<String>(
                                     value: 'boss', child: Text('Boss')),
                               ],

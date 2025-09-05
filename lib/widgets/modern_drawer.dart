@@ -4,15 +4,17 @@ import '../theme/app_theme.dart';
 import '../controllers/auth_controller.dart';
 import '../screens/GenerateUserScreen.dart';
 import '../screens/VoucherManagementScreen.dart';
-import '../screens/valid_users.dart';
-import '../screens/VouchersByLocationScreen.dart';
 import '../screens/VouchersScreen.dart';
+import '../screens/VouchersByLocationScreen.dart';
+import '../screens/valid_users.dart';
+import '../screens/SuperAgentPaymentsScreen.dart';
 import '../screens/UserManagementScreen.dart';
 import '../screens/BundleManagementScreen.dart';
 import '../screens/PurchaseForAgentScreen.dart';
 import '../screens/payments.dart';
 import '../screens/PaymentAnalyticsPage.dart';
 import '../screens/NetworkDevicesScreen.dart';
+import '../screens/LocationDataScreen.dart';
 import '../screens/LoginScreen.dart';
 
 class ModernDrawer extends StatelessWidget {
@@ -168,6 +170,35 @@ class ModernDrawer extends StatelessWidget {
                     subtitle: 'Location-based vouchers',
                     onTap: () => _navigateTo(context, const VouchersByLocationScreen()),
                   ),
+                  // Location Data - Boss only
+                  Obx(() => authController.isBoss
+                      ? _buildDrawerItem(
+                          context,
+                          icon: Icons.location_on_rounded,
+                          title: 'Location Data',
+                          onTap: () {
+                            Navigator.pop(context);
+                            Get.to(() => ValidUsersScreen());
+                          },
+                        )
+                      : const SizedBox.shrink()),
+                  // SuperAgent Payments (SuperAgent only)
+                  Obx(() {
+                    print('DEBUG: User role: ${authController.userRole}');
+                    print('DEBUG: Is SuperAgent: ${authController.isSuperAgent}');
+                    return authController.isSuperAgent
+                        ? _buildDrawerItem(
+                            context,
+                            icon: Icons.payment_rounded,
+                            title: 'Recent Payments',
+                            subtitle: 'View payment history',
+                            onTap: () {
+                              Navigator.pop(context);
+                              Get.to(() => SuperAgentPaymentsScreen());
+                            },
+                          )
+                        : const SizedBox.shrink();
+                  }),
                   
                   // Boss and Technician items
                   Obx(() {
@@ -192,13 +223,18 @@ class ModernDrawer extends StatelessWidget {
                     subtitle: 'Payment history',
                     onTap: () => _navigateTo(context, PaymentsScreen()),
                   ),
-                  _buildDrawerItem(
-                    context,
-                    icon: Icons.analytics_outlined,
-                    title: 'Payment Analytics',
-                    subtitle: 'Financial insights',
-                    onTap: () => _navigateTo(context, const PaymentAnalyticsPage()),
-                  ),
+                  Obx(() {
+                    if (authController.userRole != 'technician') {
+                      return _buildDrawerItem(
+                        context,
+                        icon: Icons.analytics_outlined,
+                        title: 'Payment Analytics',
+                        subtitle: 'Financial insights',
+                        onTap: () => _navigateTo(context, const PaymentAnalyticsPage()),
+                      );
+                    }
+                    return const SizedBox.shrink();
+                  }),
                   _buildDrawerItem(
                     context,
                     icon: Icons.router_outlined,

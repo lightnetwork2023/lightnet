@@ -152,13 +152,14 @@ class ApiService {
       throw Exception('Failed to fetch vouchers: $e');
     }
   }
-  /// Fetches combined payment analytics summary from backend
+  /// Fetches combined payment analytics summary from backend (for boss - all locations)
   static Future<Map<String, dynamic>> fetchPaymentsSummary() async {
     const cacheKey = 'payments_summary';
     final cachedData = _getCachedData<Map<String, dynamic>>(cacheKey);
     if (cachedData != null) {
       return cachedData;
     }
+    
     final response = await http.get(Uri.parse('$baseUrl/fetch_payments_summary'));
     if (response.statusCode != 200) {
       throw Exception('Failed to fetch payment summary: ${response.body}');
@@ -166,6 +167,43 @@ class ApiService {
     final data = jsonDecode(response.body);
     if (data['success'] != true) {
       throw Exception('Payment summary error: ${data['error'] ?? 'Unknown error'}');
+    }
+    final summary = data['summary'] as Map<String, dynamic>;
+    _cacheData(cacheKey, summary);
+    return summary;
+  }
+
+  /// Fetches location-based payment analytics summary for agents/superagents
+  static Future<Map<String, dynamic>> fetchAgentPaymentsSummary({String? location, List<String>? locations}) async {
+    String cacheKey;
+    String url = '$baseUrl/fetch_agent_payments_summary';
+    
+    if (locations != null && locations.isNotEmpty) {
+      // For superagents with multiple locations
+      final locationsStr = locations.join(',');
+      cacheKey = 'agent_payments_summary_multi_${locationsStr.hashCode}';
+      url += '?locations=${Uri.encodeComponent(locationsStr)}';
+    } else if (location != null && location.isNotEmpty) {
+      // For agents with single location
+      cacheKey = 'agent_payments_summary_$location';
+      url += '?location=${Uri.encodeComponent(location)}';
+    } else {
+      // Fallback to global summary
+      cacheKey = 'agent_payments_summary';
+    }
+    
+    final cachedData = _getCachedData<Map<String, dynamic>>(cacheKey);
+    if (cachedData != null) {
+      return cachedData;
+    }
+    
+    final response = await http.get(Uri.parse(url));
+    if (response.statusCode != 200) {
+      throw Exception('Failed to fetch agent payment summary: ${response.body}');
+    }
+    final data = jsonDecode(response.body);
+    if (data['success'] != true) {
+      throw Exception('Agent payment summary error: ${data['error'] ?? 'Unknown error'}');
     }
     final summary = data['summary'] as Map<String, dynamic>;
     _cacheData(cacheKey, summary);
@@ -238,6 +276,20 @@ class ApiService {
       return payments;
     } catch (e) {
       throw Exception('Failed to fetch recent payments: $e');
+    }
+  }
+
+  static Future<List<dynamic>> searchPayments(String phone) async {
+    try {
+      final response = await http.get(Uri.parse('$baseUrl/search_payments?phone=${Uri.encodeComponent(phone)}'));
+      if (response.statusCode == 404) {
+        return [];
+      }
+      final data = jsonDecode(response.body);
+      final payments = data['payments'];
+      return payments;
+    } catch (e) {
+      throw Exception('Failed to search payments: $e');
     }
   }
 
@@ -451,6 +503,52 @@ class ApiService {
     }
   }
 
+  /// Fetches all unique locations from the location table
+  static Future<List<dynamic>> fetchAllLocations() async {
+    const cacheKey = 'all_locations';
+    final cachedData = _getCachedData<List<dynamic>>(cacheKey);
+    if (cachedData != null) {
+      return cachedData;
+    }
+
+    try {
+      final response = await http.get(Uri.parse('$baseUrl/locations'));
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final locations = data['locations'] as List<dynamic>;
+        _cacheData(cacheKey, locations);
+        return locations;
+      } else {
+        throw Exception('Failed to fetch locations: ${response.statusCode}');
+      }
+    } catch (e) {
+      throw Exception('Error fetching locations: $e');
+    }
+  }
+
+  /// Fetches location-specific data from the location table
+  static Future<List<dynamic>> fetchLocationData(String location) async {
+    final cacheKey = 'location_data_$location';
+    final cachedData = _getCachedData<List<dynamic>>(cacheKey);
+    if (cachedData != null) {
+      return cachedData;
+    }
+
+    try {
+      final response = await http.get(Uri.parse('$baseUrl/location_data?location=${Uri.encodeComponent(location)}'));
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final locationData = data['data'] as List<dynamic>;
+        _cacheData(cacheKey, locationData);
+        return locationData;
+      } else {
+        throw Exception('Failed to fetch location data: ${response.statusCode}');
+      }
+    } catch (e) {
+      throw Exception('Error fetching location data: $e');
+    }
+  }
+
   static Future<List<dynamic>> fetchOnlineMacs() async {
     const cacheKey = 'online_macs';
     try {
@@ -586,5 +684,42 @@ class ApiService {
       }),
     );
     return jsonDecode(response.body);
+  }
+
+  static Future<Map<String, dynamic>> fetchSuperAgentPayments(List<String> locations) async {
+    final locationsParam = locations.map((loc) => 'locations=${Uri.encodeComponent(loc)}').join('&');
+    final response = await http.get(
+      Uri.parse('$baseUrl/fetch_superagent_payments?$locationsParam'),
+      headers: {'Content-Type': 'application/json'},
+    );
+
+    if (response.statusCode == 200) {
+      return json.decode(response.body);
+    } else {
+      throw Exception('Failed to fetch superagent payments: ${response.statusCode}');
+    }
+  }
+
+  static Future<Map<String, dynamic>> fetchSuperAgentRecentVouchers({
+    required String locations,
+    String? searchTerm,
+  }) async {
+    final uri = Uri.parse('$baseUrl/fetch_superagent_recent_vouchers').replace(
+      queryParameters: {
+        'locations': locations,
+        if (searchTerm != null && searchTerm.isNotEmpty) 'search': searchTerm,
+      },
+    );
+
+    final response = await http.get(
+      uri,
+      headers: {'Content-Type': 'application/json'},
+    );
+
+    if (response.statusCode == 200) {
+      return json.decode(response.body);
+    } else {
+      throw Exception('Failed to fetch superagent recent vouchers: ${response.statusCode}');
+    }
   }
 }

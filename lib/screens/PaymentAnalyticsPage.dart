@@ -5,7 +5,10 @@ import '../theme/app_theme.dart';
 import '../widgets/modern_components.dart';
 
 class PaymentAnalyticsPage extends StatefulWidget {
-  const PaymentAnalyticsPage({super.key});
+  final String? location;
+  final List<String>? locations;
+  final String? userRole;
+  const PaymentAnalyticsPage({super.key, this.location, this.locations, this.userRole});
 
   @override
   State<PaymentAnalyticsPage> createState() => _PaymentAnalyticsPageState();
@@ -23,7 +26,12 @@ class _PaymentAnalyticsPageState extends State<PaymentAnalyticsPage> {
   // Fetch all analytics data from summary endpoint
   Future<PaymentAnalytics> _fetchAnalyticsData() async {
     try {
-      final summary = await ApiService.fetchPaymentsSummary();
+      final summary = widget.userRole == 'boss' 
+        ? await ApiService.fetchPaymentsSummary()
+        : await ApiService.fetchAgentPaymentsSummary(
+            location: widget.location,
+            locations: widget.locations,
+          );
       return PaymentAnalytics.fromSummary(summary);
     } catch (e) {
       rethrow;

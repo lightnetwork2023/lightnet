@@ -415,38 +415,39 @@ class _HomeScreenState extends State<HomeScreen> {
                   children: [
                     Row(
                       children: [
-                        Expanded(
-                          child: ModernCard(
-                            onTap: () => Navigator.push(
-                              context,
-                              MaterialPageRoute(builder: (_) => const PaymentAnalyticsPage()),
-                            ),
-                            margin: const EdgeInsets.only(right: 6),
-                            child: Column(
-                              children: [
-                                Container(
-                                  padding: const EdgeInsets.all(12),
-                                  decoration: BoxDecoration(
-                                    color: AppTheme.infoColor.withOpacity(0.1),
-                                    borderRadius: BorderRadius.circular(12),
+                        if (_authController.userRole != 'technician')
+                          Expanded(
+                            child: ModernCard(
+                              onTap: () => Navigator.push(
+                                context,
+                                MaterialPageRoute(builder: (_) => const PaymentAnalyticsPage()),
+                              ),
+                              margin: const EdgeInsets.only(right: 6),
+                              child: Column(
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.all(12),
+                                    decoration: BoxDecoration(
+                                      color: AppTheme.infoColor.withOpacity(0.1),
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    child: Icon(
+                                      Icons.analytics_rounded,
+                                      color: AppTheme.infoColor,
+                                      size: 24,
+                                    ),
                                   ),
-                                  child: Icon(
-                                    Icons.analytics_rounded,
-                                    color: AppTheme.infoColor,
-                                    size: 24,
+                                  const SizedBox(height: 12),
+                                  Text(
+                                    'Analytics',
+                                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                      fontWeight: FontWeight.w600,
+                                    ),
                                   ),
-                                ),
-                                const SizedBox(height: 12),
-                                Text(
-                                  'Analytics',
-                                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
                           ),
-                        ),
                         Expanded(
                           child: ModernCard(
                             onTap: () => Navigator.push(

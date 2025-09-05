@@ -41,7 +41,7 @@ exports.createUser = onRequest(async (request, response) => {
   }
 
   try {
-    const { email, password, role, name, location } = request.body;
+    const { email, password, role, name, location, locations } = request.body;
 
     // Initialize Firebase Auth (can be done inside the function if specific to auth operations)
     const auth = getAuth();
@@ -55,10 +55,10 @@ exports.createUser = onRequest(async (request, response) => {
     }
 
     // Validate role
-    const validRoles = ['technician', 'agent', 'boss'];
+    const validRoles = ['technician', 'agent', 'superagent', 'boss'];
     if (!validRoles.includes(role)) {
       response.status(400).json({
-        error: 'Invalid role. Must be one of: technician, agent, boss'
+        error: 'Invalid role. Must be one of: technician, agent, superagent, boss'
       });
       return;
     }
@@ -76,18 +76,38 @@ exports.createUser = onRequest(async (request, response) => {
       return;
     }
 
-    // Validate location for agents
+    // Validate location for agents and superagents
     if (role === 'agent' && (!location || location.trim() === '')) {
       response.status(400).json({ error: 'Location is required for agents' });
       return;
     }
 
-    // If location is provided, validate it exists in locations collection
-    if (location && location.trim() !== '') {
+    if (role === 'superagent' && (!locations || !Array.isArray(locations) || locations.length === 0)) {
+      response.status(400).json({ error: 'Multiple locations are required for superagents' });
+      return;
+    }
+
+    // Validate single location for agents
+    if (role === 'agent' && location && location.trim() !== '') {
       const locationDoc = await db.collection('locations').doc(location.trim()).get();
       if (!locationDoc.exists) {
         response.status(400).json({ error: `Location '${location}' does not exist in the system` });
         return;
+      }
+    }
+
+    // Validate multiple locations for superagents
+    if (role === 'superagent' && locations && Array.isArray(locations)) {
+      for (const loc of locations) {
+        if (!loc || loc.trim() === '') {
+          response.status(400).json({ error: 'All locations must be valid non-empty strings' });
+          return;
+        }
+        const locationDoc = await db.collection('locations').doc(loc.trim()).get();
+        if (!locationDoc.exists) {
+          response.status(400).json({ error: `Location '${loc}' does not exist in the system` });
+          return;
+        }
       }
     }
 
@@ -104,13 +124,19 @@ exports.createUser = onRequest(async (request, response) => {
       email: email,
       role: role,
       name: name || '',
-      location: location || '',
       createdAt: Timestamp.now(), // Use Timestamp.now() for consistency
     };
 
-    // Initialize allowed_bundles for agents
+    // Handle location data based on role
     if (role === 'agent') {
+      userData.location = location || '';
       userData.allowed_bundles = {};
+    } else if (role === 'superagent') {
+      userData.locations = locations || [];
+      userData.allowed_bundles = {};
+    } else {
+      // For technician and boss roles, store single location if provided
+      userData.location = location || '';
     }
 
     // Create user document in Firestore
