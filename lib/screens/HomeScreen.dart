@@ -420,7 +420,9 @@ class _HomeScreenState extends State<HomeScreen> {
                             child: ModernCard(
                               onTap: () => Navigator.push(
                                 context,
-                                MaterialPageRoute(builder: (_) => const PaymentAnalyticsPage()),
+                                MaterialPageRoute(builder: (_) => PaymentAnalyticsPage(
+                                  userRole: _authController.userRole,
+                                )),
                               ),
                               margin: const EdgeInsets.only(right: 6),
                               child: Column(

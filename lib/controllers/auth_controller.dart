@@ -26,7 +26,6 @@ class AuthController extends GetxController {
   bool get isBoss => _userRole.value == 'boss';
   bool get isAgent => _userRole.value == 'agent';
   bool get isSuperAgent => _userRole.value == 'superagent';
-  bool get isTechnician => _userRole.value == 'technician';
 
   @override
   void onInit() {
@@ -54,7 +53,7 @@ class AuthController extends GetxController {
       _userName.value = userData['name'] ?? '';
       _userLocation.value = userData['location'] ?? '';
       
-      // Handle locations for superagents and technicians
+      // Handle locations for superagents
       if (userData['locations'] != null && userData['locations'] is List) {
         _userLocations.assignAll(List<String>.from(userData['locations']));
         // Set current location to first location if available

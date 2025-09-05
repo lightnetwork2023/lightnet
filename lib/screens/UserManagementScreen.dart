@@ -52,9 +52,9 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
           _emailController.text.trim(),
           _passwordController.text,
           _selectedRole,
-          name: (_selectedRole == 'agent' || _selectedRole == 'superagent' || _selectedRole == 'technician') ? _nameController.text.trim() : null,
-          location: _selectedRole == 'agent' ? _selectedLocation : ((_selectedRole == 'superagent' || _selectedRole == 'technician') && _selectedLocations.isNotEmpty ? _selectedLocations.first : null),
-          locations: (_selectedRole == 'superagent' || _selectedRole == 'technician') ? _selectedLocations : null,
+          name: (_selectedRole == 'agent' || _selectedRole == 'superagent') ? _nameController.text.trim() : null,
+          location: _selectedRole == 'agent' ? _selectedLocation : (_selectedRole == 'superagent' && _selectedLocations.isNotEmpty ? _selectedLocations.first : null),
+          locations: _selectedRole == 'superagent' ? _selectedLocations : null,
         );
 
         if (mounted) {
@@ -212,7 +212,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                                       }
                                     },
                                   ),
-                                  if (_selectedRole == 'agent' || _selectedRole == 'superagent' || _selectedRole == 'technician') ...[
+                                  if (_selectedRole == 'agent' || _selectedRole == 'superagent') ...[
                                     const SizedBox(height: 16),
                                     TextFormField(
                                       controller: _nameController,
@@ -285,8 +285,8 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                                           ),
                                         ),
                                       )
-                                    else if (_selectedRole == 'superagent' || _selectedRole == 'technician')
-                                      // Multiple location selection for superagent and technician
+                                    else if (_selectedRole == 'superagent')
+                                      // Multiple location selection for superagent
                                       GestureDetector(
                                         onTap: () async {
                                           await showModalBottomSheet(
@@ -302,7 +302,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                                                   children: [
                                                     const SizedBox(height: 16),
                                                     const Text('Select Locations', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-                                                    Text(_selectedRole == 'superagent' ? 'Super Agent can work in multiple locations' : 'Technician can work in multiple locations', style: const TextStyle(color: Colors.grey)),
+                                                    const Text('Super Agent can work in multiple locations', style: TextStyle(color: Colors.grey)),
                                                     const Divider(),
                                                     Expanded(
                                                       child: ListView(

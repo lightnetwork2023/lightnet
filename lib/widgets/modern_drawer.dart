@@ -230,7 +230,9 @@ class ModernDrawer extends StatelessWidget {
                         icon: Icons.analytics_outlined,
                         title: 'Payment Analytics',
                         subtitle: 'Financial insights',
-                        onTap: () => _navigateTo(context, const PaymentAnalyticsPage()),
+                        onTap: () => _navigateTo(context, PaymentAnalyticsPage(
+                          userRole: authController.userRole,
+                        )),
                       );
                     }
                     return const SizedBox.shrink();
