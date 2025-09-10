@@ -176,10 +176,7 @@ class ModernDrawer extends StatelessWidget {
                           context,
                           icon: Icons.location_on_rounded,
                           title: 'Location Data',
-                          onTap: () {
-                            Navigator.pop(context);
-                            Get.to(() => ValidUsersScreen());
-                          },
+                          onTap: () => _navigateTo(context, const LocationDataScreen()),
                         )
                       : const SizedBox.shrink()),
                   // SuperAgent Payments (SuperAgent only)

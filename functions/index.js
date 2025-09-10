@@ -345,3 +345,153 @@ exports.updateNetworkSnapshot = onRequest(async (request, response) => {
     response.status(500).json({ error: 'Internal Server Error', details: error.message });
   }
 });
+
+// --- AzamPay Payment Processing ---
+const AZAM_CLIENT_ID = 'c7b6bda0-9a3f-47fb-b365-1110dfc37089';
+const AZAM_CLIENT_SECRET = 'EsOPLBAfwnLGCQUHOqjMaTqXm/nPv4A8o0WndaEZ4yJ9oJYLkVgPHeQvKPKA2exyvWEAnFL0fBipGq1Qbll6ePoPNfYdsIxYGd5g9UhyK1l8ytGnS3XQj6GUjCfo0J35sb0wgdFwpruktQ2a9SXdKMkuaCtjHPesNHCqPtoy9fUZmabAh7Igi5ZSA2UlTP8WQjaXmaoYEn8aJ1AQxCIEcaIo+DijH7w4hsCmoVWQTHnfpuYDrz3ndpE0eAPRfP381UBxNPuuedtckpTILuGtvRPKgxMAdQh/Lf38tlNnedsSOXm1aZZFa3Vgm8N+Epk338gspvc1syAmOmnUtAFCQqShiUrgiA8SZqzYerMvGWAteprO+B89l2PdL2LXjYcbVyyyGiptCoKEsCaHIRgitNydEMYsEfHhlygEvMCuBqMzWrPlJgugeGD0GlhNW1gR9iq2GLQzRHYwfrSJeFBo1oQb0frIS7tBHy5WisaDJtJalOWOmEy5UuLAVSg8PHVXJ94yOEA9mdg9x4HV0x+bA5JSi0+29tVC59HPly+N9BvsYVRIGWsqW82Ki3OOpZuRtc7O4/YfhrNplTxBBCv6+SDqF5bCKJpNwXKV9t9peAFe39Jy18DMnZ8WnmYMKh4FP2YQUfE4XWnoXhPuRswSw6eRevNiYIYEZbP6YsLPlNY=';
+
+// Token caching
+let accessToken = null;
+let tokenExpiry = null;
+
+// Function to get access token from AzamPay
+async function getAzamPayToken() {
+  // Check if we have a valid token
+  if (accessToken && tokenExpiry && new Date() < tokenExpiry) {
+    return accessToken;
+  }
+
+  try {
+    const response = await axios.post(
+      'https://authenticator.azampay.co.tz/AppRegistration/GenerateToken',
+      {
+        appName: 'lightnet',
+        clientId: AZAM_CLIENT_ID,
+        clientSecret: AZAM_CLIENT_SECRET
+      },
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'User-Agent': 'LightNet-Server/1.0'
+        },
+        timeout: 30000 // 30 seconds timeout
+      }
+    );
+
+    if (response.data && response.data.data && response.data.data.accessToken) {
+      accessToken = response.data.data.accessToken;
+      
+      // Set token expiry (default to 1 hour if not provided)
+      const expiresInMs = response.data.data.expiresIn || 3600 * 1000;
+      tokenExpiry = new Date(Date.now() + expiresInMs);
+      
+      logger.info('Successfully obtained AzamPay access token');
+      return accessToken;
+    }
+    
+    throw new Error('Invalid token response from AzamPay');
+  } catch (error) {
+    logger.error('Failed to get AzamPay token:', error.message);
+    throw new Error(`Payment service unavailable: ${error.message}`);
+  }
+}
+
+// Main payment processing function
+exports.processPayment = onRequest({ cors: true }, async (req, res) => {
+  // Set CORS headers
+  res.set('Access-Control-Allow-Origin', '*');
+  res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.set('Access-Control-Allow-Headers', 'Content-Type');
+
+  // Handle preflight requests
+  if (req.method === 'OPTIONS') {
+    res.status(204).send('');
+    return;
+  }
+
+  // Only allow POST requests
+  if (req.method !== 'POST') {
+    res.status(405).json({ success: false, error: 'Method not allowed. Use POST.' });
+    return;
+  }
+
+  try {
+    const { phone, amount, provider, location, durationSeconds, macAddress, nasIp } = req.body;
+    
+    // Validate required fields
+    if (!phone || !amount || !provider || !location || !durationSeconds || !macAddress) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: phone, amount, provider, location, durationSeconds, and macAddress are required'
+      });
+    }
+
+    // Generate a random voucher code (12 digits)
+    const voucherCode = Math.floor(100000000000 + Math.random() * 900000000000).toString();
+    
+    // Get AzamPay access token
+    const token = await getAzamPayToken();
+    
+    // Prepare payment payload
+    const payload = {
+      accountNumber: phone,
+      amount: amount.toString(),
+      currency: 'TZS',
+      externalId: require('crypto').randomUUID(),
+      provider: provider,
+      additionalProperties: {
+        voucher: voucherCode,
+        duration: durationSeconds.toString(),
+        location: location,
+        mac_address: macAddress,
+        ...(nasIp && { nas_ip: nasIp }) // Add nasIp if provided
+      }
+    };
+
+    // Make payment request to AzamPay
+    const paymentResponse = await axios.post(
+      'https://checkout.azampay.co.tz/azampay/mno/checkout',
+      payload,
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+          'X-API-Key': 'none'
+        },
+        timeout: 15000 // 15 seconds timeout
+      }
+    );
+
+    // Log successful payment initiation
+    logger.info('Payment initiated successfully', {
+      voucherCode,
+      phone,
+      amount,
+      location,
+      provider,
+      macAddress
+    });
+
+    // Return success response with voucher code
+    return res.status(200).json({
+      success: true,
+      voucherCode,
+      message: 'Payment initiated - use voucher now'
+    });
+
+  } catch (error) {
+    // Log the error
+    logger.error('Payment processing error:', error.response?.data || error.message);
+    
+    // Return appropriate error response
+    const statusCode = error.response?.status || 500;
+    const errorMessage = error.response?.data?.message || error.message || 'Payment processing failed';
+    
+    return res.status(statusCode).json({
+      success: false,
+      error: errorMessage,
+      details: error.response?.data || {}
+    });
+  }
+});
