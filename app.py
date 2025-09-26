@@ -1,5 +1,8 @@
 
 from flask import Flask, request, jsonify
+import socket
+import subprocess
+import re
 from flask_cors import CORS
 import mysql.connector
 import random
@@ -62,36 +65,135 @@ AZAM_CLIENT_SECRET = 'EsOPLBAfwnLGCQUHOqjMaTqXm/nPv4A8o0WndaEZ4yJ9oJYLkVgPHeQvKP
 ACCESS_TOKEN = None
 TOKEN_EXPIRY = None
 
+def resolve_azampay_ip():
+    """
+    Manually resolve AzamPay IP using external DNS when system DNS fails
+    """
+    hostname = 'authenticator.azampay.co.tz'
+    
+    # Try system DNS first
+    try:
+        ip = socket.gethostbyname(hostname)
+        print(f"[DNS] System resolved: {hostname} -> {ip}")
+        return None  # Return None if system DNS works (use hostname)
+    except socket.gaierror:
+        print(f"[DNS] System DNS failed for {hostname}")
+    
+    # Try manual DNS resolution using nslookup
+    dns_servers = ['8.8.8.8', '1.1.1.1', '208.67.222.222']
+    
+    for dns_server in dns_servers:
+        try:
+            result = subprocess.run(
+                ['nslookup', hostname, dns_server], 
+                capture_output=True, 
+                text=True, 
+                timeout=10
+            )
+            
+            if result.returncode == 0:
+                # Extract IP from nslookup output
+                lines = result.stdout.split('\n')
+                for line in lines:
+                    if 'Address:' in line and dns_server not in line:
+                        ip_match = re.search(r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b', line)
+                        if ip_match:
+                            ip = ip_match.group()
+                            print(f"[DNS] Manual resolved via {dns_server}: {hostname} -> {ip}")
+                            return ip
+        except Exception as e:
+            print(f"[DNS] Failed with {dns_server}: {e}")
+            continue
+    
+    print(f"[DNS] All resolution attempts failed")
+    return None
+
 def get_access_token():
     global ACCESS_TOKEN, TOKEN_EXPIRY
     
-    if ACCESS_TOKEN and TOKEN_EXPIRY > datetime.now():
-        print(f"Using cached token (expires {TOKEN_EXPIRY}): {ACCESS_TOKEN[:15]}...")  
-        return ACCESS_TOKEN
         
-    try:
-        response = requests.post(
-            'https://authenticator.azampay.co.tz/AppRegistration/GenerateToken',
-            json={
-                'appName': 'lightnet',
-                'clientId': AZAM_CLIENT_ID,
-                'clientSecret': AZAM_CLIENT_SECRET
-            },
-            timeout=30
-        )
-        response.raise_for_status()
-        
-        ACCESS_TOKEN = response.json()['data']['accessToken']
-        TOKEN_EXPIRY = datetime.now() + timedelta(minutes=1)
-        print(f"New token generated (expires {TOKEN_EXPIRY}): {ACCESS_TOKEN}")
-        print(f"Truncated for logs: {ACCESS_TOKEN[:15]}...{ACCESS_TOKEN[-5:]}")
-        return ACCESS_TOKEN
-        
-    except requests.exceptions.RequestException as e:
-        app.logger.error(f"Token generation failed: {str(e)}")
-        raise
-
-
+    # Prepare headers to match Postman exactly (UNCHANGED)
+    headers = {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'User-Agent': 'LightNet-Server/1.0'
+    }
+    
+    # Prepare payload (UNCHANGED)
+    payload = {
+        'appName': 'lightnet',
+        'clientId': AZAM_CLIENT_ID,
+        'clientSecret': AZAM_CLIENT_SECRET
+    }
+    
+    print(f"[TOKEN] Requesting new access token...")
+    
+    # Try original URL first
+    urls_to_try = ['https://authenticator.azampay.co.tz/AppRegistration/GenerateToken']
+    
+    # Add IP-based URL as fallback if DNS resolution provides an IP
+    resolved_ip = resolve_azampay_ip()
+    if resolved_ip:
+        ip_url = f'https://{resolved_ip}/AppRegistration/GenerateToken'
+        urls_to_try.append(ip_url)
+        # Add Host header for IP-based requests
+        headers['Host'] = 'authenticator.azampay.co.tz'
+    
+    # Try each URL
+    for attempt, url in enumerate(urls_to_try):
+        try:
+            print(f"[TOKEN] Attempt {attempt + 1}: {url}")
+            
+            # Use exact same request structure as original (UNCHANGED)
+            response = requests.post(
+                url,
+                data=json.dumps(payload),  # Same as original
+                headers=headers,           # Same as original  
+                timeout=30,
+                verify=True
+            )
+            
+            print(f"[TOKEN] Status: {response.status_code}")
+            
+            if response.status_code == 200:
+                response_data = response.json()
+                ACCESS_TOKEN = response_data['data']['accessToken']
+                
+                # Parse expiry time from response (UNCHANGED)
+                if 'expire' in response_data['data']:
+                    expire_str = response_data['data']['expire']
+                    try:
+                        TOKEN_EXPIRY = datetime.fromisoformat(expire_str.replace('Z', '+00:00'))
+                    except ValueError:
+                        TOKEN_EXPIRY = datetime.now() + timedelta(hours=1)
+                else:
+                    TOKEN_EXPIRY = datetime.now() + timedelta(hours=1)
+                
+                print(f"[TOKEN] ? Success: {ACCESS_TOKEN[:20]}...")
+                return ACCESS_TOKEN
+            else:
+                print(f"[TOKEN] ? Failed: {response.status_code} - {response.text}")
+                
+        except requests.exceptions.ConnectionError as e:
+            error_str = str(e).lower()
+            if "name resolution" in error_str:
+                print(f"[TOKEN] ? DNS error with {url}: {str(e)}")
+                continue  # Try next URL
+            else:
+                print(f"[TOKEN] ? Connection error: {str(e)}")
+                if attempt == len(urls_to_try) - 1:  # Last attempt
+                    raise
+        except requests.exceptions.RequestException as e:
+            print(f"[TOKEN] ? Request error: {str(e)}")
+            if attempt == len(urls_to_try) - 1:  # Last attempt
+                raise
+        except Exception as e:
+            print(f"[TOKEN] ? Unexpected error: {str(e)}")
+            if attempt == len(urls_to_try) - 1:  # Last attempt
+                raise
+    
+    # If we get here, all attempts failed
+    raise Exception("All token generation attempts failed")
 @app.route('/make-payment', methods=['POST'])
 def make_payment():
     try:
@@ -634,6 +736,73 @@ def get_session_timeout():
             cursor.close()
             db_connection.close()
 
+@app.route('/fetch_superagent_recent_vouchers', methods=['GET'])
+def fetch_superagent_recent_vouchers():
+    try:
+        # Get locations parameter for superagents
+        locations = request.args.get('locations')  # Comma-separated locations for superagents
+        search_term = request.args.get('search', '').strip()  # Optional search parameter
+        
+        if not locations:
+            return jsonify({"error": "Locations parameter is required"}), 400
+        
+        db_connection = mysql.connector.connect(**db_config)
+        cursor = db_connection.cursor(dictionary=True)
+        
+        # Calculate time 24 hours ago
+        time_threshold = datetime.now() - timedelta(hours=24)
+        
+        # Handle multiple locations for superagents
+        location_list = [loc.strip() for loc in locations.split(',') if loc.strip()]
+        if not location_list:
+            return jsonify({"error": "Valid locations required"}), 400
+            
+        # Build location filter
+        location_placeholders = ','.join(['%s'] * len(location_list))
+        location_filter = f"AND location IN ({location_placeholders})"
+        
+        # Build search filter if search term provided
+        search_filter = ""
+        search_params = []
+        if search_term:
+            search_filter = "AND (username LIKE %s OR mac_address LIKE %s)"
+            search_params = [f"%{search_term}%", f"%{search_term}%"]
+        
+        query = f"""
+            SELECT id, username, location, speed_limit, session_timeout, 
+                   mac_address, first_login_time, expire_time, used, 
+                   created_at, updated_at 
+            FROM vouchers 
+            WHERE first_login_time >= %s 
+            {location_filter}
+            {search_filter}
+            ORDER BY first_login_time DESC
+        """
+        
+        params = [time_threshold] + location_list + search_params
+        cursor.execute(query, params)
+        vouchers = cursor.fetchall()
+        
+        search_info = f" matching '{search_term}'" if search_term else ""
+        location_info = f" across locations: {', '.join(location_list)}"
+        
+        return jsonify({
+            "vouchers": vouchers,
+            "count": len(vouchers),
+            "locations": location_list,
+            "search_term": search_term,
+            "message": f"Found {len(vouchers)} recent logins{search_info}{location_info}"
+        })
+        
+    except mysql.connector.Error as err:
+        return jsonify({"error": f"MySQL Error: {err}"}), 500
+        
+    finally:
+        if db_connection.is_connected():
+            cursor.close()
+            db_connection.close()
+
+
 
 # Fetch user information from radcheck
 @app.route('/get_user_info', methods=['GET'])
@@ -692,72 +861,6 @@ def fetch_recent_vouchers():
             "vouchers": vouchers,
             "count": len(vouchers),
             "message": f"Found {len(vouchers)} vouchers with first login within last 24 hours"
-        })
-        
-    except mysql.connector.Error as err:
-        return jsonify({"error": f"MySQL Error: {err}"}), 500
-        
-    finally:
-        if db_connection.is_connected():
-            cursor.close()
-            db_connection.close()
-
-@app.route('/fetch_superagent_recent_vouchers', methods=['GET'])
-def fetch_superagent_recent_vouchers():
-    try:
-        # Get locations parameter for superagents
-        locations = request.args.get('locations')  # Comma-separated locations for superagents
-        search_term = request.args.get('search', '').strip()  # Optional search parameter
-        
-        if not locations:
-            return jsonify({"error": "Locations parameter is required"}), 400
-        
-        db_connection = mysql.connector.connect(**db_config)
-        cursor = db_connection.cursor(dictionary=True)
-        
-        # Calculate time 24 hours ago
-        time_threshold = datetime.now() - timedelta(hours=24)
-        
-        # Handle multiple locations for superagents
-        location_list = [loc.strip() for loc in locations.split(',') if loc.strip()]
-        if not location_list:
-            return jsonify({"error": "Valid locations required"}), 400
-            
-        # Build location filter
-        location_placeholders = ','.join(['%s'] * len(location_list))
-        location_filter = f"AND location IN ({location_placeholders})"
-        
-        # Build search filter if search term provided
-        search_filter = ""
-        search_params = []
-        if search_term:
-            search_filter = "AND (username LIKE %s OR mac_address LIKE %s)"
-            search_params = [f"%{search_term}%", f"%{search_term}%"]
-        
-        query = f"""
-            SELECT id, username, location, speed_limit, session_timeout, 
-                   mac_address, first_login_time, expire_time, used, 
-                   created_at, updated_at 
-            FROM vouchers 
-            WHERE first_login_time >= %s 
-            {location_filter}
-            {search_filter}
-            ORDER BY first_login_time DESC
-        """
-        
-        params = [time_threshold] + location_list + search_params
-        cursor.execute(query, params)
-        vouchers = cursor.fetchall()
-        
-        search_info = f" matching '{search_term}'" if search_term else ""
-        location_info = f" across locations: {', '.join(location_list)}"
-        
-        return jsonify({
-            "vouchers": vouchers,
-            "count": len(vouchers),
-            "locations": location_list,
-            "search_term": search_term,
-            "message": f"Found {len(vouchers)} recent logins{search_info}{location_info}"
         })
         
     except mysql.connector.Error as err:
@@ -1084,12 +1187,177 @@ def fetch_agent_payments_summary():
             conn.close()
             print("Database connection closed.")
 
+@app.route('/fetch_technician_payments_summary', methods=['GET'])
+def fetch_technician_payments_summary():
+    try:
+        # Accept single location or comma-separated multiple locations
+        location = request.args.get('location')
+        locations = request.args.get('locations')  # Comma-separated string
 
+        conn = mysql.connector.connect(**db_config)
+        cursor = conn.cursor(dictionary=True)
 
+        now = datetime.now()
 
+        # Build location filter
+        location_filter = ""
+        location_params = []
+        if locations:
+            loc_list = [loc.strip() for loc in locations.split(',') if loc.strip()]
+            if loc_list:
+                placeholders = ','.join(['%s'] * len(loc_list))
+                location_filter = f" AND location IN ({placeholders})"
+                location_params = loc_list
+        elif location:
+            location_filter = " AND location = %s"
+            location_params = [location]
 
+        # Today (includes test phone 12345678)
+        today = now.date()
+        cursor.execute(f"""
+            SELECT SUM(amount) as total_today 
+            FROM payments 
+            WHERE DATE(timestamp) = %s {location_filter}
+        """, [today] + location_params)
+        row_today = cursor.fetchone()
+        total_today = row_today['total_today'] if row_today and row_today['total_today'] else 0.0
 
+        # Last 24 hours
+        last_24_hours = now - timedelta(hours=24)
+        cursor.execute(f"""
+            SELECT SUM(amount) as total_last_24 
+            FROM payments 
+            WHERE timestamp >= %s {location_filter}
+        """, [last_24_hours] + location_params)
+        row_last24 = cursor.fetchone()
+        total_last_24 = row_last24['total_last_24'] if row_last24 and row_last24['total_last_24'] else 0.0
 
+        # Last month
+        last_month = now.replace(day=1) - timedelta(days=1)
+        start_of_last_month = last_month.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        end_of_last_month = last_month.replace(hour=23, minute=59, second=59, microsecond=0)
+        cursor.execute(f"""
+            SELECT SUM(amount) as total_last_month 
+            FROM payments 
+            WHERE timestamp >= %s AND timestamp <= %s {location_filter}
+        """, [start_of_last_month, end_of_last_month] + location_params)
+        row_last_month = cursor.fetchone()
+        total_last_month = row_last_month['total_last_month'] if row_last_month and row_last_month['total_last_month'] else 0.0
+
+        # This month
+        start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        cursor.execute(f"""
+            SELECT SUM(amount) as total_this_month 
+            FROM payments 
+            WHERE timestamp >= %s AND timestamp < %s {location_filter}
+        """, [start_of_month, now] + location_params)
+        row_this_month = cursor.fetchone()
+        total_this_month = row_this_month['total_this_month'] if row_this_month and row_this_month['total_this_month'] else 0.0
+
+        # This year
+        start_of_year = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+        cursor.execute(f"""
+            SELECT SUM(amount) as total_year 
+            FROM payments 
+            WHERE timestamp >= %s {location_filter}
+        """, [start_of_year] + location_params)
+        row_year = cursor.fetchone()
+        total_year = row_year['total_year'] if row_year and row_year['total_year'] else 0.0
+
+        # Daily average for this month
+        days_in_month = (now - start_of_month).days + 1
+        daily_average_this_month = total_this_month / days_in_month if days_in_month > 0 else 0.0
+
+        return jsonify({
+            "success": True,
+            "summary": {
+                "today": total_today,
+                "last_24_hours": total_last_24,
+                "last_month": total_last_month,
+                "this_month": total_this_month,
+                "daily_average_this_month": daily_average_this_month,
+                "this_year": total_year
+            },
+            "location": location,
+            "locations": locations,
+            "message": "Technician payments summary (includes test phone)"
+        }), 200
+
+    except mysql.connector.Error as err:
+        print(f"DB Error during fetch: {str(err)}")
+        return jsonify({"success": False, "error": "Database error occurred"}), 500
+    finally:
+        if conn.is_connected():
+            cursor.close()
+            conn.close()
+            print("Database connection closed.")
+
+@app.route('/fetch_payments_by_location', methods=['GET'])
+def fetch_payments_by_location():
+    try:
+        # Optional: comma-separated locations for superagents
+        locations = request.args.get('locations')
+        period = request.args.get('period', 'last24h').lower().strip()
+
+        conn = mysql.connector.connect(**db_config)
+        cursor = conn.cursor(dictionary=True)
+
+        now = datetime.now()
+        where_clauses = []
+        params = []
+
+        # Time filter
+        if period == 'today':
+            where_clauses.append('DATE(timestamp) = %s')
+            params.append(now.date())
+        else:
+            time_threshold = now - timedelta(hours=24)
+            where_clauses.append('timestamp >= %s')
+            params.append(time_threshold)
+
+        # Exclude test payments
+        where_clauses.append("phone <> '12345678'")
+
+        # Locations filter
+        location_list = []
+        location_filter = ''
+        if locations:
+            location_list = [loc.strip() for loc in locations.split(',') if loc.strip()]
+            if location_list:
+                placeholders = ','.join(['%s'] * len(location_list))
+                location_filter = f" AND location IN ({placeholders})"
+                params += location_list
+
+        where_sql = ' AND '.join(where_clauses)
+
+        query = f"""
+            SELECT location, COUNT(*) as count
+            FROM payments
+            WHERE {where_sql}{location_filter}
+            GROUP BY location
+            ORDER BY count DESC
+        """
+
+        cursor.execute(query, params)
+        rows = cursor.fetchall() or []
+        total_count = sum(row['count'] for row in rows) if rows else 0
+
+        return jsonify({
+            'success': True,
+            'period': 'today' if period == 'today' else 'last24h',
+            'counts': rows,
+            'locations': location_list,
+            'total_count': total_count,
+            'message': f"Found {total_count} payments across {len(rows)} location(s)"
+        }), 200
+
+    except mysql.connector.Error as err:
+        return jsonify({'success': False, 'error': f"MySQL Error: {err}"}), 500
+    finally:
+        if 'conn' in locals() and conn.is_connected():
+            cursor.close()
+            conn.close()
+            print("Database connection closed.")
 
 
 
@@ -1720,15 +1988,6 @@ def fetch_superagent_payments():
             "message": f"Found {len(payments)} payments within last 24 hours across {len(locations)} locations with a total amount of {total_amount} TZS"
         })
         
-    except mysql.connector.Error as err:
-        return jsonify({"error": f"MySQL Error: {err}"}), 500
-    except Exception as e:
-        return jsonify({"error": f"Error: {str(e)}"}), 500
-    finally:
-        if 'db_connection' in locals() and db_connection.is_connected():
-            cursor.close()
-            db_connection.close()
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=False) # Add debug=True for development
- 

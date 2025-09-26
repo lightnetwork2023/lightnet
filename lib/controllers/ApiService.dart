@@ -595,10 +595,13 @@ class ApiService {
     required String location,
     int? days,
   }) async {
-    final response = await http.post(
-      Uri.parse('$baseUrl/make-paymentagent'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
+    try {
+      print('🔄 Starting payment request...');
+      print('📍 URL: https://processpayment-3vxbatgzgq-uc.a.run.app');
+      print('📱 Provider: $provider, Phone: $phone, Amount: $amount');
+      print('📍 Location: $location, Quantity: $quantity, Duration: $durationSeconds');
+      
+      final requestBody = {
         'provider': provider,
         'phone': phone,
         'amount': amount,
@@ -606,10 +609,107 @@ class ApiService {
         'durationSeconds': durationSeconds,
         'location': location,
         if (days != null) 'days': days,
-      }),
-    );
-    final result = jsonDecode(response.body);
-    return result;
+      };
+      
+      print('📤 Request body: ${jsonEncode(requestBody)}');
+      
+      // Preflight: DNS check for visibility
+      try {
+        final lookup = await InternetAddress.lookup('processpayment-3vxbatgzgq-uc.a.run.app', type: InternetAddressType.any);
+        print('🔎 DNS lookup results: ${lookup.map((a) => '${a.address}/${a.type}').join(', ')}');
+      } catch (e) {
+        print('⚠️ DNS lookup failed but proceeding to request: $e');
+      }
+
+      // Single robust attempt with extended timeout
+      final uri = Uri.parse('https://processpayment-3vxbatgzgq-uc.a.run.app');
+      http.Response response;
+      try {
+        response = await http.post(
+          uri,
+          headers: const {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'User-Agent': 'LightNet-Flutter/1.0',
+          },
+          body: jsonEncode(requestBody),
+        ).timeout(const Duration(seconds: 45));
+      } on TimeoutException {
+        // Retry once immediately on timeout (cold start / transient)
+        print('⏳ First attempt timed out, retrying once...');
+        response = await http.post(
+          uri,
+          headers: const {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'User-Agent': 'LightNet-Flutter/1.0',
+          },
+          body: jsonEncode(requestBody),
+        ).timeout(const Duration(seconds: 45));
+      }
+      
+      
+      print('📥 Response status: ${response.statusCode}');
+      print('📥 Response headers: ${response.headers}');
+      print('📥 Response body: ${response.body}');
+      
+      if (response.statusCode == 200) {
+        final result = jsonDecode(response.body);
+        print('✅ Payment request successful: $result');
+        return result;
+      } else {
+        print('❌ Payment request failed with status: ${response.statusCode}');
+        print('❌ Error response: ${response.body}');
+        return {
+          'success': false,
+          'error': 'HTTP ${response.statusCode}: ${response.body}',
+          'status_code': response.statusCode,
+        };
+      }
+    } on SocketException catch (e) {
+      print('🌐 Network/Socket error during payment: $e');
+      print('🌐 Error type: ${e.runtimeType}');
+      print('🌐 OS Error: ${e.osError}');
+      return {
+        'success': false,
+        'error': 'Network connection failed: ${e.message}',
+        'error_type': 'SocketException',
+        'details': e.toString(),
+      };
+    } on HttpException catch (e) {
+      print('🌐 HTTP error during payment: $e');
+      return {
+        'success': false,
+        'error': 'HTTP error: ${e.message}',
+        'error_type': 'HttpException',
+        'details': e.toString(),
+      };
+    } on FormatException catch (e) {
+      print('📝 JSON parsing error during payment: $e');
+      return {
+        'success': false,
+        'error': 'Invalid response format: ${e.message}',
+        'error_type': 'FormatException',
+        'details': e.toString(),
+      };
+    } on TimeoutException catch (e) {
+      print('⏰ Timeout error during payment: $e');
+      return {
+        'success': false,
+        'error': 'Request timed out: ${e.message}',
+        'error_type': 'TimeoutException',
+        'details': e.toString(),
+      };
+    } catch (e) {
+      print('❌ Unexpected error during payment: $e');
+      print('❌ Error type: ${e.runtimeType}');
+      return {
+        'success': false,
+        'error': 'Unexpected error: $e',
+        'error_type': e.runtimeType.toString(),
+        'details': e.toString(),
+      };
+    }
   }
 
   static Future<Map<String, dynamic>> insertVoucher({
@@ -721,5 +821,36 @@ class ApiService {
     } else {
       throw Exception('Failed to fetch superagent recent vouchers: ${response.statusCode}');
     }
+  }
+
+  // Fetch counts of payments grouped by location for a given period (today or last24h)
+  static Future<Map<String, dynamic>> fetchPaymentsByLocation({
+    List<String>? locations,
+    String period = 'last24h',
+  }) async {
+    final locStr = (locations != null && locations.isNotEmpty) ? locations.join(',') : '';
+    final cacheKey = 'payments_by_location_${period}_${locStr.hashCode}';
+    final cachedData = _getCachedData<Map<String, dynamic>>(cacheKey);
+    if (cachedData != null) {
+      return cachedData;
+    }
+
+    final uri = Uri.parse('$baseUrl/fetch_payments_by_location').replace(
+      queryParameters: {
+        'period': period,
+        if (locStr.isNotEmpty) 'locations': locStr,
+      },
+    );
+
+    final response = await http.get(uri, headers: {'Content-Type': 'application/json'});
+    if (response.statusCode != 200) {
+      throw Exception('Failed to fetch payments by location: ${response.body}');
+    }
+    final data = json.decode(response.body) as Map<String, dynamic>;
+    if (data['success'] != true) {
+      throw Exception('Payments by location error: ${data['error'] ?? 'Unknown error'}');
+    }
+    _cacheData(cacheKey, data);
+    return data;
   }
 }

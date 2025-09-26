@@ -9,6 +9,7 @@ import 'AgentUsersScreen.dart';
 import 'PaymentAnalyticsPage.dart';
 import 'SuperAgentPaymentsScreen.dart';
 import 'SuperAgentRecentLoginsScreen.dart';
+import 'SuperAgentPaymentsByLocationScreen.dart';
 
 class SuperAgentHomeScreen extends StatefulWidget {
   const SuperAgentHomeScreen({super.key});
@@ -657,6 +658,19 @@ class _SuperAgentHomeScreenState extends State<SuperAgentHomeScreen> {
                 context,
                 MaterialPageRoute(
                   builder: (context) => const SuperAgentPaymentsScreen(),
+                ),
+              );
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.location_on, color: Colors.orange),
+            title: const Text('Payments by Location'),
+            onTap: () {
+              Navigator.pop(context);
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const SuperAgentPaymentsByLocationScreen(),
                 ),
               );
             },

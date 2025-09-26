@@ -1,6 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
+import 'dart:io';
+import 'package:path_provider/path_provider.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:share_plus/share_plus.dart';
 import '../controllers/ApiService.dart';
 import '../controllers/location_controller.dart';
 import '../widgets/modern_components.dart';
@@ -65,6 +70,62 @@ class _LocationDataScreenState extends State<LocationDataScreen> {
     );
   }
 
+  Future<void> _shareLocationPdf() async {
+    if (_selectedLocation == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please select a location first')),
+      );
+      return;
+    }
+
+    if (_locationData.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No data to export')),
+      );
+      return;
+    }
+
+    try {
+      final pdf = pw.Document();
+      final loc = _selectedLocation!;
+
+      pdf.addPage(
+        pw.MultiPage(
+          pageFormat: PdfPageFormat.a4,
+          build: (context) => [
+            pw.Header(
+              level: 0,
+              child: pw.Text(
+                'Location Data - ' + loc,
+                style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold),
+              ),
+            ),
+            pw.Paragraph(text: 'Exported users: ' + _locationData.length.toString()),
+            pw.Table.fromTextArray(
+              headers: ['Username', 'Speed Limit', 'Session Timeout'],
+              data: _locationData.map((user) {
+                final username = (user['username'] ?? 'N/A').toString();
+                final speed = (user['speed_limit'] ?? 'N/A').toString();
+                final timeout = _formatDuration(user['session_timeout']);
+                return [username, speed, timeout];
+              }).toList(),
+            ),
+          ],
+        ),
+      );
+
+      final dir = await getTemporaryDirectory();
+      final file = File('${dir.path}/location-${loc.replaceAll(' ', '_')}-data.pdf');
+      await file.writeAsBytes(await pdf.save());
+
+      await Share.shareXFiles([XFile(file.path)], text: 'Location data for ' + loc);
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to export PDF: $e')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -81,6 +142,15 @@ class _LocationDataScreenState extends State<LocationDataScreen> {
         backgroundColor: const Color(0xFF1A1F3A),
         elevation: 0,
         iconTheme: const IconThemeData(color: Colors.white),
+        actions: [
+          if (_selectedLocation != null)
+            IconButton(
+              icon: const Icon(Icons.picture_as_pdf_rounded, color: Colors.white),
+              tooltip: 'Export PDF',
+              onPressed: _isLoadingData || _locationData.isEmpty ? null : _shareLocationPdf,
+            ),
+          const SizedBox(width: 8),
+        ],
       ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),

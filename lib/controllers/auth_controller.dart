@@ -13,6 +13,8 @@ class AuthController extends GetxController {
   final RxString _userLocation = ''.obs;
   final RxMap<String, dynamic> _allowedBundles = <String, dynamic>{}.obs;
   final RxList<String> _userLocations = <String>[].obs;
+  final RxDouble _commissionSuperAgent = 0.63.obs; // default 63%
+  final RxDouble _commissionCompany = 0.37.obs;    // default 37%
 
   User? get user => _user.value;
   String get userRole => _userRole.value;
@@ -23,6 +25,8 @@ class AuthController extends GetxController {
   RxList<String> get userLocationsStream => _userLocations;
   RxMap<String, dynamic> get allowedBundlesStream => _allowedBundles;
   Map<String, dynamic> get allowedBundles => _allowedBundles;
+  double get commissionSuperAgent => _commissionSuperAgent.value;
+  double get commissionCompany => _commissionCompany.value;
   bool get isBoss => _userRole.value == 'boss';
   bool get isAgent => _userRole.value == 'agent';
   bool get isSuperAgent => _userRole.value == 'superagent';
@@ -89,8 +93,62 @@ class AuthController extends GetxController {
       } else {
         _allowedBundles.clear();
       }
+
+      // Load commission shares (supports various shapes)
+      try {
+        double saShare = 0.63;
+        double coShare = 0.37;
+        dynamic comm = userData['commission'];
+        if (comm != null) {
+          if (comm is Map) {
+            final m = Map<String, dynamic>.from(comm);
+            saShare = _parseShare(m['superagent']) ?? saShare;
+            // if company provided use it, else derive remainder
+            final parsedCompany = _parseShare(m['company']);
+            coShare = parsedCompany ?? (1.0 - saShare);
+          } else {
+            // Support legacy single value like 'superagent_percent'
+            final legacy = _parseShare(comm);
+            if (legacy != null) {
+              saShare = legacy;
+              coShare = 1.0 - saShare;
+            }
+          }
+        } else if (userData['superagent_percent'] != null) {
+          final legacy = _parseShare(userData['superagent_percent']);
+          if (legacy != null) {
+            saShare = legacy;
+            coShare = 1.0 - saShare;
+          }
+        }
+        // Clamp to [0,1] and normalize if needed
+        saShare = saShare.clamp(0.0, 1.0);
+        coShare = (1.0 - saShare).clamp(0.0, 1.0);
+        _commissionSuperAgent.value = saShare;
+        _commissionCompany.value = coShare;
+      } catch (e) {
+        // keep defaults on parse error
+        _commissionSuperAgent.value = 0.63;
+        _commissionCompany.value = 0.37;
+        print('Warning: failed to parse commission shares: $e');
+      }
       await _saveUserRoleToPrefs(_userRole.value);
     }
+  }
+
+  // Helper to parse share from number or string; accepts 0-1 fractions or 0-100 percents
+  double? _parseShare(dynamic v) {
+    if (v == null) return null;
+    double? d;
+    if (v is num) {
+      d = v.toDouble();
+    } else if (v is String) {
+      d = double.tryParse(v);
+    }
+    if (d == null) return null;
+    if (d > 1.0) return (d / 100.0);
+    if (d < 0) return 0.0;
+    return d;
   }
 
   Future<void> _clearUserData() async {
@@ -98,6 +156,8 @@ class AuthController extends GetxController {
     _userName.value = '';
     _userLocation.value = '';
     _allowedBundles.clear();
+    _commissionSuperAgent.value = 0.63;
+    _commissionCompany.value = 0.37;
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('user_role');
   }
@@ -216,6 +276,31 @@ class AuthController extends GetxController {
           .update({'role': newRole});
     } catch (e) {
       throw 'Failed to update user role.';
+    }
+  }
+
+  Future<void> deleteAppUser({String? uid, String? email}) async {
+    if (!isBoss) {
+      throw 'Only boss can delete users.';
+    }
+    if ((uid == null || uid.isEmpty) && (email == null || email.isEmpty)) {
+      throw 'Provide uid or email to delete user.';
+    }
+    try {
+      final resp = await http.post(
+        Uri.parse('https://us-central1-lightnet-d2de9.cloudfunctions.net/deleteAppUser'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          if (uid != null && uid.isNotEmpty) 'uid': uid,
+          if (email != null && email.isNotEmpty) 'email': email,
+        }),
+      );
+      if (resp.statusCode != 200) {
+        final data = jsonDecode(resp.body);
+        throw data['error'] ?? 'Delete failed with status ${resp.statusCode}';
+      }
+    } catch (e) {
+      rethrow;
     }
   }
 } 

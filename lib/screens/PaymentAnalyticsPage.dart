@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:get/get.dart';
 import '../controllers/ApiService.dart';
+import '../controllers/auth_controller.dart';
 import 'model/PaymentAnalytics.dart';
 import '../theme/app_theme.dart';
 import '../widgets/modern_components.dart';
@@ -8,7 +10,10 @@ class PaymentAnalyticsPage extends StatefulWidget {
   final String? location;
   final List<String>? locations;
   final String? userRole;
-  const PaymentAnalyticsPage({super.key, this.location, this.locations, this.userRole});
+  final String? superAgentName; // Optional: show name when boss views a superagent
+  final double? commissionSuperAgent; // Optional override for superagent share
+  final double? commissionCompany;    // Optional override for company share
+  const PaymentAnalyticsPage({super.key, this.location, this.locations, this.userRole, this.superAgentName, this.commissionSuperAgent, this.commissionCompany});
 
   @override
   State<PaymentAnalyticsPage> createState() => _PaymentAnalyticsPageState();
@@ -16,11 +21,45 @@ class PaymentAnalyticsPage extends StatefulWidget {
 
 class _PaymentAnalyticsPageState extends State<PaymentAnalyticsPage> {
   late Future<PaymentAnalytics> _analyticsFuture;
+  late double _saShare;
+  late double _coShare;
 
   @override
   void initState() {
     super.initState();
     _analyticsFuture = _fetchAnalyticsData();
+    // Determine commission shares
+    final auth = Get.isRegistered<AuthController>() ? Get.find<AuthController>() : null;
+    if (widget.commissionSuperAgent != null) {
+      _saShare = widget.commissionSuperAgent!.clamp(0.0, 1.0);
+      _coShare = (widget.commissionCompany ?? (1.0 - _saShare)).clamp(0.0, 1.0);
+    } else if (widget.userRole == 'superagent' && auth != null) {
+      _saShare = auth.commissionSuperAgent.clamp(0.0, 1.0);
+      _coShare = auth.commissionCompany.clamp(0.0, 1.0);
+    } else {
+      _saShare = 0.63;
+      _coShare = 0.37;
+    }
+  }
+
+  // Compose subtitle with revenue split for superagents
+  String _composeSubtitle(String base, double total) {
+    if (widget.userRole == 'superagent') {
+      final company = total * _coShare;
+      final line2 = 'Total: ${total.toStringAsFixed(2)} TZS';
+      final companyPct = (_coShare * 100).toStringAsFixed(0);
+      final line3 = 'Company: ${company.toStringAsFixed(2)} TZS (${companyPct}%)';
+      return base.isNotEmpty ? '$base\n$line2\n$line3' : '$line2\n$line3';
+    }
+    return base;
+  }
+
+  // For superagents, show 63% as primary bold amount; otherwise show total
+  double _displayAmountForRole(double total) {
+    if (widget.userRole == 'superagent') {
+      return total * _saShare;
+    }
+    return total;
   }
 
   // Fetch all analytics data from summary endpoint
@@ -168,6 +207,34 @@ class _PaymentAnalyticsPageState extends State<PaymentAnalyticsPage> {
                             ),
                             textAlign: TextAlign.center,
                           ),
+                          if (widget.userRole == 'superagent') ...[
+                            const SizedBox(height: 8),
+                            Builder(builder: (context) {
+                              final saPct = (_saShare * 100).toStringAsFixed(0);
+                              final coPct = (_coShare * 100).toStringAsFixed(0);
+                              final label = (widget.superAgentName != null && widget.superAgentName!.isNotEmpty)
+                                  ? 'SuperAgent'
+                                  : 'You';
+                              return Text(
+                                'Revenue split: ' + label + ' ' + saPct + '% • Company ' + coPct + '%',
+                                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                                textAlign: TextAlign.center,
+                              );
+                            }),
+                          ],
+                          if (widget.superAgentName != null && widget.superAgentName!.isNotEmpty) ...[
+                            const SizedBox(height: 6),
+                            Text(
+                              'SuperAgent: ${widget.superAgentName}',
+                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: Colors.white.withOpacity(0.95),
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          ],
                         ],
                       ),
                     ),
@@ -188,20 +255,20 @@ class _PaymentAnalyticsPageState extends State<PaymentAnalyticsPage> {
                           Expanded(
                             child: _buildAnalyticsCard(
                               title: 'Today',
-                              amount: analytics.today,
+                              amount: _displayAmountForRole(analytics.today),
                               color: AppTheme.successColor,
                               icon: Icons.today_rounded,
-                              subtitle: 'Current day',
+                              subtitle: _composeSubtitle('Current day', analytics.today),
                             ),
                           ),
                           const SizedBox(width: 12),
                           Expanded(
                             child: _buildAnalyticsCard(
                               title: 'Last 24h',
-                              amount: analytics.last24Hours,
+                              amount: _displayAmountForRole(analytics.last24Hours),
                               color: AppTheme.infoColor,
                               icon: Icons.access_time_rounded,
-                              subtitle: 'Rolling 24h',
+                              subtitle: _composeSubtitle('Rolling 24h', analytics.last24Hours),
                             ),
                           ),
                         ],
@@ -226,20 +293,20 @@ class _PaymentAnalyticsPageState extends State<PaymentAnalyticsPage> {
                               Expanded(
                                 child: _buildAnalyticsCard(
                                   title: 'This Month',
-                                  amount: analytics.thisMonth,
+                                  amount: _displayAmountForRole(analytics.thisMonth),
                                   color: AppTheme.primaryColor,
                                   icon: Icons.calendar_month_rounded,
-                                  subtitle: 'Month to date',
+                                  subtitle: _composeSubtitle('Month to date', analytics.thisMonth),
                                 ),
                               ),
                               const SizedBox(width: 12),
                               Expanded(
                                 child: _buildAnalyticsCard(
                                   title: 'Daily Average',
-                                  amount: analytics.dailyAverageThisMonth,
+                                  amount: _displayAmountForRole(analytics.dailyAverageThisMonth),
                                   color: Colors.purple,
                                   icon: Icons.show_chart_rounded,
-                                  subtitle: 'This month avg',
+                                  subtitle: _composeSubtitle('This month avg', analytics.dailyAverageThisMonth),
                                 ),
                               ),
                             ],
@@ -247,10 +314,10 @@ class _PaymentAnalyticsPageState extends State<PaymentAnalyticsPage> {
                           const SizedBox(height: 12),
                           _buildAnalyticsCard(
                             title: 'Last Month',
-                            amount: analytics.lastMonth,
+                            amount: _displayAmountForRole(analytics.lastMonth),
                             color: AppTheme.warningColor,
                             icon: Icons.calendar_today_rounded,
-                            subtitle: 'Previous month total',
+                            subtitle: _composeSubtitle('Previous month total', analytics.lastMonth),
                           ),
                         ],
                       ),
@@ -269,10 +336,10 @@ class _PaymentAnalyticsPageState extends State<PaymentAnalyticsPage> {
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                       child: _buildAnalyticsCard(
                         title: 'This Year',
-                        amount: analytics.thisYear,
+                        amount: _displayAmountForRole(analytics.thisYear),
                         color: Colors.indigo,
                         icon: Icons.calendar_view_month_rounded,
-                        subtitle: 'Year to date total',
+                        subtitle: _composeSubtitle('Year to date total', analytics.thisYear),
                       ),
                     ),
                   ),

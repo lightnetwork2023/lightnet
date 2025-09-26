@@ -8,14 +8,18 @@ import '../screens/VouchersScreen.dart';
 import '../screens/VouchersByLocationScreen.dart';
 import '../screens/valid_users.dart';
 import '../screens/SuperAgentPaymentsScreen.dart';
+import '../screens/SuperAgentPaymentsByLocationScreen.dart';
 import '../screens/UserManagementScreen.dart';
 import '../screens/BundleManagementScreen.dart';
 import '../screens/PurchaseForAgentScreen.dart';
 import '../screens/payments.dart';
 import '../screens/PaymentAnalyticsPage.dart';
 import '../screens/NetworkDevicesScreen.dart';
+import '../screens/BossSuperAgentAnalyticsScreen.dart';
 import '../screens/LocationDataScreen.dart';
 import '../screens/LoginScreen.dart';
+import '../screens/TechnicianCommissionPage.dart';
+import '../screens/BossTechnicianAnalyticsScreen.dart';
 
 class ModernDrawer extends StatelessWidget {
   const ModernDrawer({Key? key}) : super(key: key);
@@ -196,6 +200,21 @@ class ModernDrawer extends StatelessWidget {
                           )
                         : const SizedBox.shrink();
                   }),
+                  // SuperAgent Payments by Location (SuperAgent only)
+                  Obx(() {
+                    return authController.isSuperAgent
+                        ? _buildDrawerItem(
+                            context,
+                            icon: Icons.location_on_rounded,
+                            title: 'Payments by Location',
+                            subtitle: 'Counts per assigned locations',
+                            onTap: () {
+                              Navigator.pop(context);
+                              Get.to(() => const SuperAgentPaymentsByLocationScreen());
+                            },
+                          )
+                        : const SizedBox.shrink();
+                  }),
                   
                   // Boss and Technician items
                   Obx(() {
@@ -227,13 +246,61 @@ class ModernDrawer extends StatelessWidget {
                         icon: Icons.analytics_outlined,
                         title: 'Payment Analytics',
                         subtitle: 'Financial insights',
-                        onTap: () => _navigateTo(context, PaymentAnalyticsPage(
-                          userRole: authController.userRole,
-                        )),
+                        onTap: () {
+                          if (authController.isBoss) {
+                            _navigateTo(context, PaymentAnalyticsPage(
+                              userRole: authController.userRole,
+                            ));
+                          } else if (authController.isSuperAgent) {
+                            _navigateTo(context, PaymentAnalyticsPage(
+                              userRole: authController.userRole,
+                              locations: authController.userLocations,
+                            ));
+                          } else if (authController.isAgent) {
+                            _navigateTo(context, PaymentAnalyticsPage(
+                              userRole: authController.userRole,
+                              location: authController.userLocation,
+                            ));
+                          } else {
+                            _navigateTo(context, PaymentAnalyticsPage(
+                              userRole: authController.userRole,
+                            ));
+                          }
+                        },
                       );
                     }
                     return const SizedBox.shrink();
                   }),
+                  // Technician Commission (Technician only)
+                  Obx(() => authController.userRole == 'technician'
+                      ? _buildDrawerItem(
+                          context,
+                          icon: Icons.calculate_rounded,
+                          title: 'Technician Commission',
+                          subtitle: 'Your commission for your location',
+                          onTap: () => _navigateTo(context, const TechnicianCommissionPage()),
+                        )
+                      : const SizedBox.shrink()),
+                  // Boss-only: View SuperAgent Analytics selector
+                  Obx(() => authController.isBoss
+                      ? _buildDrawerItem(
+                          context,
+                          icon: Icons.supervisor_account_rounded,
+                          title: 'SuperAgent Analytics',
+                          subtitle: 'Select and view by SuperAgent',
+                          onTap: () => _navigateTo(context, const BossSuperAgentAnalyticsScreen()),
+                        )
+                      : const SizedBox.shrink()),
+                  // Boss-only: View Technician Analytics selector
+                  Obx(() => authController.isBoss
+                      ? _buildDrawerItem(
+                          context,
+                          icon: Icons.handyman_rounded,
+                          title: 'Technician Analytics',
+                          subtitle: 'Select and view by Technician',
+                          onTap: () => _navigateTo(context, const BossTechnicianAnalyticsScreen()),
+                        )
+                      : const SizedBox.shrink()),
                   _buildDrawerItem(
                     context,
                     icon: Icons.router_outlined,

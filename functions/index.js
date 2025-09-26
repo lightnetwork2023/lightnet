@@ -305,6 +305,56 @@ exports.deleteUserFromLocation = onRequest(async (req, res) => {
 });
 
 
+// --- Delete App User Function ---
+// Deletes a Firebase Authentication user and their Firestore user document.
+exports.deleteAppUser = onRequest(async (request, response) => {
+  // CORS headers
+  response.set('Access-Control-Allow-Origin', '*');
+  response.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  response.set('Access-Control-Allow-Headers', 'Content-Type');
+
+  // Handle preflight
+  if (request.method === 'OPTIONS') {
+    response.status(204).send('');
+    return;
+  }
+
+  if (request.method !== 'POST') {
+    response.status(405).json({ error: 'Method not allowed. Use POST.' });
+    return;
+  }
+
+  try {
+    const { uid, email } = request.body || {};
+    const auth = getAuth();
+    let targetUid = uid;
+
+    // Resolve UID by email if needed
+    if (!targetUid && email) {
+      const userRecord = await auth.getUserByEmail(email);
+      targetUid = userRecord.uid;
+    }
+
+    if (!targetUid) {
+      response.status(400).json({ error: 'Missing uid or email' });
+      return;
+    }
+
+    // Delete from Firebase Auth
+    await auth.deleteUser(targetUid);
+
+    // Delete Firestore user document
+    await db.collection('users').doc(targetUid).delete();
+
+    response.status(200).json({ success: true, message: 'User deleted successfully', uid: targetUid });
+  } catch (error) {
+    logger.error('Error deleting user:', error);
+    const status = error.code === 'auth/user-not-found' ? 404 : 500;
+    response.status(status).json({ error: 'Failed to delete user', details: error.message });
+  }
+});
+
+
 // --- MikroTik API Configuration ---
 const mikrotikConfig = {
   host: "41.59.115.231",
@@ -417,13 +467,13 @@ exports.processPayment = onRequest({ cors: true }, async (req, res) => {
   }
 
   try {
-    const { phone, amount, provider, location, durationSeconds, macAddress, nasIp } = req.body;
+    const { phone, amount, provider, location, durationSeconds, macAddress, nasIp, quantity } = req.body;
     
     // Validate required fields
-    if (!phone || !amount || !provider || !location || !durationSeconds || !macAddress) {
+    if (!phone || !amount || !provider || !location || !durationSeconds) {
       return res.status(400).json({
         success: false,
-        error: 'Missing required fields: phone, amount, provider, location, durationSeconds, and macAddress are required'
+        error: 'Missing required fields: phone, amount, provider, location, and durationSeconds are required'
       });
     }
 
@@ -432,6 +482,9 @@ exports.processPayment = onRequest({ cors: true }, async (req, res) => {
     
     // Get AzamPay access token
     const token = await getAzamPayToken();
+    
+    // Use provided macAddress or set to null for optional usage
+    const finalMacAddress = macAddress || null;
     
     // Prepare payment payload
     const payload = {
@@ -444,8 +497,9 @@ exports.processPayment = onRequest({ cors: true }, async (req, res) => {
         voucher: voucherCode,
         duration: durationSeconds.toString(),
         location: location,
-        mac_address: macAddress,
-        ...(nasIp && { nas_ip: nasIp }) // Add nasIp if provided
+        ...(macAddress && { mac_address: macAddress }),
+        ...(nasIp && { nas_ip: nasIp }),
+        ...(quantity && { quantity: quantity.toString() })
       }
     };
 

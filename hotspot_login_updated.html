@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="pragma" content="no-cache" />
+    <meta http-equiv="expires" content="-1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Internet WIFI - Log in</title>
+    <link rel="stylesheet" href="css/style.css" />
+    <style>
+        body {
+            background-color: #f5f5f5;
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+        }
+
+        .ie-fixMinHeight {
+            flex: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: #f5f5f5;
+        }
+
+        .main {
+            max-width: 400px;
+            width: 100%;
+            padding: 20px;
+        }
+
+        .device-info {
+            background-color: #e0e0e0;
+            border: 1px solid #ccc;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 20px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        .device-info p {
+            margin: 5px 0;
+            color: #555;
+            font-size: 0.9em;
+        }
+
+        .device-info strong {
+            color: #333;
+        }
+
+        .small-device-info p {
+            font-size: 0.4em;
+        }
+
+        .purchase-form {
+            display: block; 
+        }
+        .login-view-container {
+            display: none;
+        }
+        .login-form,
+        .retrieve-form {
+            display: none;
+            margin-top: 10px;
+        }
+
+        .toggle-link {
+            cursor: pointer;
+            color: #4CAF50;
+            text-decoration: underline;
+            font-size: 1.2em;
+            font-weight: bold;
+            padding: 10px 20px;
+            border-radius: 4px;
+            display: block;
+            text-align: center;
+            margin-top: 20px;
+        }
+
+        .inner-tab-nav {
+            display: flex;
+            justify-content: space-around;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #ddd;
+        }
+
+        .inner-tab-button {
+            cursor: pointer;
+            padding: 10px 15px;
+            border: none;
+            background-color: transparent;
+            font-size: 1.1em;
+            font-weight: bold;
+            color: #555;
+            flex-grow: 1;
+            text-align: center;
+            transition: color 0.3s, border-bottom 0.3s;
+        }
+
+        .inner-tab-button.active {
+            color: #4CAF50;
+            border-bottom: 3px solid #4CAF50;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        select,
+        input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin-top: 5px;
+            background-color: #ffffff;
+            color: #000000;
+        }
+
+        button[type="submit"],
+        input[type="submit"],
+        button.small-button {
+            background: #4CAF50;
+            color: white;
+            padding: 12px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            width: 100%;
+            font-size: 1em;
+        }
+
+        button.small-button {
+            padding: 5px 10px;
+            font-size: 0.9em;
+            width: auto;
+        }
+
+        .error {
+            color: #ff0000;
+            margin-top: 10px;
+            text-align: center;
+        }
+
+        .info-message {
+            color: #fff;
+            margin-top: 10px;
+            margin-bottom: 10px;
+            text-align: center;
+        }
+
+        .loading-spinner {
+            display: none;
+            border: 3px solid #f3f3f3;
+            border-radius: 50%;
+            border-top: 3px solid #3498db;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .logo {
+            display: block;
+            margin: 0 auto 10px auto;
+            width: 150px;
+            height: auto;
+        }
+
+        ::placeholder {
+            color: #888;
+            opacity: 1;
+        }
+
+        input::placeholder {
+            color: #888;
+        }
+
+        select::placeholder {
+            color: #888;
+        }
+
+        footer {
+            background-color: #333;
+            color: #fff;
+            text-align: center;
+            padding: 15px 10px;
+            font-size: 14px;
+            margin-top: auto;
+        }
+
+        footer a {
+            color: #4CAF50;
+            text-decoration: none;
+        }
+
+        footer a:hover {
+            text-decoration: underline;
+        }
+
+        .footer-content {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .get-info-button {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="ie-fixMinHeight">
+        <div class="main">
+            <div class="wrap animated fadeIn">
+                
+                <div class="purchase-form" id="purchaseForm">
+                    <img class="logo" src="img/lightnet2.png" alt="Your Logo" />
+                    <form id="purchaseFormElement" onsubmit="return handlePurchase(event)">
+                        <div class="form-group">
+                            <select id="provider" required>
+                                <option value="">Chagua mtandao</option>
+                                <option>Mpesa</option>
+                                <option>Tigo</option>
+                                <option>Airtel</option>
+                                <option>Halopesa</option>
+                                <option>Azampesa</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <input type="tel" id="phone" placeholder="namba ya simu (mfano, 0653422101)" pattern="[0-9]{9,10}" required />
+                        </div>
+                        <div class="form-group">
+                            <select id="duration" required>
+                                <option value="">Chagua Kifurushi</option>
+                                <option data-seconds="86400" data-price="1000">Siku - 1000 TSH</option>
+                                <option data-seconds="10800" data-price="500">Masaa 3 - 500 TSH</option>
+                                <option data-seconds="43200" data-price="800">Masaa 12 - 800 TSH</option>
+                                <option data-seconds="604800" data-price="5000">Wiki - 5000 TSH</option>
+                                <option data-seconds="2592000" data-price="18000">Mwezi - 18000 TSH</option>
+                            </select>
+                        </div>
+                        <!-- MikroTik replacements: $(mac) and $(ip) -->
+                        <input type="hidden" id="mac" value="$(mac)" />
+                        <input type="hidden" id="ip" value="$(ip)" />
+                        <button type="submit">Nunua Vocha</button>
+                        <div class="loading-spinner" id="purchaseSpinner"></div>
+                        <div id="errorMessage" class="error"></div>
+                    </form>
+                </div>
+
+                <div class="login-view-container" id="loginViewContainer">
+                    <img class="logo" src="img/lightnet2.png" alt="Your Logo" />
+                    <div class="inner-tab-nav">
+                        <button class="inner-tab-button" id="innerTabLogin" onclick="showInnerTab('loginFormContent')">Ingia</button>
+                        <button class="inner-tab-button" id="innerTabRetrieve" onclick="showInnerTab('retrieveForm')">Vocha Yangu</button>
+                    </div>
+
+                    <form name="login" class="login-form" id="loginFormContent" action="$(link-login-only)" method="post" onsubmit="return handleLogin(event)">
+                        <input type="hidden" name="dst" value="$(link-orig)" />
+                        <input type="hidden" name="popup" value="true" />
+                        <input type="hidden" name="password" value="ROCKY221122" />
+                        <div class="form-group">
+                            <input name="username" type="text" id="username" placeholder="Voucher code" required />
+                        </div>
+                        <input type="submit" value="Connect" />
+                        <div class="loading-spinner" id="loginSpinner"></div>
+                        <div id="loginErrorMessage" class="error"></div>
+                    </form>
+
+                    <div class="retrieve-form" id="retrieveForm">
+                        <form onsubmit="return handleRetrieveVoucher(event)">
+                            <div class="form-group">
+                                <input type="tel" id="retrievePhone" placeholder="namba ya simu (mfano, 0653422101)" pattern="[0-9]{9,10}" required />
+                            </div>
+                            <button type="submit">Pata Vocha</button>
+                            <div class="loading-spinner" id="retrieveSpinner"></div>
+                            <div id="retrieveErrorMessage" class="error"></div>
+                        </form>
+                    </div>
+                </div>
+
+                <p class="info bt">
+                    <span id="togglePurchaseToLoginView" class="toggle-link">
+                        Tayari nina vocha? Ingia
+                    </span>
+                </p>
+
+                <div class="device-info small-device-info" id="deviceInfo">
+                    <p><span id="clientMac">...</span></p>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <footer>
+        <div id="infoMessage" class="info-message"></div>
+        <div class="footer-content">
+            <span>Msaada piga: <a href="tel:0653422101">0653422101</a></span>
+            <div class="get-info-button" id="getInfoButton">
+                <button type="button" class="small-button" onclick="handleGetInfo()">Get Info</button>
+            </div>
+        </div>
+        <div class="loading-spinner" id="infoSpinner"></div>
+    </footer>
+
+    <script>
+        /*********** Normalization & Validation Helpers ***********/
+        function normalizeMacToColon(macRaw) {
+            if (!macRaw) return null;
+            let hex = macRaw.toString().trim().toUpperCase().replace(/[^A-F0-9]/g, '');
+            if (hex.length !== 12) return null;
+            return hex.match(/.{1,2}/g).join(':');
+        }
+
+        function normalizeMacToNoSep(macRaw) {
+            if (!macRaw) return null;
+            let hex = macRaw.toString().trim().toUpperCase().replace(/[^A-F0-9]/g, '');
+            if (hex.length !== 12) return null;
+            return hex;
+        }
+
+        function isValidIPv4(ip) {
+            if (!ip) return false;
+            const ipv4regex = /^(25[0-5]|2[0-4]\d|1?\d{1,2})(\.(25[0-5]|2[0-4]\d|1?\d{1,2})){3}$/;
+            return ipv4regex.test(ip.trim());
+        }
+
+        function setMacAndIpValues(macRaw, ipRaw) {
+            const macNorm = normalizeMacToColon(macRaw);
+            const ipTrim = ipRaw ? ipRaw.toString().trim() : '';
+
+            document.getElementById('clientMac').textContent = macNorm || 'Not available';
+
+            // Hidden inputs: mac as colon form, ip validated
+            document.getElementById('mac').value = macNorm || '';
+            document.getElementById('ip').value = isValidIPv4(ipTrim) ? ipTrim : '';
+        }
+
+        /*********** UI Helpers ***********/
+        function showInnerTab(tabId) {
+            const innerForms = document.querySelectorAll('.login-form, .retrieve-form');
+            innerForms.forEach(form => { form.style.display = 'none'; });
+
+            const innerTabButtons = document.querySelectorAll('.inner-tab-button');
+            innerTabButtons.forEach(button => { button.classList.remove('active'); });
+
+            if (tabId === 'loginFormContent') {
+                document.getElementById('loginFormContent').style.display = 'block';
+                document.getElementById('innerTabLogin').classList.add('active');
+                document.getElementById('getInfoButton').style.display = 'block';
+                document.getElementById('infoMessage').textContent = '';
+                document.getElementById('loginErrorMessage').textContent = '';
+            } else if (tabId === 'retrieveForm') {
+                document.getElementById('retrieveForm').style.display = 'block';
+                document.getElementById('innerTabRetrieve').classList.add('active');
+                document.getElementById('getInfoButton').style.display = 'none';
+                document.getElementById('retrieveErrorMessage').textContent = '';
+            }
+        }
+
+        function togglePurchaseLoginView() {
+            const purchaseForm = document.getElementById('purchaseForm');
+            const loginViewContainer = document.getElementById('loginViewContainer');
+            const toggleLink = document.getElementById('togglePurchaseToLoginView');
+
+            if (window.getComputedStyle(purchaseForm).display === 'block') {
+                purchaseForm.style.display = 'none';
+                loginViewContainer.style.display = 'block';
+                toggleLink.textContent = 'Nunua Vocha? Rudi';
+                showInnerTab('loginFormContent');
+            } else {
+                purchaseForm.style.display = 'block';
+                loginViewContainer.style.display = 'none';
+                toggleLink.textContent = 'Tayari nina vocha? Ingia';
+                document.getElementById('getInfoButton').style.display = 'none';
+                document.getElementById('infoMessage').textContent = '';
+                document.getElementById('loginErrorMessage').textContent = '';
+                document.getElementById('retrieveErrorMessage').textContent = '';
+            }
+        }
+
+        /*********** Storage helpers (with short expiry) ***********/
+        function setStorage(key, value) {
+            const expiration = Date.now() + 15 * 60 * 1000; // 15 minutes
+            const data = { value: value, expiration: expiration };
+            localStorage.setItem(key, JSON.stringify(data));
+        }
+
+        function getStorage(key) {
+            const data = localStorage.getItem(key);
+            if (!data) return null;
+            try {
+                const { value, expiration } = JSON.parse(data);
+                if (Date.now() > expiration) {
+                    localStorage.removeItem(key);
+                    return null;
+                }
+                return value;
+            } catch (e) {
+                return null;
+            }
+        }
+
+        /*********** Purchase flow (with validation) ***********/
+        async function handlePurchase(event) {
+            event.preventDefault();
+            const errorElement = document.getElementById('errorMessage');
+            const purchaseSpinner = document.getElementById('purchaseSpinner');
+            errorElement.textContent = '';
+            purchaseSpinner.style.display = 'block';
+            
+            console.log('🔄 Starting payment request...');
+            console.log('📍 Current page protocol:', window.location.protocol);
+            console.log('📍 Target endpoint: https://processpayment-3vxbatgzgq-uc.a.run.app');
+
+            // Re-normalize/validate current hidden values
+            const rawMac = document.getElementById('mac').value || '';
+            const rawIp  = document.getElementById('ip').value || '';
+            const macNorm = normalizeMacToColon(rawMac) || normalizeMacToColon('' + rawMac);
+            const ipTrim = rawIp ? rawIp.toString().trim() : '';
+
+            // If RouterOS provided $(mac) as raw no-sep or colon form, this ensures we normalize properly.
+            if (!macNorm) {
+                purchaseSpinner.style.display = 'none';
+                errorElement.textContent = 'Device MAC address not available or invalid.';
+                return false;
+            }
+            if (!isValidIPv4(ipTrim)) {
+                purchaseSpinner.style.display = 'none';
+                errorElement.textContent = 'Client IPv4 address not available or invalid.';
+                return false;
+            }
+
+            // Ensure hidden fields contain normalized values
+            document.getElementById('mac').value = macNorm;
+            document.getElementById('ip').value = ipTrim;
+
+            const provider = document.getElementById('provider').value;
+            const phone = document.getElementById('phone').value;
+            const durationSelect = document.getElementById('duration');
+            const selectedOption = durationSelect.options[durationSelect.selectedIndex];
+
+            try {
+                console.log('📤 Request payload:', {
+                    provider: provider,
+                    phone: phone,
+                    amount: parseInt(selectedOption.dataset.price),
+                    quantity: 1,
+                    durationSeconds: parseFloat(selectedOption.dataset.seconds),
+                    location: "PAULSTATIONARY2"
+                });
+                
+                console.log('🌐 Attempting fetch to Cloud Run...');
+                const response = await fetch('https://processpayment-3vxbatgzgq-uc.a.run.app', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        provider: provider,
+                        phone: phone,
+                        amount: parseInt(selectedOption.dataset.price),
+                        quantity: 1,
+                        durationSeconds: parseFloat(selectedOption.dataset.seconds),
+                        location: "PAULSTATIONARY2"
+                    })
+                });
+
+                console.log('📥 Response received:', response.status, response.statusText);
+                const data = await response.json();
+                console.log('📥 Response data:', data);
+                if (!response.ok) throw new Error(data.error || 'Payment failed');
+
+                const voucherCode = data.voucherCode || data.voucher_code || data.code;
+                if (!voucherCode) throw new Error('No voucher returned from server');
+
+                document.getElementById('username').value = voucherCode;
+                setStorage('voucherCode', voucherCode);
+
+                // Auto-submit login form after 30s
+                setTimeout(() => {
+                    togglePurchaseLoginView();
+                    showInnerTab('loginFormContent');
+                    const loginForm = document.forms.login;
+                    loginForm.submit();
+                    purchaseSpinner.style.display = 'none';
+                }, 30000);
+
+            } catch (error) {
+                purchaseSpinner.style.display = 'none';
+                console.error('❌ Payment error details:', error);
+                console.error('❌ Error name:', error.name);
+                console.error('❌ Error message:', error.message);
+                console.error('❌ Error stack:', error.stack);
+                
+                // Check for specific error types
+                if (error.name === 'TypeError' && error.message.includes('fetch')) {
+                    errorElement.textContent = 'Network blocked: Mixed content or firewall issue. Check browser console.';
+                } else {
+                    errorElement.textContent = error.message;
+                }
+            }
+            return false;
+        }
+
+        /*********** Login handling ***********/
+        function handleLogin(event) {
+            event.preventDefault();
+            const spinner = document.getElementById("loginSpinner");
+            const username = document.getElementById("username").value;
+            const loginErrorMessage = document.getElementById("loginErrorMessage");
+
+            setStorage('voucherCode', username);
+            spinner.style.display = "block";
+            document.forms.login.submit();
+            return false;
+        }
+
+        /*********** Get info (voucher status) ***********/
+        async function handleGetInfo() {
+            const username = document.getElementById('username').value;
+            const infoSpinner = document.getElementById('infoSpinner');
+            const infoMessage = document.getElementById('infoMessage');
+            const loginErrorMessage = document.getElementById('loginErrorMessage');
+
+            infoMessage.textContent = '';
+            loginErrorMessage.textContent = '';
+
+            if (!username) {
+                loginErrorMessage.textContent = 'Please enter a voucher code or phone number';
+                return;
+            }
+
+            infoSpinner.style.display = 'block';
+
+            try {
+                const isPhoneNumber = /^\d{10}$/.test(username);
+
+                if (isPhoneNumber) {
+                    const response = await fetch(`http://167.179.100.104:5000/get_voucher_by_phone?phone=${encodeURIComponent(username)}`, {
+                        method: 'GET',
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+                    const data = await response.json();
+                    infoSpinner.style.display = 'none';
+
+                    if (!response.ok) throw new Error(data.error || 'No voucher found for this phone number');
+
+                    const voucherCode = data.voucher_code || data.voucherCode;
+                    if (voucherCode) {
+                        document.getElementById('username').value = voucherCode;
+                        setStorage('voucherCode', voucherCode);
+                        infoMessage.textContent = `Voucher code retrieved: ${voucherCode}`;
+                        infoMessage.style.color = '#4CAF50';
+                    } else {
+                        infoMessage.textContent = 'No voucher associated with this phone number';
+                        infoMessage.style.color = '#ff0000';
+                    }
+                } else {
+                    const response = await fetch(`http://167.179.100.104:5000/get_user_info?username=${encodeURIComponent(username)}`, {
+                        method: 'GET',
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+                    const data = await response.json();
+                    infoSpinner.style.display = 'none';
+
+                    if (!response.ok) {
+                        if (data.error === 'Voucher not found') {
+                            infoMessage.textContent = 'Voucher does not exist';
+                        } else {
+                            throw new Error(data.error || 'Failed to fetch voucher info');
+                        }
+                        infoMessage.style.color = '#ff0000';
+                        return;
+                    }
+
+                    const voucherInfo = data.voucher_info || data;
+                    if (voucherInfo.used === 1) {
+                        const macAddress = voucherInfo.mac_address || 'Unknown';
+                        const loginTime = voucherInfo.first_login_time || 'Unknown';
+                        infoMessage.textContent = `Used in ${macAddress} at ${loginTime}`;
+                        infoMessage.style.color = '#fff';
+                    } else {
+                        infoMessage.textContent = 'Voucher not used';
+                        infoMessage.style.color = '#fff';
+                    }
+                }
+            } catch (error) {
+                infoSpinner.style.display = 'none';
+                loginErrorMessage.textContent = error.message;
+                console.error('Get info error:', error);
+            }
+        }
+
+        /*********** Retrieve voucher by phone ***********/
+        async function handleRetrieveVoucher(event) {
+            event.preventDefault();
+            const retrievePhone = document.getElementById('retrievePhone').value;
+            const retrieveSpinner = document.getElementById('retrieveSpinner');
+            const retrieveErrorMessage = document.getElementById('retrieveErrorMessage');
+
+            retrieveErrorMessage.textContent = '';
+            if (!retrievePhone) {
+                retrieveErrorMessage.textContent = 'Please enter a phone number.';
+                return;
+            }
+
+            retrieveSpinner.style.display = 'block';
+
+            try {
+                const response = await fetch(`http://167.179.100.104:5000/get_voucher_by_phone?phone=${encodeURIComponent(retrievePhone)}`, {
+                    method: 'GET',
+                    headers: { 'Content-Type': 'application/json' }
+                    });
+                const data = await response.json();
+                retrieveSpinner.style.display = 'none';
+
+                if (!response.ok) throw new Error(data.error || 'Failed to retrieve voucher for this phone number.');
+
+                const voucherCode = data.voucher_code || data.voucherCode;
+                if (voucherCode) {
+                    retrieveErrorMessage.style.color = '#4CAF50';
+                    retrieveErrorMessage.textContent = `Voucher code: ${voucherCode}`;
+                    document.getElementById('username').value = voucherCode;
+                    setStorage('voucherCode', voucherCode);
+                    showInnerTab('loginFormContent');
+                } else {
+                    retrieveErrorMessage.textContent = 'No active voucher found for this phone number.';
+                    retrieveErrorMessage.style.color = '#ff0000';
+                }
+
+            } catch (error) {
+                retrieveSpinner.style.display = 'none';
+                retrieveErrorMessage.textContent = error.message;
+                console.error('Retrieve voucher by phone error:', error);
+            }
+            return false;
+        }
+
+        /*********** Initialization ***********/
+        document.addEventListener('DOMContentLoaded', function() {
+            // Normalize router placeholders and update UI
+            const rawMac = document.getElementById('mac').value || '';
+            const rawIp  = document.getElementById('ip').value || '';
+            setMacAndIpValues(rawMac, rawIp);
+
+            // Attach toggle event listener
+            document.getElementById('togglePurchaseToLoginView').addEventListener('click', togglePurchaseLoginView);
+
+            // Populate voucher from storage if present
+            const savedVoucherCode = getStorage('voucherCode');
+            if (savedVoucherCode) {
+                document.getElementById('username').value = savedVoucherCode;
+                togglePurchaseLoginView();
+                showInnerTab('loginFormContent');
+            } else {
+                document.getElementById('purchaseForm').style.display = 'block';
+                document.getElementById('loginViewContainer').style.display = 'none';
+            }
+        });
+    </script>
+</body>
+</html>

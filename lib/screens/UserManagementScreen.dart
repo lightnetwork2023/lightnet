@@ -35,6 +35,225 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
     }
   }
 
+  void _showEditTechnicianDivisorDialog(DocumentSnapshot user) {
+    final userData = user.data() as Map<String, dynamic>;
+    double divisor = 30000.0;
+    try {
+      final raw = userData['commission_divisor'];
+      if (raw is num) divisor = raw.toDouble();
+      if (raw is String) divisor = double.tryParse(raw) ?? divisor;
+      if (divisor <= 0) divisor = 30000.0;
+    } catch (_) {}
+
+    final controller = TextEditingController(text: divisor.toStringAsFixed(0));
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Set Technician Commission Divisor'),
+        content: SizedBox(
+          width: 380,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Commission = Payments total / Divisor'),
+              const SizedBox(height: 12),
+              TextField(
+                controller: controller,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(
+                  labelText: 'Divisor',
+                  hintText: 'e.g., 30000',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              final val = double.tryParse(controller.text.trim());
+              if (val == null || val <= 0) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Please enter a valid positive number')),
+                );
+                return;
+              }
+              try {
+                await FirebaseFirestore.instance
+                    .collection('users')
+                    .doc(user.id)
+                    .update({'commission_divisor': val});
+                if (mounted) {
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Commission divisor updated successfully')),
+                  );
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Failed to update divisor: $e')),
+                  );
+                }
+              }
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showEditCommissionDialog(DocumentSnapshot user) {
+    final userData = user.data() as Map<String, dynamic>;
+    // Read existing commission (support map or legacy percent)
+    double saShare = 0.63;
+    double coShare = 0.37;
+    try {
+      final comm = userData['commission'];
+      if (comm != null && comm is Map) {
+        final sa = _parseShare(comm['superagent']);
+        final co = _parseShare(comm['company']);
+        if (sa != null) saShare = sa;
+        coShare = co ?? (1.0 - saShare);
+      } else if (userData['superagent_percent'] != null) {
+        final legacy = _parseShare(userData['superagent_percent']);
+        if (legacy != null) {
+          saShare = legacy;
+          coShare = 1.0 - saShare;
+        }
+      }
+      saShare = saShare.clamp(0.0, 1.0);
+      coShare = (1.0 - saShare).clamp(0.0, 1.0);
+    } catch (_) {}
+
+    double saPct = (saShare * 100).clamp(0, 100);
+    final controller = TextEditingController(text: saPct.toStringAsFixed(0));
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setStateDialog) => AlertDialog(
+          title: const Text('Edit SuperAgent Commission'),
+          content: SizedBox(
+            width: 380,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('Set the revenue split for this superagent'),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    const Text('SuperAgent %'),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: TextField(
+                        controller: controller,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(
+                          border: OutlineInputBorder(),
+                          hintText: 'e.g., 63',
+                        ),
+                        onChanged: (val) {
+                          final v = double.tryParse(val) ?? saPct;
+                          setStateDialog(() {
+                            saPct = v.clamp(0, 100);
+                            controller.value = controller.value.copyWith(
+                              text: saPct.toStringAsFixed(0),
+                              selection: TextSelection.fromPosition(TextPosition(offset: saPct.toStringAsFixed(0).length)),
+                            );
+                          });
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Slider(
+                  value: saPct,
+                  min: 0,
+                  max: 100,
+                  divisions: 100,
+                  label: '${saPct.toStringAsFixed(0)}%',
+                  onChanged: (v) {
+                    setStateDialog(() {
+                      saPct = v;
+                      controller.text = saPct.toStringAsFixed(0);
+                    });
+                  },
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text('Company %: ${(100 - saPct).toStringAsFixed(0)}'),
+                    const Text('Total: 100%'),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                final saFraction = (saPct / 100.0).clamp(0.0, 1.0);
+                try {
+                  await FirebaseFirestore.instance
+                      .collection('users')
+                      .doc(user.id)
+                      .update({
+                    'commission': {
+                      'superagent': saFraction,
+                      'company': (1.0 - saFraction),
+                    }
+                  });
+                  if (mounted) {
+                    Navigator.pop(context);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Commission updated successfully')),
+                    );
+                  }
+                } catch (e) {
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Failed to update commission: $e')),
+                    );
+                  }
+                }
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  double? _parseShare(dynamic v) {
+    if (v == null) return null;
+    double? d;
+    if (v is num) {
+      d = v.toDouble();
+    } else if (v is String) {
+      d = double.tryParse(v);
+    }
+    if (d == null) return null;
+    if (d > 1.0) return d / 100.0;
+    if (d < 0.0) return 0.0;
+    return d;
+  }
+  
   @override
   void dispose() {
     _emailController.dispose();
@@ -427,6 +646,56 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
     );
   }
 
+  Future<void> _confirmAndDeleteAppUser(DocumentSnapshot userDoc) async {
+    final data = userDoc.data() as Map<String, dynamic>;
+    final email = (data['email'] ?? '').toString();
+    final name = (data['name'] ?? '').toString();
+    final isSelf = authController.user?.uid == userDoc.id;
+
+    if (isSelf) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('You cannot delete your own account.')),
+      );
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Account'),
+        content: Text('Are you sure you want to delete ${name.isNotEmpty ? '"$name" ' : ''}<$email>? This will remove the user from Firebase Auth and Firestore.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      await authController.deleteAppUser(uid: userDoc.id);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('User deleted successfully')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to delete user: $e')),
+        );
+      }
+    }
+  }
+
   void _showEditUserDialog(DocumentSnapshot user) {
     final userData = user.data() as Map<String, dynamic>;
     final currentRole = userData['role']?.toString() ?? 'agent';
@@ -434,28 +703,59 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Edit ${currentRole == 'superagent' ? 'Super Agent' : 'Agent'}'),
+        title: Text('Edit ${currentRole == 'superagent' ? 'Super Agent' : (currentRole == 'technician' ? 'Technician' : 'Agent')}'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            ListTile(
-              leading: const Icon(Icons.settings),
-              title: const Text('Edit Bundles & Pricing'),
-              subtitle: const Text('Manage allowed voucher bundles'),
-              onTap: () {
-                Navigator.pop(context);
-                _showEditAgentDialog(user);
-              },
-            ),
+            if (currentRole == 'agent')
+              ListTile(
+                leading: const Icon(Icons.settings),
+                title: const Text('Edit Bundles & Pricing'),
+                subtitle: const Text('Manage allowed voucher bundles'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showEditAgentDialog(user);
+                },
+              ),
             ListTile(
               leading: const Icon(Icons.location_on),
-              title: Text('Edit ${currentRole == 'superagent' ? 'Locations' : 'Location'}'),
-              subtitle: Text('Manage assigned ${currentRole == 'superagent' ? 'locations' : 'location'}'),
+              title: Text('Edit ${(currentRole == 'superagent' || currentRole == 'technician') ? 'Locations' : 'Location'}'),
+              subtitle: Text('Manage assigned ${(currentRole == 'superagent' || currentRole == 'technician') ? 'locations' : 'location'}'),
               onTap: () {
                 Navigator.pop(context);
                 _showEditLocationDialog(user);
               },
             ),
+            if (currentRole == 'technician')
+              ListTile(
+                leading: const Icon(Icons.calculate_rounded),
+                title: const Text('Set Commission Divisor'),
+                subtitle: const Text('Payments total will be divided by this value'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showEditTechnicianDivisorDialog(user);
+                },
+              ),
+            if (currentRole == 'superagent')
+              ListTile(
+                leading: const Icon(Icons.percent),
+                title: const Text('Edit Commission'),
+                subtitle: const Text('Configure superagent/company split'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showEditCommissionDialog(user);
+                },
+              ),
+            if (authController.isBoss && authController.user?.uid != user.id)
+              ListTile(
+                leading: const Icon(Icons.delete_forever_rounded, color: Colors.redAccent),
+                title: const Text('Delete Account'),
+                subtitle: const Text('Remove from Auth and Firestore'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _confirmAndDeleteAppUser(user);
+                },
+              ),
           ],
         ),
         actions: [
@@ -472,7 +772,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
     final userData = user.data() as Map<String, dynamic>;
     final currentRole = userData['role']?.toString() ?? 'agent';
     
-    if (currentRole == 'superagent') {
+    if (currentRole == 'superagent' || currentRole == 'technician') {
       _showEditSuperAgentLocationsDialog(user);
     } else {
       _showEditAgentLocationDialog(user);
@@ -539,20 +839,27 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
 
   void _showEditSuperAgentLocationsDialog(DocumentSnapshot user) {
     final userData = user.data() as Map<String, dynamic>;
+    final currentRole = userData['role']?.toString() ?? 'agent';
+    final isTechnician = currentRole == 'technician';
     final currentLocations = List<String>.from(userData['locations'] ?? []);
     final selectedLocations = Set<String>.from(currentLocations);
+    // Seed with single 'location' if present (common for agents/technicians)
+    final singleLocation = (userData['location']?.toString() ?? '');
+    if (singleLocation.isNotEmpty) {
+      selectedLocations.add(singleLocation);
+    }
 
     showDialog(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Edit Super Agent Locations'),
+          title: Text(isTechnician ? 'Edit Technician Locations' : 'Edit Super Agent Locations'),
           content: SizedBox(
             width: double.maxFinite,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Text('Select locations for this super agent:'),
+                Text(isTechnician ? 'Select locations for this technician:' : 'Select locations for this super agent:'),
                 const SizedBox(height: 16),
                 Flexible(
                   child: Obx(() {
@@ -590,13 +897,19 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
             ),
             ElevatedButton(
               onPressed: selectedLocations.isEmpty ? null : () async {
+                final updates = <String, dynamic>{
+                  'locations': selectedLocations.toList(),
+                };
+                if (isTechnician) {
+                  updates['location'] = selectedLocations.isNotEmpty ? selectedLocations.first : '';
+                }
                 await FirebaseFirestore.instance
                     .collection('users')
                     .doc(user.id)
-                    .update({'locations': selectedLocations.toList()});
+                    .update(updates);
                 Navigator.pop(context);
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Super agent locations updated successfully!')),
+                  SnackBar(content: Text(isTechnician ? 'Technician locations updated successfully!' : 'Super agent locations updated successfully!')),
                 );
               },
               child: const Text('Update'),
@@ -890,14 +1203,14 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                                     ],
                                   ),
                                 ],
-                              ),
-                            ),
-                            if (currentRole == 'agent' || currentRole == 'superagent')
-                              IconButton(
-                                icon: const Icon(Icons.edit, color: Colors.blue),
-                                onPressed: () => _showEditUserDialog(user),
-                              ),
-                            DropdownButton<String>(
+                          ),
+                        ),
+                        if (currentRole == 'agent' || currentRole == 'superagent' || currentRole == 'technician')
+                          IconButton(
+                            icon: const Icon(Icons.edit, color: Colors.blue),
+                            onPressed: () => _showEditUserDialog(user),
+                          ),
+                        DropdownButton<String>(
                               value: currentRole,
                               underline: const SizedBox(),
                               items: <DropdownMenuItem<String>>[
@@ -916,6 +1229,13 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                                 }
                               },
                             ),
+                            const SizedBox(width: 8),
+                            if (authController.isBoss && authController.user?.uid != user.id)
+                              IconButton(
+                                icon: const Icon(Icons.delete_forever_rounded, color: Colors.redAccent),
+                                tooltip: 'Delete Account',
+                                onPressed: () => _confirmAndDeleteAppUser(user),
+                              ),
                           ],
                         ),
                       ),
