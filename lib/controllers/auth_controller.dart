@@ -13,8 +13,10 @@ class AuthController extends GetxController {
   final RxString _userLocation = ''.obs;
   final RxMap<String, dynamic> _allowedBundles = <String, dynamic>{}.obs;
   final RxList<String> _userLocations = <String>[].obs;
+  final RxString _homeCustomerId = ''.obs;
   final RxDouble _commissionSuperAgent = 0.63.obs; // default 63%
   final RxDouble _commissionCompany = 0.37.obs;    // default 37%
+  final RxBool _isDataLoaded = false.obs; // Track if user data has been loaded
 
   User? get user => _user.value;
   String get userRole => _userRole.value;
@@ -22,6 +24,7 @@ class AuthController extends GetxController {
   String get userLocation => _userLocation.value;
   List<String> get userLocations => _userLocations.toList();
   RxString get userLocationStream => _userLocation;
+  String get homeCustomerId => _homeCustomerId.value;
   RxList<String> get userLocationsStream => _userLocations;
   RxMap<String, dynamic> get allowedBundlesStream => _allowedBundles;
   Map<String, dynamic> get allowedBundles => _allowedBundles;
@@ -30,11 +33,12 @@ class AuthController extends GetxController {
   bool get isBoss => _userRole.value == 'boss';
   bool get isAgent => _userRole.value == 'agent';
   bool get isSuperAgent => _userRole.value == 'superagent';
+  bool get isHomeUser => _userRole.value == 'homeuser';
+  bool get isDataLoaded => _isDataLoaded.value; // Expose data loaded state
 
   @override
   void onInit() {
     super.onInit();
-    _loadUserRoleFromPrefs();
     _user.bindStream(_auth.authStateChanges());
     _user.listen((User? user) async {
       if (user != null) {
@@ -46,93 +50,102 @@ class AuthController extends GetxController {
   }
 
   Future<void> _loadUserData(User user) async {
-    final userDoc = await FirebaseFirestore.instance
-        .collection('users')
-        .doc(user.uid)
-        .get();
+    try {
+      final userDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
 
-    if (userDoc.exists) {
-      final userData = userDoc.data() as Map<String, dynamic>;
-      _userRole.value = userData['role'] ?? 'technician';
-      _userName.value = userData['name'] ?? '';
-      _userLocation.value = userData['location'] ?? '';
-      
-      // Handle locations for superagents
-      if (userData['locations'] != null && userData['locations'] is List) {
-        _userLocations.assignAll(List<String>.from(userData['locations']));
-        // Set current location to first location if available
-        if (_userLocations.isNotEmpty) {
-          _userLocation.value = _userLocations.first;
-        }
-      } else if (userData['location'] != null && userData['location'].isNotEmpty) {
-        _userLocations.assignAll([userData['location']]);
-      } else {
-        _userLocations.clear();
-      }
-      
-      if (userData['allowed_bundles'] != null) {
-        try {
-          // Handle both List and Map types for allowed_bundles
-          final bundlesRaw = userData['allowed_bundles'];
-          if (bundlesRaw is Map) {
-            final bundlesData = Map<String, dynamic>.from(bundlesRaw);
-            _allowedBundles.value = bundlesData;
-          } else if (bundlesRaw is List) {
-            // Convert List to Map if needed, or handle as appropriate for your app
-            _allowedBundles.clear();
-            print('Warning: allowed_bundles is a List, expected Map. Data: $bundlesRaw');
-          } else {
-            _allowedBundles.clear();
-            print('Warning: allowed_bundles has unexpected type: ${bundlesRaw.runtimeType}');
+      if (userDoc.exists) {
+        final userData = userDoc.data() as Map<String, dynamic>;
+        _userRole.value = userData['role'] ?? 'technician';
+        _userName.value = userData['name'] ?? '';
+        _userLocation.value = userData['location'] ?? '';
+        _homeCustomerId.value = userData['home_customer_id'] ?? '';
+        
+        // Handle locations for superagents
+        if (userData['locations'] != null && userData['locations'] is List) {
+          _userLocations.assignAll(List<String>.from(userData['locations']));
+          // Set current location to first location if available
+          if (_userLocations.isNotEmpty) {
+            _userLocation.value = _userLocations.first;
           }
-        } catch (e) {
-          print('Error processing allowed_bundles: $e');
+        } else if (userData['location'] != null && userData['location'].isNotEmpty) {
+          _userLocations.assignAll([userData['location']]);
+        } else {
+          _userLocations.clear();
+        }
+        
+        if (userData['allowed_bundles'] != null) {
+          try {
+            // Handle both List and Map types for allowed_bundles
+            final bundlesRaw = userData['allowed_bundles'];
+            if (bundlesRaw is Map) {
+              final bundlesData = Map<String, dynamic>.from(bundlesRaw);
+              _allowedBundles.value = bundlesData;
+            } else if (bundlesRaw is List) {
+              // Convert List to Map if needed, or handle as appropriate for your app
+              _allowedBundles.clear();
+              print('Warning: allowed_bundles is a List, expected Map. Data: $bundlesRaw');
+            } else {
+              _allowedBundles.clear();
+              print('Warning: allowed_bundles has unexpected type: ${bundlesRaw.runtimeType}');
+            }
+          } catch (e) {
+            print('Error processing allowed_bundles: $e');
+            _allowedBundles.clear();
+          }
+          // Moved to try-catch block above
+        } else {
           _allowedBundles.clear();
         }
-        // Moved to try-catch block above
-      } else {
-        _allowedBundles.clear();
-      }
 
-      // Load commission shares (supports various shapes)
-      try {
-        double saShare = 0.63;
-        double coShare = 0.37;
-        dynamic comm = userData['commission'];
-        if (comm != null) {
-          if (comm is Map) {
-            final m = Map<String, dynamic>.from(comm);
-            saShare = _parseShare(m['superagent']) ?? saShare;
-            // if company provided use it, else derive remainder
-            final parsedCompany = _parseShare(m['company']);
-            coShare = parsedCompany ?? (1.0 - saShare);
-          } else {
-            // Support legacy single value like 'superagent_percent'
-            final legacy = _parseShare(comm);
+        // Load commission shares (supports various shapes)
+        try {
+          double saShare = 0.63;
+          double coShare = 0.37;
+          dynamic comm = userData['commission'];
+          if (comm != null) {
+            if (comm is Map) {
+              final m = Map<String, dynamic>.from(comm);
+              saShare = _parseShare(m['superagent']) ?? saShare;
+              // if company provided use it, else derive remainder
+              final parsedCompany = _parseShare(m['company']);
+              coShare = parsedCompany ?? (1.0 - saShare);
+            } else {
+              // Support legacy single value like 'superagent_percent'
+              final legacy = _parseShare(comm);
+              if (legacy != null) {
+                saShare = legacy;
+                coShare = 1.0 - saShare;
+              }
+            }
+          } else if (userData['superagent_percent'] != null) {
+            final legacy = _parseShare(userData['superagent_percent']);
             if (legacy != null) {
               saShare = legacy;
               coShare = 1.0 - saShare;
             }
           }
-        } else if (userData['superagent_percent'] != null) {
-          final legacy = _parseShare(userData['superagent_percent']);
-          if (legacy != null) {
-            saShare = legacy;
-            coShare = 1.0 - saShare;
-          }
+          // Clamp to [0,1] and normalize if needed
+          saShare = saShare.clamp(0.0, 1.0);
+          coShare = (1.0 - saShare).clamp(0.0, 1.0);
+          _commissionSuperAgent.value = saShare;
+          _commissionCompany.value = coShare;
+        } catch (e) {
+          // keep defaults on parse error
+          _commissionSuperAgent.value = 0.63;
+          _commissionCompany.value = 0.37;
+          print('Warning: failed to parse commission shares: $e');
         }
-        // Clamp to [0,1] and normalize if needed
-        saShare = saShare.clamp(0.0, 1.0);
-        coShare = (1.0 - saShare).clamp(0.0, 1.0);
-        _commissionSuperAgent.value = saShare;
-        _commissionCompany.value = coShare;
-      } catch (e) {
-        // keep defaults on parse error
-        _commissionSuperAgent.value = 0.63;
-        _commissionCompany.value = 0.37;
-        print('Warning: failed to parse commission shares: $e');
+        await _saveUserRoleToPrefs(_userRole.value);
+        
+        // Mark data as loaded
+        _isDataLoaded.value = true;
       }
-      await _saveUserRoleToPrefs(_userRole.value);
+    } catch (e) {
+      print('Error loading user data: $e');
+      _isDataLoaded.value = false;
     }
   }
 
@@ -155,9 +168,11 @@ class AuthController extends GetxController {
     _userRole.value = '';
     _userName.value = '';
     _userLocation.value = '';
+    _homeCustomerId.value = '';
     _allowedBundles.clear();
     _commissionSuperAgent.value = 0.63;
     _commissionCompany.value = 0.37;
+    _isDataLoaded.value = false;
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('user_role');
   }
@@ -200,7 +215,7 @@ class AuthController extends GetxController {
     }
   }
 
-  Future<UserCredential?> createNewAccount(String email, String password, String role, {String? name, String? location, List<String>? locations}) async {
+  Future<UserCredential?> createNewAccount(String email, String password, String role, {String? name, String? location, List<String>? locations, String? homeCustomerId}) async {
     print('AuthController: Starting user creation for email: $email, role: $role');
     
     if (!isBoss) {
@@ -223,6 +238,7 @@ class AuthController extends GetxController {
           'name': name,
           'location': location,
           'locations': locations,
+          'home_customer_id': homeCustomerId,
         }),
       );
 
@@ -301,6 +317,22 @@ class AuthController extends GetxController {
       }
     } catch (e) {
       rethrow;
+    }
+  }
+
+  /// Send password reset email to user
+  Future<void> sendPasswordResetEmail(String email) async {
+    try {
+      await _auth.sendPasswordResetEmail(email: email);
+    } on FirebaseAuthException catch (e) {
+      if (e.code == 'user-not-found') {
+        throw 'No user found with this email address.';
+      } else if (e.code == 'invalid-email') {
+        throw 'Invalid email address.';
+      }
+      throw e.message ?? 'Failed to send password reset email.';
+    } catch (e) {
+      throw 'An error occurred while sending password reset email.';
     }
   }
 } 

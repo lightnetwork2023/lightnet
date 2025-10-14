@@ -9,17 +9,19 @@ import '../screens/VouchersByLocationScreen.dart';
 import '../screens/valid_users.dart';
 import '../screens/SuperAgentPaymentsScreen.dart';
 import '../screens/SuperAgentPaymentsByLocationScreen.dart';
-import '../screens/UserManagementScreen.dart';
 import '../screens/BundleManagementScreen.dart';
 import '../screens/PurchaseForAgentScreen.dart';
 import '../screens/payments.dart';
 import '../screens/PaymentAnalyticsPage.dart';
 import '../screens/NetworkDevicesScreen.dart';
-import '../screens/BossSuperAgentAnalyticsScreen.dart';
+import '../screens/BossTechnicianAnalyticsScreen.dart';
 import '../screens/LocationDataScreen.dart';
 import '../screens/LoginScreen.dart';
 import '../screens/TechnicianCommissionPage.dart';
-import '../screens/BossTechnicianAnalyticsScreen.dart';
+import '../screens/HomeInternetCustomersScreen.dart';
+import '../screens/UserManagementScreen.dart';
+import '../screens/BossSuperAgentAnalyticsScreen.dart';
+import '../screens/HomePaymentApprovalsScreen.dart';
 
 class ModernDrawer extends StatelessWidget {
   const ModernDrawer({Key? key}) : super(key: key);
@@ -135,7 +137,7 @@ class ModernDrawer extends StatelessWidget {
                             icon: Icons.admin_panel_settings_outlined,
                             title: 'User Management',
                             subtitle: 'Manage user accounts',
-                            onTap: () => _navigateTo(context, const UserManagementScreen()),
+                            onTap: () => _navigateTo(context, UserManagementScreen()),
                           ),
                           _buildDrawerItem(
                             context,
@@ -167,6 +169,23 @@ class ModernDrawer extends StatelessWidget {
                     subtitle: 'View active users',
                     onTap: () => _navigateTo(context, ValidUsersScreen()),
                   ),
+                  _buildDrawerItem(
+                    context,
+                    icon: Icons.home_rounded,
+                    title: 'Home Internet Users',
+                    subtitle: 'Manage home customers',
+                    onTap: () => _navigateTo(context, const HomeInternetCustomersScreen()),
+                  ),
+                  // Boss-only: Home Payment Approvals
+                  Obx(() => authController.isBoss
+                      ? _buildDrawerItem(
+                          context,
+                          icon: Icons.verified_rounded,
+                          title: 'Home Payment Approvals',
+                          subtitle: 'Approve or reject receipts',
+                          onTap: () => _navigateTo(context, const HomePaymentApprovalsScreen()),
+                        )
+                      : const SizedBox.shrink()),
                   _buildDrawerItem(
                     context,
                     icon: Icons.location_on_outlined,
@@ -288,7 +307,7 @@ class ModernDrawer extends StatelessWidget {
                           icon: Icons.supervisor_account_rounded,
                           title: 'SuperAgent Analytics',
                           subtitle: 'Select and view by SuperAgent',
-                          onTap: () => _navigateTo(context, const BossSuperAgentAnalyticsScreen()),
+                          onTap: () => _navigateTo(context, BossSuperAgentAnalyticsScreen()),
                         )
                       : const SizedBox.shrink()),
                   // Boss-only: View Technician Analytics selector

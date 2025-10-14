@@ -696,6 +696,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
     }
   }
 
+
   void _showEditUserDialog(DocumentSnapshot user) {
     final userData = user.data() as Map<String, dynamic>;
     final currentRole = userData['role']?.toString() ?? 'agent';
@@ -1150,7 +1151,9 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                             ? Colors.purple
                             : currentRole == 'agent'
                                 ? Colors.blue
-                                : Colors.green;
+                                : currentRole == 'homeuser'
+                                    ? Colors.orange
+                                    : Colors.green;
                     return Card(
                       elevation: 2,
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -1167,7 +1170,9 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                                         ? Icons.supervisor_account
                                         : currentRole == 'agent'
                                             ? Icons.person
-                                            : Icons.build,
+                                            : currentRole == 'homeuser'
+                                                ? Icons.home
+                                                : Icons.build,
                                 color: badgeColor,
                               ),
                             ),
@@ -1222,6 +1227,8 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                                     value: 'superagent', child: Text('Super Agent')),
                                 const DropdownMenuItem<String>(
                                     value: 'boss', child: Text('Boss')),
+                                const DropdownMenuItem<String>(
+                                    value: 'homeuser', child: Text('Home User')),
                               ],
                               onChanged: (String? newRole) {
                                 if (newRole != null && newRole != currentRole) {
@@ -1229,13 +1236,6 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                                 }
                               },
                             ),
-                            const SizedBox(width: 8),
-                            if (authController.isBoss && authController.user?.uid != user.id)
-                              IconButton(
-                                icon: const Icon(Icons.delete_forever_rounded, color: Colors.redAccent),
-                                tooltip: 'Delete Account',
-                                onPressed: () => _confirmAndDeleteAppUser(user),
-                              ),
                           ],
                         ),
                       ),

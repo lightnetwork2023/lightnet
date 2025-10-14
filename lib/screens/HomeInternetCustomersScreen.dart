@@ -1,0 +1,442 @@
+import 'package:flutter/material.dart';
+import 'package:get/get.dart';
+import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
+
+import 'package:lightnetwork/controllers/HomeInternetService.dart';
+import 'package:lightnetwork/controllers/auth_controller.dart';
+import 'package:lightnetwork/models/home_customer.dart';
+import 'AddHomeCustomerScreen.dart';
+import '../theme/app_theme.dart';
+import 'CustomerPaymentsScreen.dart';
+import 'HomeCustomerPeriodsScreen.dart';
+import 'EditHomeCustomerScreen.dart';
+import 'HomeInternetDropdownsScreen.dart';
+import 'HomeInternetAnalyticsScreen.dart';
+import 'ArchivedHomeCustomersScreen.dart';
+
+class HomeInternetCustomersScreen extends StatelessWidget {
+  const HomeInternetCustomersScreen({super.key});
+
+  Future<void> _makePhoneCall(String phoneNumber) async {
+    final Uri phoneUri = Uri(scheme: 'tel', path: phoneNumber);
+    if (await canLaunchUrl(phoneUri)) {
+      await launchUrl(phoneUri);
+    } else {
+      Get.snackbar(
+        'Error',
+        'Could not launch phone dialer',
+        snackPosition: SnackPosition.BOTTOM,
+        backgroundColor: AppTheme.errorColor.withOpacity(0.9),
+        colorText: Colors.white,
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Home Internet Users'),
+        flexibleSpace: Container(
+          decoration: const BoxDecoration(gradient: AppGradients.primaryGradient),
+        ),
+        actions: [
+          if (Get.find<AuthController>().isBoss)
+            IconButton(
+              tooltip: 'Archived Customers',
+              icon: const Icon(Icons.inventory_2_rounded),
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const ArchivedHomeCustomersScreen(),
+                ),
+              ),
+            ),
+          if (Get.find<AuthController>().isBoss)
+            IconButton(
+              tooltip: 'Payments Analytics',
+              icon: const Icon(Icons.insights_rounded),
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const HomeInternetAnalyticsScreen(),
+                ),
+              ),
+            ),
+          if (Get.find<AuthController>().isBoss)
+            IconButton(
+              tooltip: 'Dropdown Options',
+              icon: const Icon(Icons.tune_rounded),
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const HomeInternetDropdownsScreen(),
+                ),
+              ),
+            ),
+        ],
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => Get.to(() => const AddHomeCustomerScreen()),
+        icon: const Icon(Icons.person_add_alt_1_rounded),
+        label: const Text('New Customer'),
+        backgroundColor: AppTheme.primaryColor,
+      ),
+      body: StreamBuilder<List<HomeCustomer>>(
+        stream: HomeInternetService.streamCustomers(),
+        builder: (context, snapshot) {
+          // Show cached data immediately, no loading spinner
+          if (snapshot.hasError) {
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.error_outline, size: 48, color: AppTheme.errorColor),
+                  const SizedBox(height: 16),
+                  Text('Error: ${snapshot.error}'),
+                  const SizedBox(height: 16),
+                  ElevatedButton.icon(
+                    onPressed: () {
+                      // Trigger rebuild
+                      (context as Element).markNeedsBuild();
+                    },
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Retry'),
+                  ),
+                ],
+              ),
+            );
+          }
+          
+          final customers = snapshot.data ?? [];
+          if (customers.isEmpty && snapshot.connectionState != ConnectionState.waiting) {
+            return const _EmptyState();
+          }
+          
+          // Show customers immediately without waiting for status computation
+          return ListView.builder(
+            itemCount: customers.length,
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            itemBuilder: (context, index) {
+              final customer = customers[index];
+              final fmt = NumberFormat('#,##0');
+              
+              return _CustomerCard(
+                key: ValueKey(customer.id),
+                customer: customer,
+                onPhoneCall: _makePhoneCall,
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _CustomerCard extends StatefulWidget {
+  final HomeCustomer customer;
+  final Function(String) onPhoneCall;
+  
+  const _CustomerCard({
+    super.key,
+    required this.customer,
+    required this.onPhoneCall,
+  });
+
+  @override
+  State<_CustomerCard> createState() => _CustomerCardState();
+}
+
+class _CustomerCardState extends State<_CustomerCard> {
+  Map<String, dynamic>? _status;
+  bool _loadingStatus = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadStatus();
+  }
+
+  Future<void> _loadStatus() async {
+    setState(() => _loadingStatus = true);
+    try {
+      final status = await HomeInternetService.computeCustomerStatus(widget.customer.id);
+      if (mounted) {
+        setState(() {
+          _status = status;
+          _loadingStatus = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _loadingStatus = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final customer = widget.customer;
+    final fmt = NumberFormat('#,##0');
+    
+    final overdue = _status?['overdue'] == true;
+    final outstandingRaw = _status?['outstanding_amount'];
+    final outstanding = (outstandingRaw is num)
+        ? outstandingRaw.toDouble()
+        : double.tryParse('$outstandingRaw') ?? 0.0;
+    final currency = _status?['currency'] ?? customer.currency;
+
+    final borderColor = overdue
+        ? AppTheme.errorColor.withOpacity(0.35)
+        : Colors.transparent;
+    final bgTint = overdue
+        ? AppTheme.errorColor.withOpacity(0.06)
+        : Colors.white;
+    final badgeColor = overdue
+        ? AppTheme.errorColor
+        : AppTheme.successColor;
+    final badgeText = overdue ? 'OVERDUE' : 'ON TIME';
+
+    return Card(
+      elevation: 2,
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(color: borderColor, width: 1),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => CustomerPaymentsScreen(
+              customerId: customer.id,
+              customerName: customer.name,
+            ),
+          ),
+        ),
+        child: Container(
+          decoration: BoxDecoration(
+            color: bgTint,
+            borderRadius: BorderRadius.circular(14),
+          ),
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  CircleAvatar(
+                    backgroundColor: AppTheme.primaryColor.withOpacity(0.1),
+                    child: const Icon(Icons.person, color: AppTheme.primaryColor),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                customer.name,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 16,
+                                ),
+                              ),
+                            ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: badgeColor.withOpacity(0.12),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Text(
+                                badgeText,
+                                style: TextStyle(
+                                  color: badgeColor,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                            if (Get.find<AuthController>().isBoss) ...[
+                              const SizedBox(width: 6),
+                              IconButton(
+                                tooltip: 'Edit Customer',
+                                icon: const Icon(Icons.edit_rounded, size: 20),
+                                onPressed: () async {
+                                  final changed = await Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => EditHomeCustomerScreen(customerId: customer.id),
+                                    ),
+                                  );
+                                  if (changed == true && context.mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(content: Text('Customer updated')),
+                                    );
+                                  }
+                                },
+                              ),
+                            ],
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                'ID: ${customer.id}  •  ${customer.customerType}  •  Zone ${customer.zone}',
+                                style: const TextStyle(color: AppTheme.textSecondary),
+                              ),
+                            ),
+                            if (customer.phone.isNotEmpty) ...[
+                              const SizedBox(width: 4),
+                              Material(
+                                color: AppTheme.primaryColor.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(20),
+                                child: InkWell(
+                                  borderRadius: BorderRadius.circular(20),
+                                  onTap: () => widget.onPhoneCall(customer.phone),
+                                  child: const Padding(
+                                    padding: EdgeInsets.all(6),
+                                    child: Icon(
+                                      Icons.phone,
+                                      size: 18,
+                                      color: AppTheme.primaryColor,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 6,
+                children: [
+                  if (customer.phone.isNotEmpty)
+                    GestureDetector(
+                      onTap: () => widget.onPhoneCall(customer.phone),
+                      child: _chip(Icons.phone_rounded, customer.phone, color: AppTheme.primaryColor),
+                    ),
+                  _chip(Icons.speed_rounded, '${customer.speedMbps} Mbps'),
+                  _chip(Icons.receipt_long_rounded, 'Plan: ${fmt.format(customer.planAmount)} $currency'),
+                  if (_status == null)
+                    _chip(Icons.query_stats_rounded, 'Status: computing...')
+                  else ...[
+                    _chip(
+                      outstanding > 0 ? Icons.warning_rounded : Icons.check_circle_rounded,
+                      outstanding > 0
+                          ? 'Outstanding: ${fmt.format(outstanding)} $currency'
+                          : (outstanding < 0
+                              ? 'Credit: ${fmt.format(outstanding.abs())} $currency'
+                              : 'Outstanding: 0 $currency'),
+                      color: outstanding > 0 ? AppTheme.errorColor : AppTheme.successColor,
+                    ),
+                  ],
+                ],
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => HomeCustomerPeriodsScreen(
+                            customerId: customer.id,
+                            customerName: customer.name,
+                          ),
+                        ),
+                      ),
+                      icon: const Icon(Icons.calendar_month_rounded),
+                      label: const Text('Billing Periods'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => CustomerPaymentsScreen(
+                            customerId: customer.id,
+                            customerName: customer.name,
+                          ),
+                        ),
+                      ),
+                      icon: const Icon(Icons.payments_rounded),
+                      label: const Text('Payments'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppTheme.primaryColor,
+                        foregroundColor: Colors.white,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    ));
+  }
+}
+
+Widget _chip(IconData icon, String text, {Color? color}) {
+  return Container(
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+    decoration: BoxDecoration(
+      color: (color ?? AppTheme.textSecondary).withOpacity(0.1),
+      borderRadius: BorderRadius.circular(12),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 16, color: color ?? AppTheme.textSecondary),
+        const SizedBox(width: 6),
+        Text(
+          text,
+          style: TextStyle(
+            color: color ?? AppTheme.textSecondary,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+class _EmptyState extends StatelessWidget {
+  const _EmptyState();
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: const [
+            Icon(Icons.people_outline, size: 48, color: AppTheme.textTertiary),
+            SizedBox(height: 12),
+            Text('No customers yet', style: TextStyle(color: AppTheme.textSecondary)),
+            SizedBox(height: 4),
+            Text('Tap "New Customer" to add one.', style: TextStyle(color: AppTheme.textTertiary)),
+          ],
+        ),
+      ),
+    );
+  }
+}

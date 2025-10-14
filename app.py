@@ -269,36 +269,79 @@ def make_payment():
 @app.route('/get-all-macs-active', methods=['GET'])
 def get_all_macs_active():
     """
-    Fetches all records from the all_macs table and returns them as JSON.
+    Fetch all active sessions from radacct where acctstoptime IS NULL.
+
+    Location is matched using MAC address: vouchers.mac_address = radacct.callingstationid.
+
+    Returns JSON array with fields:
+    - mac_address: callingstationid
+    - ip_address: framedipaddress (fallbacks handled via COALESCE)
+    - location: derived from the most recent voucher for that MAC when available, otherwise 'Unknown'
+    - created_at: acctstarttime of the latest active session per MAC
     """
     try:
-        print("Connecting to database for fetching all MACs...")
+        print("Connecting to database for fetching active RADIUS sessions...")
         conn = mysql.connector.connect(**db_config)
-        # Using dictionary=True makes the result easy to convert to JSON
         cursor = conn.cursor(dictionary=True)
 
-    
-        cursor.execute("SELECT mac_address, ip_address, location, created_at FROM active_macs")
-        
-        # Fetch all rows from the query result
-        all_macs = cursor.fetchall()
-        
-        print(f"? Found {len(all_macs)} records in the database.")
-        
-        # Return the list of devices as a JSON response
-        return jsonify(all_macs), 200
+        query = """
+            /* Latest active session per normalized MAC, plus most recent voucher per normalized MAC */
+            SELECT 
+                r.callingstationid AS mac_address,
+                COALESCE(r.framedipaddress, r.nasipaddress) AS ip_address,
+                COALESCE(v.location, 'Unknown') AS location,
+                r.acctstarttime AS created_at
+            FROM radacct r
+            /* Choose the latest active session for each normalized MAC */
+            INNER JOIN (
+                SELECT 
+                    LOWER(REPLACE(REPLACE(REPLACE(callingstationid, ':', ''), '-', ''), '.', '')) AS norm_mac,
+                    MAX(acctstarttime) AS max_start
+                FROM radacct
+                WHERE acctstoptime IS NULL 
+                  AND callingstationid IS NOT NULL
+                  AND callingstationid <> ''
+                GROUP BY norm_mac
+            ) la 
+              ON la.norm_mac = LOWER(REPLACE(REPLACE(REPLACE(r.callingstationid, ':', ''), '-', ''), '.', ''))
+             AND la.max_start = r.acctstarttime
+            /* Choose a single, most recent voucher per normalized MAC */
+            LEFT JOIN (
+                SELECT vv.location,
+                       LOWER(REPLACE(REPLACE(REPLACE(vv.mac_address, ':', ''), '-', ''), '.', '')) AS norm_mac
+                FROM vouchers vv
+                INNER JOIN (
+                    SELECT 
+                        LOWER(REPLACE(REPLACE(REPLACE(mac_address, ':', ''), '-', ''), '.', '')) AS norm_mac,
+                        MAX(COALESCE(updated_at, created_at, first_login_time)) AS max_ts
+                    FROM vouchers
+                    WHERE mac_address IS NOT NULL AND mac_address <> ''
+                    GROUP BY norm_mac
+                ) vm 
+                  ON vm.norm_mac = LOWER(REPLACE(REPLACE(REPLACE(vv.mac_address, ':', ''), '-', ''), '.', ''))
+                 AND COALESCE(vv.updated_at, vv.created_at, vv.first_login_time) = vm.max_ts
+            ) v 
+              ON v.norm_mac = LOWER(REPLACE(REPLACE(REPLACE(r.callingstationid, ':', ''), '-', ''), '.', ''))
+            WHERE r.acctstoptime IS NULL
+            ORDER BY r.acctstarttime DESC
+        """
+
+        cursor.execute(query)
+        active_sessions = cursor.fetchall()
+
+        print(f"? Found {len(active_sessions)} active RADIUS session(s) in radacct.")
+
+        return jsonify(active_sessions), 200
 
     except Exception as e:
-        print(f"???? Error while fetching MACs: {str(e)}")
+        print(f"? Error while fetching active sessions: {str(e)}")
         return jsonify({"error": str(e)}), 500
     finally:
-        # Ensure the connection is always closed
         if 'cursor' in locals() and cursor:
             cursor.close()
         if 'conn' in locals() and conn.is_connected():
             conn.close()
             print("Database connection closed.")
-
 
 @app.route('/get-all-macs', methods=['GET'])
 def get_all_macs():
@@ -506,6 +549,53 @@ def callback():
         if location is None:
             additional_properties['location'] = 'unifi'
             location = 'unifi'
+
+        # Check payment status first
+        status = callback_data.get('transactionstatus', '').lower()
+        
+        # If location is 'HOME_USER', call Cloud Function to store payment in Firestore
+        if location == 'HOME_USER' and status == 'success':
+            try:
+                customer_id = additional_properties.get('quantity')  # Customer ID stored in quantity
+                amount = float(callback_data.get('amount', 0))
+                phone = callback_data.get('msisdn', callback_data.get('accountNumber', ''))
+                provider = callback_data.get('operator', 'Unknown')
+                reference = callback_data.get('transactionId', callback_data.get('externalId', ''))
+                
+                # Call Cloud Function to store payment
+                cloud_function_response = requests.post(
+                    'https://us-central1-lightnet-d2de9.cloudfunctions.net/storeHomeUserPayment',
+                    json={
+                        'customerId': customer_id,
+                        'amount': amount,
+                        'phone': phone,
+                        'provider': provider,
+                        'reference': reference,
+                        'createdByName': 'Home User Payment'
+                    },
+                    timeout=10
+                )
+                
+                if cloud_function_response.status_code == 200:
+                    print(f"✅ Home user payment stored in Firestore for customer {customer_id}")
+                    return jsonify({
+                        'success': True, 
+                        'message': 'Home user payment recorded successfully',
+                        'customerId': customer_id
+                    }), 200
+                else:
+                    print(f"⚠️ Failed to store home user payment: {cloud_function_response.text}")
+                    return jsonify({
+                        'success': False, 
+                        'error': 'Failed to record payment in Firestore'
+                    }), 500
+                    
+            except Exception as e:
+                print(f"❌ Error storing home user payment: {str(e)}")
+                return jsonify({
+                    'success': False, 
+                    'error': f'Error recording home user payment: {str(e)}'
+                }), 500
 
         # If location is 'unifi', forward the payload to the external URL
         if location == 'unifi':
@@ -1187,110 +1277,10 @@ def fetch_agent_payments_summary():
             conn.close()
             print("Database connection closed.")
 
-@app.route('/fetch_technician_payments_summary', methods=['GET'])
-def fetch_technician_payments_summary():
-    try:
-        # Accept single location or comma-separated multiple locations
-        location = request.args.get('location')
-        locations = request.args.get('locations')  # Comma-separated string
 
-        conn = mysql.connector.connect(**db_config)
-        cursor = conn.cursor(dictionary=True)
 
-        now = datetime.now()
 
-        # Build location filter
-        location_filter = ""
-        location_params = []
-        if locations:
-            loc_list = [loc.strip() for loc in locations.split(',') if loc.strip()]
-            if loc_list:
-                placeholders = ','.join(['%s'] * len(loc_list))
-                location_filter = f" AND location IN ({placeholders})"
-                location_params = loc_list
-        elif location:
-            location_filter = " AND location = %s"
-            location_params = [location]
 
-        # Today (includes test phone 12345678)
-        today = now.date()
-        cursor.execute(f"""
-            SELECT SUM(amount) as total_today 
-            FROM payments 
-            WHERE DATE(timestamp) = %s {location_filter}
-        """, [today] + location_params)
-        row_today = cursor.fetchone()
-        total_today = row_today['total_today'] if row_today and row_today['total_today'] else 0.0
-
-        # Last 24 hours
-        last_24_hours = now - timedelta(hours=24)
-        cursor.execute(f"""
-            SELECT SUM(amount) as total_last_24 
-            FROM payments 
-            WHERE timestamp >= %s {location_filter}
-        """, [last_24_hours] + location_params)
-        row_last24 = cursor.fetchone()
-        total_last_24 = row_last24['total_last_24'] if row_last24 and row_last24['total_last_24'] else 0.0
-
-        # Last month
-        last_month = now.replace(day=1) - timedelta(days=1)
-        start_of_last_month = last_month.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        end_of_last_month = last_month.replace(hour=23, minute=59, second=59, microsecond=0)
-        cursor.execute(f"""
-            SELECT SUM(amount) as total_last_month 
-            FROM payments 
-            WHERE timestamp >= %s AND timestamp <= %s {location_filter}
-        """, [start_of_last_month, end_of_last_month] + location_params)
-        row_last_month = cursor.fetchone()
-        total_last_month = row_last_month['total_last_month'] if row_last_month and row_last_month['total_last_month'] else 0.0
-
-        # This month
-        start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        cursor.execute(f"""
-            SELECT SUM(amount) as total_this_month 
-            FROM payments 
-            WHERE timestamp >= %s AND timestamp < %s {location_filter}
-        """, [start_of_month, now] + location_params)
-        row_this_month = cursor.fetchone()
-        total_this_month = row_this_month['total_this_month'] if row_this_month and row_this_month['total_this_month'] else 0.0
-
-        # This year
-        start_of_year = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
-        cursor.execute(f"""
-            SELECT SUM(amount) as total_year 
-            FROM payments 
-            WHERE timestamp >= %s {location_filter}
-        """, [start_of_year] + location_params)
-        row_year = cursor.fetchone()
-        total_year = row_year['total_year'] if row_year and row_year['total_year'] else 0.0
-
-        # Daily average for this month
-        days_in_month = (now - start_of_month).days + 1
-        daily_average_this_month = total_this_month / days_in_month if days_in_month > 0 else 0.0
-
-        return jsonify({
-            "success": True,
-            "summary": {
-                "today": total_today,
-                "last_24_hours": total_last_24,
-                "last_month": total_last_month,
-                "this_month": total_this_month,
-                "daily_average_this_month": daily_average_this_month,
-                "this_year": total_year
-            },
-            "location": location,
-            "locations": locations,
-            "message": "Technician payments summary (includes test phone)"
-        }), 200
-
-    except mysql.connector.Error as err:
-        print(f"DB Error during fetch: {str(err)}")
-        return jsonify({"success": False, "error": "Database error occurred"}), 500
-    finally:
-        if conn.is_connected():
-            cursor.close()
-            conn.close()
-            print("Database connection closed.")
 
 @app.route('/fetch_payments_by_location', methods=['GET'])
 def fetch_payments_by_location():
@@ -1877,6 +1867,111 @@ def search_payments():
             cursor.close()
             db_connection.close()
 
+@app.route('/fetch_technician_payments_summary', methods=['GET'])
+def fetch_technician_payments_summary():
+    try:
+        # Accept single location or comma-separated multiple locations
+        location = request.args.get('location')
+        locations = request.args.get('locations')  # Comma-separated string
+
+        conn = mysql.connector.connect(**db_config)
+        cursor = conn.cursor(dictionary=True)
+
+        now = datetime.now()
+
+        # Build location filter
+        location_filter = ""
+        location_params = []
+        if locations:
+            loc_list = [loc.strip() for loc in locations.split(',') if loc.strip()]
+            if loc_list:
+                placeholders = ','.join(['%s'] * len(loc_list))
+                location_filter = f" AND location IN ({placeholders})"
+                location_params = loc_list
+        elif location:
+            location_filter = " AND location = %s"
+            location_params = [location]
+
+        # Today (includes test phone 12345678)
+        today = now.date()
+        cursor.execute(f"""
+            SELECT SUM(amount) as total_today 
+            FROM payments 
+            WHERE DATE(timestamp) = %s {location_filter}
+        """, [today] + location_params)
+        row_today = cursor.fetchone()
+        total_today = row_today['total_today'] if row_today and row_today['total_today'] else 0.0
+
+        # Last 24 hours
+        last_24_hours = now - timedelta(hours=24)
+        cursor.execute(f"""
+            SELECT SUM(amount) as total_last_24 
+            FROM payments 
+            WHERE timestamp >= %s {location_filter}
+        """, [last_24_hours] + location_params)
+        row_last24 = cursor.fetchone()
+        total_last_24 = row_last24['total_last_24'] if row_last24 and row_last24['total_last_24'] else 0.0
+
+        # Last month
+        last_month = now.replace(day=1) - timedelta(days=1)
+        start_of_last_month = last_month.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        end_of_last_month = last_month.replace(hour=23, minute=59, second=59, microsecond=0)
+        cursor.execute(f"""
+            SELECT SUM(amount) as total_last_month 
+            FROM payments 
+            WHERE timestamp >= %s AND timestamp <= %s {location_filter}
+        """, [start_of_last_month, end_of_last_month] + location_params)
+        row_last_month = cursor.fetchone()
+        total_last_month = row_last_month['total_last_month'] if row_last_month and row_last_month['total_last_month'] else 0.0
+
+        # This month
+        start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        cursor.execute(f"""
+            SELECT SUM(amount) as total_this_month 
+            FROM payments 
+            WHERE timestamp >= %s AND timestamp < %s {location_filter}
+        """, [start_of_month, now] + location_params)
+        row_this_month = cursor.fetchone()
+        total_this_month = row_this_month['total_this_month'] if row_this_month and row_this_month['total_this_month'] else 0.0
+
+        # This year
+        start_of_year = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+        cursor.execute(f"""
+            SELECT SUM(amount) as total_year 
+            FROM payments 
+            WHERE timestamp >= %s {location_filter}
+        """, [start_of_year] + location_params)
+        row_year = cursor.fetchone()
+        total_year = row_year['total_year'] if row_year and row_year['total_year'] else 0.0
+
+        # Daily average for this month
+        days_in_month = (now - start_of_month).days + 1
+        daily_average_this_month = total_this_month / days_in_month if days_in_month > 0 else 0.0
+
+        return jsonify({
+            "success": True,
+            "summary": {
+                "today": total_today,
+                "last_24_hours": total_last_24,
+                "last_month": total_last_month,
+                "this_month": total_this_month,
+                "daily_average_this_month": daily_average_this_month,
+                "this_year": total_year
+            },
+            "location": location,
+            "locations": locations,
+            "message": "Technician payments summary (includes test phone)"
+        }), 200
+
+    except mysql.connector.Error as err:
+        print(f"DB Error during fetch: {str(err)}")
+        return jsonify({"success": False, "error": "Database error occurred"}), 500
+    finally:
+        if conn.is_connected():
+            cursor.close()
+            conn.close()
+            print("Database connection closed.")
+
 @app.route('/get_voucher_by_phone', methods=['GET'])
 def get_voucher_by_phone():
     phone = request.args.get('phone')
@@ -1988,6 +2083,16 @@ def fetch_superagent_payments():
             "message": f"Found {len(payments)} payments within last 24 hours across {len(locations)} locations with a total amount of {total_amount} TZS"
         })
         
+    except mysql.connector.Error as err:
+        return jsonify({"error": f"MySQL Error: {err}"}), 500
+    except Exception as e:
+        return jsonify({"error": f"Error: {str(e)}"}), 500
+    finally:
+        if 'db_connection' in locals() and db_connection.is_connected():
+            cursor.close()
+            db_connection.close()
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=False) # Add debug=True for development
+ 

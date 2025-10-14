@@ -41,7 +41,7 @@ exports.createUser = onRequest(async (request, response) => {
   }
 
   try {
-    const { email, password, role, name, location, locations } = request.body;
+    const { email, password, role, name, location, locations, home_customer_id } = request.body;
 
     // Initialize Firebase Auth (can be done inside the function if specific to auth operations)
     const auth = getAuth();
@@ -55,10 +55,10 @@ exports.createUser = onRequest(async (request, response) => {
     }
 
     // Validate role
-    const validRoles = ['technician', 'agent', 'superagent', 'boss'];
+    const validRoles = ['technician', 'agent', 'superagent', 'boss', 'homeuser'];
     if (!validRoles.includes(role)) {
       response.status(400).json({
-        error: 'Invalid role. Must be one of: technician, agent, superagent, boss'
+        error: 'Invalid role. Must be one of: technician, agent, superagent, boss, homeuser'
       });
       return;
     }
@@ -134,6 +134,9 @@ exports.createUser = onRequest(async (request, response) => {
     } else if (role === 'superagent') {
       userData.locations = locations || [];
       userData.allowed_bundles = {};
+    } else if (role === 'homeuser') {
+      // For home users, store the customer ID they're linked to
+      userData.home_customer_id = home_customer_id || '';
     } else {
       // For technician and boss roles, store single location if provided
       userData.location = location || '';
@@ -547,5 +550,179 @@ exports.processPayment = onRequest({ cors: true }, async (req, res) => {
       error: errorMessage,
       details: error.response?.data || {}
     });
+  }
+});
+
+// --- Store Home User Payment Function ---
+/**
+ * HTTP Cloud Function to store successful home user payment in Firestore.
+ * This function is called after a successful payment to record it in the customer's payment collection.
+ * 
+ * Expected payload:
+ * {
+ *   "customerId": "12345",
+ *   "amount": 50000,
+ *   "phone": "0712345678",
+ *   "provider": "Airtel",
+ *   "reference": "AZM123456789",
+ *   "createdByName": "Customer Name"
+ * }
+ */
+exports.storeHomeUserPayment = onRequest(async (request, response) => {
+  // Set CORS headers
+  response.set('Access-Control-Allow-Origin', '*');
+  response.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  response.set('Access-Control-Allow-Headers', 'Content-Type');
+
+  // Handle preflight requests
+  if (request.method === 'OPTIONS') {
+    response.status(204).send('');
+    return;
+  }
+
+  // Only allow POST requests
+  if (request.method !== 'POST') {
+    response.status(405).json({ error: 'Method not allowed. Use POST.' });
+    return;
+  }
+
+  try {
+    const { customerId, amount, phone, provider, reference, createdByName } = request.body;
+
+    // Validate required fields
+    if (!customerId || !amount || !phone || !provider) {
+      response.status(400).json({
+        error: 'Missing required fields: customerId, amount, phone, and provider are required'
+      });
+      return;
+    }
+
+    // Verify customer exists
+    const customerRef = db.collection('home_customers').doc(customerId);
+    const customerSnap = await customerRef.get();
+    
+    if (!customerSnap.exists) {
+      response.status(404).json({ error: 'Customer not found' });
+      return;
+    }
+
+    const customerData = customerSnap.data();
+
+    // Create payment record
+    const paymentData = {
+      customer_id: customerId,
+      amount_paid: parseFloat(amount),
+      currency: 'TZS',
+      attachments: [],
+      status: 'approved', // Auto-approve mobile money payments
+      created_by_uid: 'system',
+      created_by_name: createdByName || customerData.name || 'Home User',
+      created_at: FieldValue.serverTimestamp(),
+      approved_by_uid: 'system',
+      approved_by_name: 'Auto-Approved',
+      approved_at: FieldValue.serverTimestamp(),
+      schedule: customerData.schedule || 'monthly',
+      period_start: Timestamp.now(),
+      period_end: Timestamp.fromDate(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)), // 30 days from now
+      due_date: Timestamp.fromDate(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)),
+      reference: reference || `${provider}-${phone}`,
+      notes: `Mobile money payment via ${provider}`,
+      payment_type: provider,
+      customer_zone: customerData.zone || '',
+      customer_type: customerData.customer_type || '',
+    };
+
+    // Store payment in customer's payments subcollection
+    const paymentRef = await customerRef.collection('payments').add(paymentData);
+
+    logger.info(`Successfully stored payment for customer ${customerId}`, {
+      paymentId: paymentRef.id,
+      amount: amount,
+      provider: provider
+    });
+
+    // Return success response
+    response.status(200).json({
+      success: true,
+      message: 'Payment recorded successfully',
+      paymentId: paymentRef.id,
+      customerId: customerId
+    });
+
+  } catch (error) {
+    logger.error('Error storing home user payment:', error);
+    response.status(500).json({
+      error: 'Failed to store payment',
+      details: error.message
+    });
+  }
+});
+
+// --- Reset User Password Function ---
+exports.resetUserPassword = onRequest(async (request, response) => {
+  // Set CORS headers
+  response.set('Access-Control-Allow-Origin', '*');
+  response.set('Access-Control-Allow-Methods', 'GET, POST');
+  response.set('Access-Control-Allow-Headers', 'Content-Type');
+
+  // Handle preflight requests
+  if (request.method === 'OPTIONS') {
+    response.status(204).send('');
+    return;
+  }
+
+  // Only allow POST requests
+  if (request.method !== 'POST') {
+    response.status(405).json({ error: 'Method not allowed. Use POST.' });
+    return;
+  }
+
+  try {
+    const { email, newPassword } = request.body;
+
+    // Validate required fields
+    if (!email || !newPassword) {
+      response.status(400).json({
+        error: 'Missing required fields: email and newPassword are required'
+      });
+      return;
+    }
+
+    // Validate password length
+    if (newPassword.length < 6) {
+      response.status(400).json({ error: 'Password must be at least 6 characters long' });
+      return;
+    }
+
+    const auth = getAuth();
+
+    // Get user by email
+    const userRecord = await auth.getUserByEmail(email);
+
+    // Update the user's password
+    await auth.updateUser(userRecord.uid, {
+      password: newPassword
+    });
+
+    logger.info(`Password reset successfully for user: ${email}`);
+
+    response.status(200).json({
+      success: true,
+      message: 'Password reset successfully'
+    });
+
+  } catch (error) {
+    logger.error('Error resetting password:', error);
+    
+    if (error.code === 'auth/user-not-found') {
+      response.status(404).json({ error: 'User not found with this email' });
+    } else if (error.code === 'auth/invalid-email') {
+      response.status(400).json({ error: 'Invalid email address' });
+    } else {
+      response.status(500).json({
+        error: 'Failed to reset password',
+        details: error.message
+      });
+    }
   }
 });
