@@ -5,6 +5,7 @@ const { initializeApp } = require("firebase-admin/app");
 const { getFirestore, Timestamp, FieldValue } = require("firebase-admin/firestore"); // Added FieldValue for serverTimestamp
 const { getAuth } = require("firebase-admin/auth");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
+const { onDocumentWritten, onDocumentUpdated } = require("firebase-functions/v2/firestore");
 const axios = require("axios"); // For making HTTP requests
 const { RouterOSAPI } = require("node-routeros");
 
@@ -180,6 +181,259 @@ exports.createUser = onRequest(async (request, response) => {
       error: 'Failed to create user',
       details: error.message
     });
+  }
+});
+
+async function computeAndUpdateCustomerStatus(customerId) {
+  const ref = db.collection('home_customers').doc(customerId);
+  const snap = await ref.get();
+  if (!snap.exists) return;
+  const c = snap.data();
+  const now = new Date();
+  function tsToDate(v) { if (!v) return null; if (v.toDate) return v.toDate(); if (v instanceof Date) return v; return null; }
+  function wd1_7(d) { const w0_6 = d.getDay(); return ((w0_6 + 6) % 7) + 1; }
+  function clamp(n, a, b) { return Math.max(a, Math.min(b, n)); }
+  const startDate = tsToDate(c.start_date) || new Date();
+  const schedule = c.schedule === 'weekly' ? 'weekly' : 'monthly';
+  function firstDueWeekly() {
+    const anchor = (c.billing_weekday && Number.isInteger(c.billing_weekday)) ? c.billing_weekday : wd1_7(startDate);
+    let firstDue = new Date(startDate.getTime());
+    const diff = anchor - wd1_7(firstDue);
+    if (diff > 0) {
+      firstDue.setDate(firstDue.getDate() + diff);
+    } else if (diff < 0) {
+      firstDue.setDate(firstDue.getDate() + (7 + diff));
+    } else {
+      firstDue.setDate(firstDue.getDate() + 7);
+    }
+    return firstDue;
+  }
+  function weeksBetween(ref) {
+    const fd = firstDueWeekly();
+    if (ref < fd) return 0;
+    const days = Math.floor((ref - fd) / 86400000);
+    return Math.floor(days / 7) + 1;
+  }
+  function weeksDueUpTo(ref) {
+    const fd = firstDueWeekly();
+    if (ref < fd) return 0;
+    const daysDiff = Math.floor((ref - fd) / 86400000);
+    const weeksDiff = Math.floor(daysDiff / 7);
+    const dueThisWeek = new Date(fd.getTime());
+    dueThisWeek.setDate(dueThisWeek.getDate() + 7 * weeksDiff);
+    return ref >= dueThisWeek ? (weeksDiff + 1) : weeksDiff;
+  }
+  function firstDueMonthly() {
+    const anchor = clamp(c.billing_day_of_month || startDate.getDate(), 1, 28);
+    let firstDue = new Date(startDate.getFullYear(), startDate.getMonth(), anchor, startDate.getHours(), startDate.getMinutes(), startDate.getSeconds(), startDate.getMilliseconds());
+    if (firstDue <= startDate) {
+      firstDue = new Date(firstDue.getFullYear(), firstDue.getMonth() + 1, anchor, firstDue.getHours(), firstDue.getMinutes(), firstDue.getSeconds(), firstDue.getMilliseconds());
+    }
+    return firstDue;
+  }
+  function monthsBetween(ref) {
+    const fd = firstDueMonthly();
+    if (ref < fd) return 0;
+    return (ref.getFullYear() - fd.getFullYear()) * 12 + (ref.getMonth() - fd.getMonth()) + 1;
+  }
+  function monthsDueUpTo(ref) {
+    const fd = firstDueMonthly();
+    if (ref < fd) return 0;
+    const monthsDiff = (ref.getFullYear() - fd.getFullYear()) * 12 + (ref.getMonth() - fd.getMonth());
+    const anchor = clamp(c.billing_day_of_month || startDate.getDate(), 1, 28);
+    const dueThisMonth = new Date(
+      fd.getFullYear(),
+      fd.getMonth() + monthsDiff,
+      anchor,
+      fd.getHours(),
+      fd.getMinutes(),
+      fd.getSeconds(),
+      fd.getMilliseconds()
+    );
+    return ref >= dueThisMonth ? (monthsDiff + 1) : monthsDiff;
+  }
+  function currentPeriod(ref) {
+    if (schedule === 'weekly') {
+      const fd = firstDueWeekly();
+      if (ref < fd) return { start: startDate, end: new Date(fd.getTime() - 1000), due: fd };
+      const weeks = weeksBetween(ref);
+      const start = new Date(fd.getTime());
+      start.setDate(start.getDate() + 7 * (weeks - 1));
+      const end = new Date(start.getTime());
+      end.setDate(end.getDate() + 7);
+      end.setSeconds(end.getSeconds() - 1);
+      return { start, end, due: start };
+    } else {
+      const fd = firstDueMonthly();
+      if (ref < fd) return { start: startDate, end: new Date(fd.getTime() - 1000), due: fd };
+      const months = monthsBetween(ref);
+      const anchor = clamp(c.billing_day_of_month || startDate.getDate(), 1, 28);
+      const start = new Date(fd.getFullYear(), fd.getMonth() + (months - 1), anchor, fd.getHours(), fd.getMinutes(), fd.getSeconds(), fd.getMilliseconds());
+      const end = new Date(start.getFullYear(), start.getMonth() + 1, anchor);
+      end.setSeconds(end.getSeconds() - 1);
+      return { start, end, due: start };
+    }
+  }
+  function periodsDueUpToNow(ref) { return schedule === 'weekly' ? weeksDueUpTo(ref) : monthsDueUpTo(ref); }
+  function buildPeriods(n) {
+    const list = [];
+    if (n <= 0) return list;
+    if (schedule === 'weekly') {
+      const fd = firstDueWeekly();
+      for (let i = 0; i < n; i++) {
+        const start = new Date(fd.getTime());
+        start.setDate(start.getDate() + 7 * i);
+        const end = new Date(start.getTime());
+        end.setDate(end.getDate() + 7);
+        end.setSeconds(end.getSeconds() - 1);
+        list.push({ start, end, due: start });
+      }
+    } else {
+      const fd = firstDueMonthly();
+      const anchor = clamp(c.billing_day_of_month || startDate.getDate(), 1, 28);
+      for (let i = 0; i < n; i++) {
+        const start = new Date(fd.getFullYear(), fd.getMonth() + i, anchor, fd.getHours(), fd.getMinutes(), fd.getSeconds(), fd.getMilliseconds());
+        const end = new Date(start.getFullYear(), start.getMonth() + 1, anchor);
+        end.setSeconds(end.getSeconds() - 1);
+        list.push({ start, end, due: start });
+      }
+    }
+    return list;
+  }
+  const dueCount = periodsDueUpToNow(now);
+  const periods = buildPeriods(dueCount);
+  const snaps = await ref.collection('plan_snapshots').orderBy('effective_from', 'asc').get();
+  const snapshots = snaps.docs.map(d => ({
+    amount: Number(d.data().amount) || 0,
+    currency: d.data().currency || c.currency || 'TZS',
+    effective_from: tsToDate(d.data().effective_from)
+  }));
+  function requiredFor(date) {
+    if (!snapshots.length) return Number(c.plan_amount) || 0;
+    let current = snapshots[0];
+    for (const s of snapshots) {
+      if (!(date < s.effective_from)) current = s; else break;
+    }
+    return Number(current.amount) || 0;
+  }
+  const paySnap = await ref.collection('payments').where('status', '==', 'approved').get();
+  const payments = paySnap.docs.map(d => d.data());
+  payments.sort((a, b) => {
+    const aAt = tsToDate(a.approved_at) || tsToDate(a.created_at) || new Date(0);
+    const bAt = tsToDate(b.approved_at) || tsToDate(b.created_at) || new Date(0);
+    return aAt - bAt;
+  });
+  let totalPaid = 0;
+  let lastPaidAt = null;
+  for (const m of payments) {
+    const amt = typeof m.amount_paid === 'number' ? m.amount_paid : Number(m.amount_paid) || 0;
+    totalPaid += amt;
+    const at = tsToDate(m.approved_at) || tsToDate(m.created_at);
+    if (at && (!lastPaidAt || at > lastPaidAt)) lastPaidAt = at;
+  }
+  let totalDue = 0;
+  for (const p of periods) totalDue += requiredFor(p.start);
+  let remaining = totalPaid;
+  const periodStatuses = [];
+  for (const p of periods) {
+    const required = requiredFor(p.start);
+    const allocated = remaining >= required ? required : (remaining > 0 ? remaining : 0);
+    remaining = remaining - allocated;
+    const state = allocated >= required ? 'paid' : (allocated > 0 ? 'partial' : 'unpaid');
+    periodStatuses.push({
+      start: Timestamp.fromDate(p.start),
+      end: Timestamp.fromDate(p.end),
+      due: Timestamp.fromDate(p.due),
+      required_amount: Math.round(required * 100) / 100,
+      paid_amount: Math.round(allocated * 100) / 100,
+      state: state
+    });
+  }
+  const outstanding = totalDue - totalPaid;
+  const cp = currentPeriod(now);
+  const overdue = outstanding > 0 && now > cp.due;
+  const sortKey = overdue ? 2 : (outstanding > 0 ? 1 : 0);
+  const status = {
+    overdue,
+    outstanding_amount: Math.max(0, Math.round(outstanding * 100) / 100),
+    total_due_amount: Math.max(0, Math.round(totalDue * 100) / 100),
+    total_paid_amount: Math.max(0, Math.round(totalPaid * 100) / 100),
+    next_due_date: Timestamp.fromDate(cp.due),
+    currency: c.currency || 'TZS',
+    updated_at: FieldValue.serverTimestamp(),
+    sort_key: sortKey,
+    periods: periodStatuses,
+  };
+  if (lastPaidAt) status.last_paid_at = Timestamp.fromDate(lastPaidAt);
+  await ref.set({ status }, { merge: true });
+}
+
+exports.onHomeCustomerPaymentWrite = onDocumentWritten("home_customers/{customerId}/payments/{paymentId}", async (event) => {
+  const customerId = event.params.customerId;
+  try { await computeAndUpdateCustomerStatus(customerId); } catch (e) { logger.error(e); }
+});
+
+exports.onHomeCustomerPlanSnapshotWrite = onDocumentWritten("home_customers/{customerId}/plan_snapshots/{snapId}", async (event) => {
+  const customerId = event.params.customerId;
+  try { await computeAndUpdateCustomerStatus(customerId); } catch (e) { logger.error(e); }
+});
+
+exports.onHomeCustomerWrite = onDocumentWritten("home_customers/{customerId}", async (event) => {
+  const customerId = event.params.customerId;
+  const before = event.data?.before?.data();
+  const after = event.data?.after?.data();
+  // Recompute on create, or when key fields change
+  if (!before) {
+    try { await computeAndUpdateCustomerStatus(customerId); } catch (e) { logger.error(e); }
+    return;
+  }
+  const keys = ['plan_amount','currency','schedule','billing_day_of_month','billing_weekday','start_date'];
+  for (const k of keys) {
+    if (JSON.stringify(before[k]) !== JSON.stringify(after[k])) {
+      try { await computeAndUpdateCustomerStatus(customerId); } catch (e) { logger.error(e); }
+      break;
+    }
+  }
+});
+
+exports.sweepOverdueHomeCustomers = onSchedule("every 1 hours", async (event) => {
+  try {
+    const nowTs = Timestamp.now();
+    const q = await db.collection('home_customers')
+      .where('status.next_due_date', '<=', nowTs)
+      .limit(500)
+      .get();
+    for (const d of q.docs) { await computeAndUpdateCustomerStatus(d.id); }
+  } catch (e) { logger.error(e); }
+});
+
+exports.recomputeAllHomeCustomers = onRequest(async (request, response) => {
+  response.set('Access-Control-Allow-Origin', '*');
+  response.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  response.set('Access-Control-Allow-Headers', 'Content-Type');
+  if (request.method === 'OPTIONS') {
+    response.status(204).send('');
+    return;
+  }
+  try {
+    const snapshot = await db.collection('home_customers').get();
+    let updated = 0;
+    for (const doc of snapshot.docs) {
+      try {
+        await computeAndUpdateCustomerStatus(doc.id);
+        updated++;
+      } catch (e) {
+        logger.error(`Error updating customer ${doc.id}:`, e);
+      }
+    }
+    response.status(200).json({ 
+      success: true, 
+      message: `Recomputed status for ${updated} customers`,
+      total: snapshot.size
+    });
+  } catch (error) {
+    logger.error('Error in recomputeAllHomeCustomers:', error);
+    response.status(500).json({ error: 'Failed to recompute', details: error.message });
   }
 });
 
@@ -726,3 +980,311 @@ exports.resetUserPassword = onRequest(async (request, response) => {
     }
   }
 });
+
+// --- Store Payment Data Function (Cloud Function v2) ---
+/**
+ * HTTP Cloud Function to store payment data in Firestore after successful payment callback.
+ * This function is called from Flask app.py after a successful payment to sync data to Firestore.
+ * 
+ * Expected payload:
+ * {
+ *   "voucher": "123456789012",
+ *   "location": "MBAGALA",
+ *   "sublocation": "MBAGALA-A",  // optional
+ *   "amount": 5000,
+ *   "duration": 86400,
+ *   "phone": "0712345678",
+ *   "mac_address": "AA:BB:CC:DD:EE:FF",  // optional
+ *   "payment_method": "Airtel",  // optional
+ *   "transaction_id": "AZM123456789",  // optional
+ *   "created_by": "Agent Name",
+ *   "payment_type": "voucher"
+ * }
+ */
+exports.storePaymentData = onRequest(async (request, response) => {
+  // Set CORS headers
+  response.set('Access-Control-Allow-Origin', '*');
+  response.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  response.set('Access-Control-Allow-Headers', 'Content-Type');
+
+  // Handle preflight requests
+  if (request.method === 'OPTIONS') {
+    response.status(204).send('');
+    return;
+  }
+
+  // Only allow POST requests
+  if (request.method !== 'POST') {
+    response.status(405).json({ error: 'Method not allowed. Use POST.' });
+    return;
+  }
+
+  try {
+    const {
+      voucher,
+      location,
+      amount,
+      duration,
+      phone,
+      mac_address,
+      payment_method,
+      transaction_id,
+      created_by,
+      payment_type,
+      timestamp
+    } = request.body;
+
+    // Validate required fields
+    if (!location || !amount || !phone) {
+      response.status(400).json({
+        error: 'Missing required fields: location, amount, and phone are required'
+      });
+      return;
+    }
+
+    const amountFloat = parseFloat(amount);
+
+    // STEP 1: Get location document and detect if it's a sublocation
+    const locationRef = db.collection('locations').doc(location);
+    let locationDoc = await locationRef.get();
+    
+    // Create location if it doesn't exist
+    if (!locationDoc.exists) {
+      logger.warn(`Location '${location}' does not exist, creating as main location...`);
+      await locationRef.set({
+        parent_location: null,
+        type: 'main',
+        created_at: FieldValue.serverTimestamp(),
+        auto_created: true
+      });
+      locationDoc = await locationRef.get();
+    }
+
+    // Get parent_location to determine hierarchy
+    const locationData = locationDoc.data() || {};
+    const parentLocation = locationData.parent_location || null;
+    const isSublocation = parentLocation !== null;
+
+    logger.info(`Processing payment for ${location}`, {
+      isSublocation,
+      parentLocation,
+      amount: amountFloat
+    });
+
+    // STEP 2: Store payment with hierarchy info
+    const paymentData = {
+      voucher: voucher || null,
+      location: location,
+      parent_location: parentLocation,  // Auto-detected!
+      is_sublocation: isSublocation,
+      amount: amountFloat,
+      duration: parseInt(duration) || 0,
+      phone: phone,
+      mac_address: mac_address || null,
+      payment_method: payment_method || 'unknown',
+      transaction_id: transaction_id || null,
+      created_by: created_by || 'system',
+      payment_type: payment_type || 'voucher',
+      created_at: timestamp ? Timestamp.fromDate(new Date(timestamp)) : FieldValue.serverTimestamp(),
+      synced_at: FieldValue.serverTimestamp()
+    };
+
+    const paymentRef = await db.collection('payments').add(paymentData);
+
+    // STEP 3: Update location metadata (always)
+    await locationRef.set({
+      metadata: {
+        total_revenue: FieldValue.increment(amountFloat),
+        payment_count: FieldValue.increment(1),
+        last_payment_at: FieldValue.serverTimestamp(),
+        last_updated: FieldValue.serverTimestamp()
+      }
+    }, { merge: true });
+
+    // STEP 4: If this is a sublocation, ALSO update parent metadata
+    if (isSublocation && parentLocation) {
+      const parentRef = db.collection('locations').doc(parentLocation);
+      const parentDoc = await parentRef.get();
+      
+      if (parentDoc.exists) {
+        await parentRef.set({
+          metadata: {
+            total_revenue: FieldValue.increment(amountFloat),
+            payment_count: FieldValue.increment(1),
+            last_payment_at: FieldValue.serverTimestamp(),
+            last_updated: FieldValue.serverTimestamp()
+          }
+        }, { merge: true });
+        
+        logger.info(`Updated parent location '${parentLocation}' with +${amountFloat}`);
+      } else {
+        logger.warn(`Parent location '${parentLocation}' does not exist!`);
+      }
+    }
+
+    logger.info(`Successfully stored payment in Firestore`, {
+      paymentId: paymentRef.id,
+      location: location,
+      parentLocation: parentLocation,
+      isSublocation: isSublocation,
+      amount: amountFloat
+    });
+
+    // Return success response
+    response.status(200).json({
+      success: true,
+      message: 'Payment data stored successfully in Firestore',
+      paymentId: paymentRef.id,
+      location: location,
+      parent_location: parentLocation,
+      is_sublocation: isSublocation
+    });
+
+  } catch (error) {
+    logger.error('Error storing payment data in Firestore:', error);
+    response.status(500).json({
+      error: 'Failed to store payment data',
+      details: error.message
+    });
+  }
+});
+
+// --- Get Location Analytics Function (Hybrid Approach) ---
+/**
+ * Get analytics for a location including time-based queries
+ * Supports: today, 24h, month, year
+ * Automatically includes sublocations in the totals
+ */
+exports.getLocationAnalytics = onRequest(async (request, response) => {
+  // Set CORS headers
+  response.set('Access-Control-Allow-Origin', '*');
+  response.set('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
+  response.set('Access-Control-Allow-Headers', 'Content-Type');
+
+  // Handle preflight
+  if (request.method === 'OPTIONS') {
+    response.status(204).send('');
+    return;
+  }
+
+  try {
+    const { location, period } = request.method === 'POST' ? request.body : request.query;
+
+    if (!location) {
+      response.status(400).json({ error: 'Missing location parameter' });
+      return;
+    }
+
+    // STEP 1: Get all sublocations of this location
+    const sublocationsSnapshot = await db.collection('locations')
+      .where('parent_location', '==', location)
+      .get();
+
+    const locationIds = [location, ...sublocationsSnapshot.docs.map(doc => doc.id)];
+
+    logger.info(`Fetching analytics for ${location}`, {
+      period,
+      includesSublocations: locationIds.length > 1,
+      locations: locationIds
+    });
+
+    // STEP 2: Get quick stats from metadata (fast!)
+    const locationDoc = await db.collection('locations').doc(location).get();
+    const metadata = locationDoc.exists ? locationDoc.data().metadata || {} : {};
+
+    const quickStats = {
+      total_revenue: metadata.total_revenue || 0,
+      payment_count: metadata.payment_count || 0,
+      last_payment_at: metadata.last_payment_at || null
+    };
+
+    // STEP 3: If period specified, query payments collection
+    let detailedStats = null;
+    if (period) {
+      let startDate;
+      const now = new Date();
+
+      switch (period) {
+        case 'today':
+          startDate = new Date(now);
+          startDate.setHours(0, 0, 0, 0);
+          break;
+        case '24h':
+          startDate = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+          break;
+        case 'month':
+          startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+          break;
+        case 'year':
+          startDate = new Date(now.getFullYear(), 0, 1);
+          break;
+        default:
+          response.status(400).json({ 
+            error: 'Invalid period. Use: today, 24h, month, or year' 
+          });
+          return;
+      }
+
+      // Query payments for the period
+      const paymentsQuery = db.collection('payments')
+        .where('location', 'in', locationIds)
+        .where('created_at', '>=', Timestamp.fromDate(startDate));
+
+      const paymentsSnapshot = await paymentsQuery.get();
+
+      let totalAmount = 0;
+      const breakdown = {};
+      const sublocationBreakdown = {};
+
+      paymentsSnapshot.forEach(doc => {
+        const data = doc.data();
+        totalAmount += data.amount;
+        
+        // Breakdown by location
+        breakdown[data.location] = (breakdown[data.location] || 0) + data.amount;
+        
+        // Count for sublocation
+        if (data.parent_location === location && data.location !== location) {
+          sublocationBreakdown[data.location] = (sublocationBreakdown[data.location] || 0) + data.amount;
+        }
+      });
+
+      detailedStats = {
+        period: period,
+        start_date: startDate.toISOString(),
+        total_amount: totalAmount,
+        payment_count: paymentsSnapshot.size,
+        breakdown: breakdown,
+        sublocation_breakdown: sublocationBreakdown
+      };
+    }
+
+    // STEP 4: Get sublocation metadata for quick overview
+    const sublocationsData = {};
+    for (const subDoc of sublocationsSnapshot.docs) {
+      const subData = subDoc.data();
+      sublocationsData[subDoc.id] = {
+        total_revenue: subData.metadata?.total_revenue || 0,
+        payment_count: subData.metadata?.payment_count || 0
+      };
+    }
+
+    response.status(200).json({
+      success: true,
+      location: location,
+      includes_sublocations: locationIds.length > 1,
+      sublocation_ids: locationIds.filter(id => id !== location),
+      quick_stats: quickStats,
+      detailed_stats: detailedStats,
+      sublocations: sublocationsData
+    });
+
+  } catch (error) {
+    logger.error('Error fetching location analytics:', error);
+    response.status(500).json({
+      error: 'Failed to fetch analytics',
+      details: error.message
+    });
+  }
+});
+

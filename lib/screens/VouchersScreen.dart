@@ -7,7 +7,8 @@ import 'dart:async';
 
 class VouchersScreen extends StatefulWidget {
   final bool showOnlyUsed;
-  const VouchersScreen({super.key, this.showOnlyUsed = false});
+  final String? userRole;
+  const VouchersScreen({super.key, this.showOnlyUsed = false, this.userRole});
 
   @override
   State<VouchersScreen> createState() => _VouchersScreenState();
@@ -257,11 +258,12 @@ class _VouchersScreenState extends State<VouchersScreen> {
                     ],
                   ),
                 ),
-                ModernBadge(
-                  text: '${_filteredVouchers.length}',
-                  backgroundColor: Colors.white.withOpacity(0.2),
-                  textColor: Colors.white,
-                ),
+                if (widget.userRole != 'technician')
+                  ModernBadge(
+                    text: '${_filteredVouchers.length}',
+                    backgroundColor: Colors.white.withOpacity(0.2),
+                    textColor: Colors.white,
+                  ),
               ],
             ),
           ),
@@ -576,9 +578,353 @@ class _VouchersScreenState extends State<VouchersScreen> {
               ),
             ),
           ],
+          
+          // Update Button (only for boss)
+          if (widget.userRole == 'boss') ...[
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () => _showUpdateDialog(voucher),
+                icon: const Icon(Icons.edit_rounded, size: 18),
+                label: const Text('Update Settings'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppTheme.primaryColor,
+                  side: BorderSide(color: AppTheme.primaryColor.withOpacity(0.5)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );
+  }
+  
+  // Speed limit options from 10M/10M to 100M/100M
+  final List<String> _speedLimitOptions = List.generate(
+    10,
+    (index) {
+      final speed = (index + 1) * 10;
+      return '${speed}M/${speed}M';
+    },
+  );
+  
+  // Show update dialog for speed_limit and expire_time
+  Future<void> _showUpdateDialog(Map<String, dynamic> voucher) async {
+    String? selectedSpeedLimit = voucher['speed_limit']?.toString();
+    DateTime? selectedExpireTime;
+    
+    // Parse existing expire_time
+    if (voucher['expire_time'] != null) {
+      selectedExpireTime = _parseDateTime(voucher['expire_time'].toString());
+    }
+    
+    await showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: AppTheme.primaryColor.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(
+                  Icons.edit_rounded,
+                  color: AppTheme.primaryColor,
+                  size: 24,
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Text('Update Voucher Settings'),
+              ),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Username info
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppTheme.backgroundColor,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.person_rounded,
+                        size: 16,
+                        color: AppTheme.textSecondary,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Username:',
+                        style: const TextStyle(
+                          fontSize: 14,
+                          color: AppTheme.textSecondary,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          voucher['username']?.toString() ?? 'Unknown',
+                          style: const TextStyle(
+                            fontSize: 14,
+                            color: AppTheme.textPrimary,
+                            fontWeight: FontWeight.w600,
+                            fontFamily: 'monospace',
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                
+                // Speed Limit Dropdown
+                Text(
+                  'Speed Limit',
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: AppTheme.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  value: _speedLimitOptions.contains(selectedSpeedLimit) ? selectedSpeedLimit : null,
+                  decoration: InputDecoration(
+                    hintText: 'Select speed limit',
+                    prefixIcon: Icon(Icons.speed_rounded, color: AppTheme.primaryColor),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: BorderSide(color: Colors.grey.shade300),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: BorderSide(color: AppTheme.primaryColor),
+                    ),
+                    filled: true,
+                    fillColor: Colors.white,
+                  ),
+                  items: _speedLimitOptions.map((speed) {
+                    return DropdownMenuItem(
+                      value: speed,
+                      child: Text(speed),
+                    );
+                  }).toList(),
+                  onChanged: (value) {
+                    setState(() {
+                      selectedSpeedLimit = value;
+                    });
+                  },
+                ),
+                const SizedBox(height: 16),
+                
+                // Expire Time Picker
+                Text(
+                  'Expiration Time',
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: AppTheme.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                InkWell(
+                  onTap: () async {
+                    final date = await showDatePicker(
+                      context: context,
+                      initialDate: selectedExpireTime ?? DateTime.now().add(const Duration(days: 30)),
+                      firstDate: DateTime.now(),
+                      lastDate: DateTime(2030),
+                    );
+                    
+                    if (date != null) {
+                      final time = await showTimePicker(
+                        context: context,
+                        initialTime: TimeOfDay.fromDateTime(selectedExpireTime ?? DateTime.now()),
+                      );
+                      
+                      if (time != null) {
+                        setState(() {
+                          selectedExpireTime = DateTime(
+                            date.year,
+                            date.month,
+                            date.day,
+                            time.hour,
+                            time.minute,
+                          );
+                        });
+                      }
+                    }
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.grey.shade300),
+                      borderRadius: BorderRadius.circular(8),
+                      color: Colors.white,
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.schedule_rounded,
+                          color: AppTheme.primaryColor,
+                          size: 20,
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            selectedExpireTime != null
+                                ? DateFormat('MMM dd, yyyy HH:mm').format(selectedExpireTime!)
+                                : 'Select expiration date & time',
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: selectedExpireTime != null
+                                  ? AppTheme.textPrimary
+                                  : AppTheme.textTertiary,
+                            ),
+                          ),
+                        ),
+                        Icon(
+                          Icons.calendar_today_rounded,
+                          size: 16,
+                          color: AppTheme.textSecondary,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                // At least one field must be selected
+                if (selectedSpeedLimit == null && selectedExpireTime == null) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Please select at least one field to update'),
+                      backgroundColor: AppTheme.warningColor,
+                    ),
+                  );
+                  return;
+                }
+                
+                Navigator.pop(context);
+                await _performUpdate(
+                  username: voucher['username']?.toString(),
+                  speedLimit: selectedSpeedLimit,
+                  expireTime: selectedExpireTime,
+                );
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppTheme.primaryColor,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Update'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+  
+  // Perform the actual update via API
+  Future<void> _performUpdate({
+    String? username,
+    String? speedLimit,
+    DateTime? expireTime,
+  }) async {
+    try {
+      // Show loading indicator
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(
+          child: Card(
+            child: Padding(
+              padding: EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircularProgressIndicator(),
+                  SizedBox(height: 16),
+                  Text('Updating voucher settings...'),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      
+      final result = await ApiService.updateVoucherSettings(
+        username: username,
+        speedLimit: speedLimit,
+        expireTime: expireTime,
+      );
+      
+      if (mounted) {
+        Navigator.pop(context); // Close loading
+        
+        if (result['success'] == true) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Row(
+                children: [
+                  Icon(Icons.check_circle_rounded, color: Colors.white),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(result['message'] ?? 'Voucher updated successfully'),
+                  ),
+                ],
+              ),
+              backgroundColor: AppTheme.successColor,
+            ),
+          );
+          
+          // Reload vouchers to show updated data
+          _loadVouchers();
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(result['error'] ?? 'Update failed'),
+              backgroundColor: AppTheme.errorColor,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context); // Close loading
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: ${e.toString()}'),
+            backgroundColor: AppTheme.errorColor,
+          ),
+        );
+      }
+    }
   }
   
   // Helper methods for voucher status

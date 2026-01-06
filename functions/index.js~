@@ -5,6 +5,7 @@ const { initializeApp } = require("firebase-admin/app");
 const { getFirestore, Timestamp, FieldValue } = require("firebase-admin/firestore"); // Added FieldValue for serverTimestamp
 const { getAuth } = require("firebase-admin/auth");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
+const { onDocumentWritten, onDocumentUpdated } = require("firebase-functions/v2/firestore");
 const axios = require("axios"); // For making HTTP requests
 const { RouterOSAPI } = require("node-routeros");
 
@@ -41,7 +42,7 @@ exports.createUser = onRequest(async (request, response) => {
   }
 
   try {
-    const { email, password, role, name, location } = request.body;
+    const { email, password, role, name, location, locations, home_customer_id } = request.body;
 
     // Initialize Firebase Auth (can be done inside the function if specific to auth operations)
     const auth = getAuth();
@@ -55,10 +56,10 @@ exports.createUser = onRequest(async (request, response) => {
     }
 
     // Validate role
-    const validRoles = ['technician', 'agent', 'boss'];
+    const validRoles = ['technician', 'agent', 'superagent', 'boss', 'homeuser'];
     if (!validRoles.includes(role)) {
       response.status(400).json({
-        error: 'Invalid role. Must be one of: technician, agent, boss'
+        error: 'Invalid role. Must be one of: technician, agent, superagent, boss, homeuser'
       });
       return;
     }
@@ -76,18 +77,38 @@ exports.createUser = onRequest(async (request, response) => {
       return;
     }
 
-    // Validate location for agents
+    // Validate location for agents and superagents
     if (role === 'agent' && (!location || location.trim() === '')) {
       response.status(400).json({ error: 'Location is required for agents' });
       return;
     }
 
-    // If location is provided, validate it exists in locations collection
-    if (location && location.trim() !== '') {
+    if (role === 'superagent' && (!locations || !Array.isArray(locations) || locations.length === 0)) {
+      response.status(400).json({ error: 'Multiple locations are required for superagents' });
+      return;
+    }
+
+    // Validate single location for agents
+    if (role === 'agent' && location && location.trim() !== '') {
       const locationDoc = await db.collection('locations').doc(location.trim()).get();
       if (!locationDoc.exists) {
         response.status(400).json({ error: `Location '${location}' does not exist in the system` });
         return;
+      }
+    }
+
+    // Validate multiple locations for superagents
+    if (role === 'superagent' && locations && Array.isArray(locations)) {
+      for (const loc of locations) {
+        if (!loc || loc.trim() === '') {
+          response.status(400).json({ error: 'All locations must be valid non-empty strings' });
+          return;
+        }
+        const locationDoc = await db.collection('locations').doc(loc.trim()).get();
+        if (!locationDoc.exists) {
+          response.status(400).json({ error: `Location '${loc}' does not exist in the system` });
+          return;
+        }
       }
     }
 
@@ -104,13 +125,22 @@ exports.createUser = onRequest(async (request, response) => {
       email: email,
       role: role,
       name: name || '',
-      location: location || '',
       createdAt: Timestamp.now(), // Use Timestamp.now() for consistency
     };
 
-    // Initialize allowed_bundles for agents
+    // Handle location data based on role
     if (role === 'agent') {
+      userData.location = location || '';
       userData.allowed_bundles = {};
+    } else if (role === 'superagent') {
+      userData.locations = locations || [];
+      userData.allowed_bundles = {};
+    } else if (role === 'homeuser') {
+      // For home users, store the customer ID they're linked to
+      userData.home_customer_id = home_customer_id || '';
+    } else {
+      // For technician and boss roles, store single location if provided
+      userData.location = location || '';
     }
 
     // Create user document in Firestore
@@ -152,6 +182,200 @@ exports.createUser = onRequest(async (request, response) => {
       details: error.message
     });
   }
+});
+
+async function computeAndUpdateCustomerStatus(customerId) {
+  const ref = db.collection('home_customers').doc(customerId);
+  const snap = await ref.get();
+  if (!snap.exists) return;
+  const c = snap.data();
+  const now = new Date();
+  function tsToDate(v) { if (!v) return null; if (v.toDate) return v.toDate(); if (v instanceof Date) return v; return null; }
+  function wd1_7(d) { const w0_6 = d.getDay(); return ((w0_6 + 6) % 7) + 1; }
+  function clamp(n, a, b) { return Math.max(a, Math.min(b, n)); }
+  const startDate = tsToDate(c.start_date) || new Date();
+  const schedule = c.schedule === 'weekly' ? 'weekly' : 'monthly';
+  function firstDueWeekly() {
+    const anchor = (c.billing_weekday && Number.isInteger(c.billing_weekday)) ? c.billing_weekday : wd1_7(startDate);
+    let firstDue = new Date(startDate.getTime());
+    const diff = anchor - wd1_7(firstDue);
+    if (diff > 0) firstDue.setDate(firstDue.getDate() + diff);
+    else if (diff < 0) firstDue.setDate(firstDue.getDate() + (7 + diff));
+    return firstDue;
+  }
+  function weeksBetween(ref) {
+    const fd = firstDueWeekly();
+    if (ref < fd) return 0;
+    const days = Math.floor((ref - fd) / 86400000);
+    return Math.floor(days / 7) + 1;
+  }
+  function firstDueMonthly() {
+    const anchor = clamp(c.billing_day_of_month || startDate.getDate(), 1, 28);
+    let firstDue = new Date(startDate.getFullYear(), startDate.getMonth(), anchor, startDate.getHours(), startDate.getMinutes(), startDate.getSeconds(), startDate.getMilliseconds());
+    if (firstDue < startDate) {
+      firstDue = new Date(firstDue.getFullYear(), firstDue.getMonth() + 1, anchor, firstDue.getHours(), firstDue.getMinutes(), firstDue.getSeconds(), firstDue.getMilliseconds());
+    }
+    return firstDue;
+  }
+  function monthsBetween(ref) {
+    const fd = firstDueMonthly();
+    if (ref < fd) return 0;
+    return (ref.getFullYear() - fd.getFullYear()) * 12 + (ref.getMonth() - fd.getMonth()) + 1;
+  }
+  function monthsDueUpTo(ref) {
+    const fd = firstDueMonthly();
+    if (ref < fd) return 0;
+    const monthsDiff = (ref.getFullYear() - fd.getFullYear()) * 12 + (ref.getMonth() - fd.getMonth());
+    const anchor = clamp(c.billing_day_of_month || startDate.getDate(), 1, 28);
+    const dueThisMonth = new Date(
+      fd.getFullYear(),
+      fd.getMonth() + monthsDiff,
+      anchor,
+      fd.getHours(),
+      fd.getMinutes(),
+      fd.getSeconds(),
+      fd.getMilliseconds()
+    );
+    return ref >= dueThisMonth ? (monthsDiff + 1) : monthsDiff;
+  }
+  function currentPeriod(ref) {
+    if (schedule === 'weekly') {
+      const fd = firstDueWeekly();
+      if (ref < fd) return { start: startDate, end: new Date(fd.getTime() - 1000), due: fd };
+      const weeks = weeksBetween(ref);
+      const start = new Date(fd.getTime());
+      start.setDate(start.getDate() + 7 * (weeks - 1));
+      const end = new Date(start.getTime());
+      end.setDate(end.getDate() + 7);
+      end.setSeconds(end.getSeconds() - 1);
+      return { start, end, due: start };
+    } else {
+      const fd = firstDueMonthly();
+      if (ref < fd) return { start: startDate, end: new Date(fd.getTime() - 1000), due: fd };
+      const months = monthsBetween(ref);
+      const anchor = clamp(c.billing_day_of_month || startDate.getDate(), 1, 28);
+      const start = new Date(fd.getFullYear(), fd.getMonth() + (months - 1), anchor, fd.getHours(), fd.getMinutes(), fd.getSeconds(), fd.getMilliseconds());
+      const end = new Date(start.getFullYear(), start.getMonth() + 1, anchor);
+      end.setSeconds(end.getSeconds() - 1);
+      return { start, end, due: start };
+    }
+  }
+  function periodsDueUpToNow(ref) { return schedule === 'weekly' ? weeksBetween(ref) : monthsDueUpTo(ref); }
+  function buildPeriods(n) {
+    const list = [];
+    if (n <= 0) return list;
+    if (schedule === 'weekly') {
+      const fd = firstDueWeekly();
+      for (let i = 0; i < n; i++) {
+        const start = new Date(fd.getTime());
+        start.setDate(start.getDate() + 7 * i);
+        const end = new Date(start.getTime());
+        end.setDate(end.getDate() + 7);
+        end.setSeconds(end.getSeconds() - 1);
+        list.push({ start, end, due: start });
+      }
+    } else {
+      const fd = firstDueMonthly();
+      const anchor = clamp(c.billing_day_of_month || startDate.getDate(), 1, 28);
+      for (let i = 0; i < n; i++) {
+        const start = new Date(fd.getFullYear(), fd.getMonth() + i, anchor, fd.getHours(), fd.getMinutes(), fd.getSeconds(), fd.getMilliseconds());
+        const end = new Date(start.getFullYear(), start.getMonth() + 1, anchor);
+        end.setSeconds(end.getSeconds() - 1);
+        list.push({ start, end, due: start });
+      }
+    }
+    return list;
+  }
+  const dueCount = periodsDueUpToNow(now);
+  const periods = buildPeriods(dueCount);
+  const snaps = await ref.collection('plan_snapshots').orderBy('effective_from', 'asc').get();
+  const snapshots = snaps.docs.map(d => ({
+    amount: Number(d.data().amount) || 0,
+    currency: d.data().currency || c.currency || 'TZS',
+    effective_from: tsToDate(d.data().effective_from)
+  }));
+  function requiredFor(date) {
+    if (!snapshots.length) return Number(c.plan_amount) || 0;
+    let current = snapshots[0];
+    for (const s of snapshots) {
+      if (!(date < s.effective_from)) current = s; else break;
+    }
+    return Number(current.amount) || 0;
+  }
+  const paySnap = await ref.collection('payments').where('status', '==', 'approved').get();
+  const payments = paySnap.docs.map(d => d.data());
+  payments.sort((a, b) => {
+    const aAt = tsToDate(a.approved_at) || tsToDate(a.created_at) || new Date(0);
+    const bAt = tsToDate(b.approved_at) || tsToDate(b.created_at) || new Date(0);
+    return aAt - bAt;
+  });
+  let totalPaid = 0;
+  let lastPaidAt = null;
+  for (const m of payments) {
+    const amt = typeof m.amount_paid === 'number' ? m.amount_paid : Number(m.amount_paid) || 0;
+    totalPaid += amt;
+    const at = tsToDate(m.approved_at) || tsToDate(m.created_at);
+    if (at && (!lastPaidAt || at > lastPaidAt)) lastPaidAt = at;
+  }
+  let totalDue = 0;
+  for (const p of periods) totalDue += requiredFor(p.start);
+  const outstanding = totalDue - totalPaid;
+  const cp = currentPeriod(now);
+  const overdue = outstanding > 0 && now > cp.due;
+  const sortKey = overdue ? 2 : (outstanding > 0 ? 1 : 0);
+  const status = {
+    overdue,
+    outstanding_amount: Math.max(0, Math.round(outstanding * 100) / 100),
+    total_due_amount: Math.max(0, Math.round(totalDue * 100) / 100),
+    total_paid_amount: Math.max(0, Math.round(totalPaid * 100) / 100),
+    next_due_date: Timestamp.fromDate(cp.due),
+    currency: c.currency || 'TZS',
+    updated_at: FieldValue.serverTimestamp(),
+    sort_key: sortKey,
+  };
+  if (lastPaidAt) status.last_paid_at = Timestamp.fromDate(lastPaidAt);
+  await ref.set({ status }, { merge: true });
+}
+
+exports.onHomeCustomerPaymentWrite = onDocumentWritten("home_customers/{customerId}/payments/{paymentId}", async (event) => {
+  const customerId = event.params.customerId;
+  try { await computeAndUpdateCustomerStatus(customerId); } catch (e) { logger.error(e); }
+});
+
+exports.onHomeCustomerPlanSnapshotWrite = onDocumentWritten("home_customers/{customerId}/plan_snapshots/{snapId}", async (event) => {
+  const customerId = event.params.customerId;
+  try { await computeAndUpdateCustomerStatus(customerId); } catch (e) { logger.error(e); }
+});
+
+exports.onHomeCustomerWrite = onDocumentWritten("home_customers/{customerId}", async (event) => {
+  const customerId = event.params.customerId;
+  const before = event.data?.before?.data();
+  const after = event.data?.after?.data();
+  // Recompute on create, or when key fields change
+  if (!before) {
+    try { await computeAndUpdateCustomerStatus(customerId); } catch (e) { logger.error(e); }
+    return;
+  }
+  const keys = ['plan_amount','currency','schedule','billing_day_of_month','billing_weekday','start_date'];
+  for (const k of keys) {
+    if (JSON.stringify(before[k]) !== JSON.stringify(after[k])) {
+      try { await computeAndUpdateCustomerStatus(customerId); } catch (e) { logger.error(e); }
+      break;
+    }
+  }
+});
+
+exports.sweepOverdueHomeCustomers = onSchedule("every 1 hours", async (event) => {
+  try {
+    const nowTs = Timestamp.now();
+    const q = await db.collection('home_customers')
+      .where('status.outstanding_amount', '>', 0)
+      .where('status.overdue', '==', false)
+      .where('status.next_due_date', '<=', nowTs)
+      .limit(200)
+      .get();
+    for (const d of q.docs) { await computeAndUpdateCustomerStatus(d.id); }
+  } catch (e) { logger.error(e); }
 });
 
 // --- Store User Location Function (from previous request) ---
@@ -227,6 +451,108 @@ exports.storeUserLocation = onRequest(async (req, res) => {
   }
 });
 
+// --- New: Delete User From Location Function ---
+/**
+ * HTTP Cloud Function to delete a user from a specific location's subcollection in Firestore.
+ * This function expects a JSON payload in the request body containing 'username' and 'location'.
+ *
+ * @param req The Express Request object.
+ * @param res The Express Response object.
+ */
+exports.deleteUserFromLocation = onRequest(async (req, res) => {
+  logger.info('Received request for deleteUserFromLocation:', req.method, req.body);
+
+  if (req.method !== 'POST') {
+    logger.warn(`Method Not Allowed for deleteUserFromLocation: Received a ${req.method} request.`);
+    return res.status(405).send('Method Not Allowed');
+  }
+
+  if (!req.body || typeof req.body !== 'object') {
+    logger.error('Bad Request for deleteUserFromLocation: Request body is missing or not a JSON object.');
+    return res.status(400).send('Bad Request: Request body must be a JSON object.');
+  }
+
+  const { username, location } = req.body;
+
+  if (!username || !location) {
+    logger.error('Bad Request for deleteUserFromLocation: Missing required data (username, location).', req.body);
+    return res.status(400).send('Bad Request: Missing required data (username, location).');
+  }
+
+  try {
+    // Reference the specific user document within the location's subcollection.
+    const userDocRef = db.collection('locations').doc(location).collection('users').doc(username);
+
+    // Check if the document exists before attempting to delete it.
+    const docSnapshot = await userDocRef.get();
+    if (!docSnapshot.exists) {
+      logger.warn(`User ${username} not found under location ${location}. No deletion performed.`);
+      return res.status(404).send({ message: `User ${username} not found under location ${location}.` });
+    }
+
+    // Delete the document.
+    await userDocRef.delete();
+
+    logger.info(`Successfully deleted user ${username} from location '${location}' in Firestore.`);
+    return res.status(200).send({ message: `User ${username} deleted successfully from location '${location}'.` });
+
+  } catch (error) {
+    logger.error('Error deleting user from Firestore via deleteUserFromLocation:', error);
+    return res.status(500).send('Internal Server Error: Failed to delete user data.');
+  }
+});
+
+
+// --- Delete App User Function ---
+// Deletes a Firebase Authentication user and their Firestore user document.
+exports.deleteAppUser = onRequest(async (request, response) => {
+  // CORS headers
+  response.set('Access-Control-Allow-Origin', '*');
+  response.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  response.set('Access-Control-Allow-Headers', 'Content-Type');
+
+  // Handle preflight
+  if (request.method === 'OPTIONS') {
+    response.status(204).send('');
+    return;
+  }
+
+  if (request.method !== 'POST') {
+    response.status(405).json({ error: 'Method not allowed. Use POST.' });
+    return;
+  }
+
+  try {
+    const { uid, email } = request.body || {};
+    const auth = getAuth();
+    let targetUid = uid;
+
+    // Resolve UID by email if needed
+    if (!targetUid && email) {
+      const userRecord = await auth.getUserByEmail(email);
+      targetUid = userRecord.uid;
+    }
+
+    if (!targetUid) {
+      response.status(400).json({ error: 'Missing uid or email' });
+      return;
+    }
+
+    // Delete from Firebase Auth
+    await auth.deleteUser(targetUid);
+
+    // Delete Firestore user document
+    await db.collection('users').doc(targetUid).delete();
+
+    response.status(200).json({ success: true, message: 'User deleted successfully', uid: targetUid });
+  } catch (error) {
+    logger.error('Error deleting user:', error);
+    const status = error.code === 'auth/user-not-found' ? 404 : 500;
+    response.status(status).json({ error: 'Failed to delete user', details: error.message });
+  }
+});
+
+
 // --- MikroTik API Configuration ---
 const mikrotikConfig = {
   host: "41.59.115.231",
@@ -265,5 +591,333 @@ exports.updateNetworkSnapshot = onRequest(async (request, response) => {
   } catch (error) {
     logger.error(`Error writing to Firestore for MAC [${mac}] in updateNetworkSnapshot`, error);
     response.status(500).json({ error: 'Internal Server Error', details: error.message });
+  }
+});
+
+// --- AzamPay Payment Processing ---
+const AZAM_CLIENT_ID = 'c7b6bda0-9a3f-47fb-b365-1110dfc37089';
+const AZAM_CLIENT_SECRET = 'EsOPLBAfwnLGCQUHOqjMaTqXm/nPv4A8o0WndaEZ4yJ9oJYLkVgPHeQvKPKA2exyvWEAnFL0fBipGq1Qbll6ePoPNfYdsIxYGd5g9UhyK1l8ytGnS3XQj6GUjCfo0J35sb0wgdFwpruktQ2a9SXdKMkuaCtjHPesNHCqPtoy9fUZmabAh7Igi5ZSA2UlTP8WQjaXmaoYEn8aJ1AQxCIEcaIo+DijH7w4hsCmoVWQTHnfpuYDrz3ndpE0eAPRfP381UBxNPuuedtckpTILuGtvRPKgxMAdQh/Lf38tlNnedsSOXm1aZZFa3Vgm8N+Epk338gspvc1syAmOmnUtAFCQqShiUrgiA8SZqzYerMvGWAteprO+B89l2PdL2LXjYcbVyyyGiptCoKEsCaHIRgitNydEMYsEfHhlygEvMCuBqMzWrPlJgugeGD0GlhNW1gR9iq2GLQzRHYwfrSJeFBo1oQb0frIS7tBHy5WisaDJtJalOWOmEy5UuLAVSg8PHVXJ94yOEA9mdg9x4HV0x+bA5JSi0+29tVC59HPly+N9BvsYVRIGWsqW82Ki3OOpZuRtc7O4/YfhrNplTxBBCv6+SDqF5bCKJpNwXKV9t9peAFe39Jy18DMnZ8WnmYMKh4FP2YQUfE4XWnoXhPuRswSw6eRevNiYIYEZbP6YsLPlNY=';
+
+// Token caching
+let accessToken = null;
+let tokenExpiry = null;
+
+// Function to get access token from AzamPay
+async function getAzamPayToken() {
+  // Check if we have a valid token
+  if (accessToken && tokenExpiry && new Date() < tokenExpiry) {
+    return accessToken;
+  }
+
+  try {
+    const response = await axios.post(
+      'https://authenticator.azampay.co.tz/AppRegistration/GenerateToken',
+      {
+        appName: 'lightnet',
+        clientId: AZAM_CLIENT_ID,
+        clientSecret: AZAM_CLIENT_SECRET
+      },
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'User-Agent': 'LightNet-Server/1.0'
+        },
+        timeout: 30000 // 30 seconds timeout
+      }
+    );
+
+    if (response.data && response.data.data && response.data.data.accessToken) {
+      accessToken = response.data.data.accessToken;
+      
+      // Set token expiry (default to 1 hour if not provided)
+      const expiresInMs = response.data.data.expiresIn || 3600 * 1000;
+      tokenExpiry = new Date(Date.now() + expiresInMs);
+      
+      logger.info('Successfully obtained AzamPay access token');
+      return accessToken;
+    }
+    
+    throw new Error('Invalid token response from AzamPay');
+  } catch (error) {
+    logger.error('Failed to get AzamPay token:', error.message);
+    throw new Error(`Payment service unavailable: ${error.message}`);
+  }
+}
+
+// Main payment processing function
+exports.processPayment = onRequest({ cors: true }, async (req, res) => {
+  // Set CORS headers
+  res.set('Access-Control-Allow-Origin', '*');
+  res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.set('Access-Control-Allow-Headers', 'Content-Type');
+
+  // Handle preflight requests
+  if (req.method === 'OPTIONS') {
+    res.status(204).send('');
+    return;
+  }
+
+  // Only allow POST requests
+  if (req.method !== 'POST') {
+    res.status(405).json({ success: false, error: 'Method not allowed. Use POST.' });
+    return;
+  }
+
+  try {
+    const { phone, amount, provider, location, durationSeconds, macAddress, nasIp, quantity } = req.body;
+    
+    // Validate required fields
+    if (!phone || !amount || !provider || !location || !durationSeconds) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: phone, amount, provider, location, and durationSeconds are required'
+      });
+    }
+
+    // Generate a random voucher code (12 digits)
+    const voucherCode = Math.floor(100000000000 + Math.random() * 900000000000).toString();
+    
+    // Get AzamPay access token
+    const token = await getAzamPayToken();
+    
+    // Use provided macAddress or set to null for optional usage
+    const finalMacAddress = macAddress || null;
+    
+    // Prepare payment payload
+    const payload = {
+      accountNumber: phone,
+      amount: amount.toString(),
+      currency: 'TZS',
+      externalId: require('crypto').randomUUID(),
+      provider: provider,
+      additionalProperties: {
+        voucher: voucherCode,
+        duration: durationSeconds.toString(),
+        location: location,
+        ...(macAddress && { mac_address: macAddress }),
+        ...(nasIp && { nas_ip: nasIp }),
+        ...(quantity && { quantity: quantity.toString() })
+      }
+    };
+
+    // Make payment request to AzamPay
+    const paymentResponse = await axios.post(
+      'https://checkout.azampay.co.tz/azampay/mno/checkout',
+      payload,
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+          'X-API-Key': 'none'
+        },
+        timeout: 15000 // 15 seconds timeout
+      }
+    );
+
+    // Log successful payment initiation
+    logger.info('Payment initiated successfully', {
+      voucherCode,
+      phone,
+      amount,
+      location,
+      provider,
+      macAddress
+    });
+
+    // Return success response with voucher code
+    return res.status(200).json({
+      success: true,
+      voucherCode,
+      message: 'Payment initiated - use voucher now'
+    });
+
+  } catch (error) {
+    // Log the error
+    logger.error('Payment processing error:', error.response?.data || error.message);
+    
+    // Return appropriate error response
+    const statusCode = error.response?.status || 500;
+    const errorMessage = error.response?.data?.message || error.message || 'Payment processing failed';
+    
+    return res.status(statusCode).json({
+      success: false,
+      error: errorMessage,
+      details: error.response?.data || {}
+    });
+  }
+});
+
+// --- Store Home User Payment Function ---
+/**
+ * HTTP Cloud Function to store successful home user payment in Firestore.
+ * This function is called after a successful payment to record it in the customer's payment collection.
+ * 
+ * Expected payload:
+ * {
+ *   "customerId": "12345",
+ *   "amount": 50000,
+ *   "phone": "0712345678",
+ *   "provider": "Airtel",
+ *   "reference": "AZM123456789",
+ *   "createdByName": "Customer Name"
+ * }
+ */
+exports.storeHomeUserPayment = onRequest(async (request, response) => {
+  // Set CORS headers
+  response.set('Access-Control-Allow-Origin', '*');
+  response.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  response.set('Access-Control-Allow-Headers', 'Content-Type');
+
+  // Handle preflight requests
+  if (request.method === 'OPTIONS') {
+    response.status(204).send('');
+    return;
+  }
+
+  // Only allow POST requests
+  if (request.method !== 'POST') {
+    response.status(405).json({ error: 'Method not allowed. Use POST.' });
+    return;
+  }
+
+  try {
+    const { customerId, amount, phone, provider, reference, createdByName } = request.body;
+
+    // Validate required fields
+    if (!customerId || !amount || !phone || !provider) {
+      response.status(400).json({
+        error: 'Missing required fields: customerId, amount, phone, and provider are required'
+      });
+      return;
+    }
+
+    // Verify customer exists
+    const customerRef = db.collection('home_customers').doc(customerId);
+    const customerSnap = await customerRef.get();
+    
+    if (!customerSnap.exists) {
+      response.status(404).json({ error: 'Customer not found' });
+      return;
+    }
+
+    const customerData = customerSnap.data();
+
+    // Create payment record
+    const paymentData = {
+      customer_id: customerId,
+      amount_paid: parseFloat(amount),
+      currency: 'TZS',
+      attachments: [],
+      status: 'approved', // Auto-approve mobile money payments
+      created_by_uid: 'system',
+      created_by_name: createdByName || customerData.name || 'Home User',
+      created_at: FieldValue.serverTimestamp(),
+      approved_by_uid: 'system',
+      approved_by_name: 'Auto-Approved',
+      approved_at: FieldValue.serverTimestamp(),
+      schedule: customerData.schedule || 'monthly',
+      period_start: Timestamp.now(),
+      period_end: Timestamp.fromDate(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)), // 30 days from now
+      due_date: Timestamp.fromDate(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)),
+      reference: reference || `${provider}-${phone}`,
+      notes: `Mobile money payment via ${provider}`,
+      payment_type: provider,
+      customer_zone: customerData.zone || '',
+      customer_type: customerData.customer_type || '',
+    };
+
+    // Store payment in customer's payments subcollection
+    const paymentRef = await customerRef.collection('payments').add(paymentData);
+
+    logger.info(`Successfully stored payment for customer ${customerId}`, {
+      paymentId: paymentRef.id,
+      amount: amount,
+      provider: provider
+    });
+
+    // Return success response
+    response.status(200).json({
+      success: true,
+      message: 'Payment recorded successfully',
+      paymentId: paymentRef.id,
+      customerId: customerId
+    });
+
+  } catch (error) {
+    logger.error('Error storing home user payment:', error);
+    response.status(500).json({
+      error: 'Failed to store payment',
+      details: error.message
+    });
+  }
+});
+
+// --- Reset User Password Function ---
+exports.resetUserPassword = onRequest(async (request, response) => {
+  // Set CORS headers
+  response.set('Access-Control-Allow-Origin', '*');
+  response.set('Access-Control-Allow-Methods', 'GET, POST');
+  response.set('Access-Control-Allow-Headers', 'Content-Type');
+
+  // Handle preflight requests
+  if (request.method === 'OPTIONS') {
+    response.status(204).send('');
+    return;
+  }
+
+  // Only allow POST requests
+  if (request.method !== 'POST') {
+    response.status(405).json({ error: 'Method not allowed. Use POST.' });
+    return;
+  }
+
+  try {
+    const { email, newPassword } = request.body;
+
+    // Validate required fields
+    if (!email || !newPassword) {
+      response.status(400).json({
+        error: 'Missing required fields: email and newPassword are required'
+      });
+      return;
+    }
+
+    // Validate password length
+    if (newPassword.length < 6) {
+      response.status(400).json({ error: 'Password must be at least 6 characters long' });
+      return;
+    }
+
+    const auth = getAuth();
+
+    // Get user by email
+    const userRecord = await auth.getUserByEmail(email);
+
+    // Update the user's password
+    await auth.updateUser(userRecord.uid, {
+      password: newPassword
+    });
+
+    logger.info(`Password reset successfully for user: ${email}`);
+
+    response.status(200).json({
+      success: true,
+      message: 'Password reset successfully'
+    });
+
+  } catch (error) {
+    logger.error('Error resetting password:', error);
+    
+    if (error.code === 'auth/user-not-found') {
+      response.status(404).json({ error: 'User not found with this email' });
+    } else if (error.code === 'auth/invalid-email') {
+      response.status(400).json({ error: 'Invalid email address' });
+    } else {
+      response.status(500).json({
+        error: 'Failed to reset password',
+        details: error.message
+      });
+    }
   }
 });

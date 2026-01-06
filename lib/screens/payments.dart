@@ -5,6 +5,8 @@ import '../controllers/ApiService.dart';
 import '../theme/app_theme.dart';
 import '../widgets/modern_components.dart';
 import 'package:intl/intl.dart';
+import 'package:get/get.dart';
+import '../controllers/auth_controller.dart';
 
 class PaymentsScreen extends StatefulWidget {
   @override
@@ -12,6 +14,7 @@ class PaymentsScreen extends StatefulWidget {
 }
 
 class _PaymentsScreenState extends State<PaymentsScreen> {
+  final AuthController _authController = Get.find<AuthController>();
   List<dynamic> _payments = [];
   List<dynamic> _filteredPayments = [];
   bool _loading = false;
@@ -120,14 +123,15 @@ class _PaymentsScreenState extends State<PaymentsScreen> {
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Row(
                 children: [
-                  Text(
-                    _searchText.isEmpty 
-                        ? 'Showing ${_filteredPayments.length} recent payments (24h)'
-                        : 'Found ${_filteredPayments.length} payments matching "$_searchText"',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: AppTheme.textSecondary,
+                  if (_authController.userRole != 'technician')
+                    Text(
+                      _searchText.isEmpty 
+                          ? 'Showing ${_filteredPayments.length} recent payments (24h)'
+                          : 'Found ${_filteredPayments.length} payments matching "$_searchText"',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: AppTheme.textSecondary,
+                      ),
                     ),
-                  ),
                 ],
               ),
             ),

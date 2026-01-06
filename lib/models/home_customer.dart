@@ -23,6 +23,7 @@ class HomeCustomer {
   final DateTime createdAt;
   final DateTime? updatedAt;
   final bool active;
+  final Map<String, dynamic>? status;
 
   HomeCustomer({
     required this.id,
@@ -45,6 +46,7 @@ class HomeCustomer {
     required this.createdAt,
     this.updatedAt,
     this.active = true,
+    this.status,
   });
 
   factory HomeCustomer.fromMap(Map<String, dynamic> map, String id) {
@@ -75,6 +77,7 @@ class HomeCustomer {
       createdAt: _fromTs(map['created_at']) ?? DateTime.now(),
       updatedAt: _fromTs(map['updated_at']),
       active: map['active'] ?? true,
+      status: (map['status'] is Map) ? Map<String, dynamic>.from(map['status']) : null,
     );
   }
 

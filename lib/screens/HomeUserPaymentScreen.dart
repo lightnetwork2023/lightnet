@@ -6,6 +6,7 @@ import 'dart:convert';
 
 import 'package:lightnetwork/controllers/auth_controller.dart';
 import 'package:lightnetwork/controllers/HomeInternetService.dart';
+import 'package:lightnetwork/controllers/ApiService.dart';
 import 'package:lightnetwork/models/home_customer.dart';
 import '../theme/app_theme.dart';
 
@@ -240,6 +241,22 @@ class _HomeUserPaymentScreenState extends State<HomeUserPaymentScreen> {
     );
   }
 
+  String _normalizePhoneNumber(String phone) {
+    // Remove all non-digit characters
+    String cleaned = phone.replaceAll(RegExp(r'\D'), '');
+    
+    // If starts with 0, replace with 255
+    if (cleaned.startsWith('0')) {
+      cleaned = '255${cleaned.substring(1)}';
+    }
+    // If doesn't start with 255, add it
+    else if (!cleaned.startsWith('255')) {
+      cleaned = '255$cleaned';
+    }
+    
+    return cleaned;
+  }
+
   Future<void> _makePayment() async {
     if (!_formKey.currentState!.validate()) return;
 
@@ -255,24 +272,38 @@ class _HomeUserPaymentScreenState extends State<HomeUserPaymentScreen> {
 
     try {
       final amount = double.parse(_amountCtrl.text.trim());
-      final phone = _phoneCtrl.text.trim();
+      final phone = _normalizePhoneNumber(_phoneCtrl.text.trim());
+
+      print('Making payment with:');
+      print('Phone: $phone');
+      print('Amount: $amount');
+      print('Provider: $_provider');
+      print('Customer ID: $customerId');
 
       // Call the payment API
       final response = await http.post(
-        Uri.parse('http://167.179.100.104:5000/make-paymentagent'),
+        Uri.parse('${ApiService.baseUrl}/make-paymentagent'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'phone': phone,
           'amount': amount.toString(),
           'provider': _provider,
           'location': 'HOME_USER',
-          'days': 30, // Default to 30 days for home internet
-          'durationSeconds': 2592000, // 30 days in seconds
-          'quantity': customerId, // Pass customer ID as quantity for tracking
+          'days': 30,
+          'durationSeconds': 2592000,
+          'quantity': customerId,
         }),
+      ).timeout(
+        const Duration(seconds: 30),
+        onTimeout: () {
+          throw Exception('Request timed out. Please check your internet connection and try again.');
+        },
       );
 
       if (!mounted) return;
+
+      print('Payment Response Status: ${response.statusCode}');
+      print('Payment Response Body: ${response.body}');
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -284,8 +315,9 @@ class _HomeUserPaymentScreenState extends State<HomeUserPaymentScreen> {
           
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('Payment successful! Your payment has been recorded.'),
+              content: Text('Payment initiated! Please check your phone for the payment prompt.'),
               backgroundColor: AppTheme.successColor,
+              duration: Duration(seconds: 5),
             ),
           );
           
@@ -293,20 +325,27 @@ class _HomeUserPaymentScreenState extends State<HomeUserPaymentScreen> {
           _amountCtrl.clear();
           
           // Navigate back after short delay
-          Future.delayed(const Duration(seconds: 2), () {
+          Future.delayed(const Duration(seconds: 3), () {
             if (mounted) Navigator.pop(context, true);
           });
         } else {
-          throw Exception(data['error'] ?? 'Payment failed');
+          final errorMsg = data['error'] ?? data['details'] ?? 'Payment failed';
+          throw Exception(errorMsg);
         }
       } else {
         final data = jsonDecode(response.body);
-        throw Exception(data['error'] ?? 'Payment request failed');
+        final errorMsg = data['error'] ?? data['details'] ?? 'Payment request failed with status ${response.statusCode}';
+        throw Exception(errorMsg);
       }
     } catch (e) {
       if (!mounted) return;
+      print('Payment Error: $e');
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e')),
+        SnackBar(
+          content: Text('Payment failed: ${e.toString().replaceAll('Exception: ', '')}'),
+          backgroundColor: AppTheme.errorColor,
+          duration: const Duration(seconds: 5),
+        ),
       );
     } finally {
       if (mounted) setState(() => _loading = false);

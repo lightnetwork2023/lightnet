@@ -271,6 +271,7 @@ class HomeInternetService {
   static Stream<List<HomeCustomer>> streamCustomers() {
     return _db
         .collection(customersCol)
+        .orderBy('status.sort_key', descending: true)
         .orderBy('created_at', descending: true)
         .snapshots()
         .map((snap) => snap.docs
@@ -987,21 +988,23 @@ class HomeInternetService {
 
   static int _periodsDueUpToNow(HomeCustomer c, DateTime now) {
     if (c.schedule == PaymentScheduleType.weekly) {
-      return _weeksBetween(c, now);
+      return _weeksDueUpTo(c, now);
     } else {
-      return _monthsBetween(c, now);
+      return _monthsDueUpTo(c, now);
     }
   }
 
   static _Period _weekPeriod(HomeCustomer c, DateTime ref) {
     final int anchorWeekday = c.billingWeekday ?? c.startDate.weekday; // 1..7
-    // First due: first anchor weekday on/after startDate
+    // First due: first anchor weekday AFTER startDate
     DateTime firstDue = c.startDate;
     final int diff = (anchorWeekday - firstDue.weekday);
     if (diff > 0) {
       firstDue = firstDue.add(Duration(days: diff));
     } else if (diff < 0) {
       firstDue = firstDue.add(Duration(days: (7 + diff)));
+    } else {
+      firstDue = firstDue.add(const Duration(days: 7));
     }
     
     // If ref is before firstDue, we're still in the first period
@@ -1026,18 +1029,38 @@ class HomeInternetService {
       firstDue = firstDue.add(Duration(days: diff));
     } else if (diff < 0) {
       firstDue = firstDue.add(Duration(days: (7 + diff)));
+    } else {
+      firstDue = firstDue.add(const Duration(days: 7));
     }
     if (ref.isBefore(firstDue)) return 0;
     final weeks = ((ref.difference(firstDue).inDays) ~/ 7) + 1; // inclusive count
     return weeks;
   }
 
+  static int _weeksDueUpTo(HomeCustomer c, DateTime ref) {
+    final int anchorWeekday = c.billingWeekday ?? c.startDate.weekday;
+    DateTime firstDue = c.startDate;
+    final int diff = (anchorWeekday - firstDue.weekday);
+    if (diff > 0) {
+      firstDue = firstDue.add(Duration(days: diff));
+    } else if (diff < 0) {
+      firstDue = firstDue.add(Duration(days: (7 + diff)));
+    } else {
+      firstDue = firstDue.add(const Duration(days: 7));
+    }
+    if (ref.isBefore(firstDue)) return 0;
+    final int daysDiff = ref.difference(firstDue).inDays;
+    final int weeksDiff = daysDiff ~/ 7;
+    final DateTime dueThisWeek = firstDue.add(Duration(days: 7 * weeksDiff));
+    return ref.isBefore(dueThisWeek) ? weeksDiff : (weeksDiff + 1);
+  }
+
   static _Period _monthPeriod(HomeCustomer c, DateTime ref) {
     final int anchorDay = (c.billingDayOfMonth ?? c.startDate.day).clamp(1, 28);
-    // First due is anchor day in the month of startDate, on/after startDate
+    // First due is anchor day in the month AFTER startDate
     DateTime firstDue = DateTime(c.startDate.year, c.startDate.month, anchorDay,
         c.startDate.hour, c.startDate.minute, c.startDate.second, c.startDate.millisecond, c.startDate.microsecond);
-    if (firstDue.isBefore(c.startDate)) {
+    if (!firstDue.isAfter(c.startDate)) {
       firstDue = DateTime(firstDue.year, firstDue.month + 1, anchorDay, firstDue.hour, firstDue.minute, firstDue.second, firstDue.millisecond, firstDue.microsecond);
     }
     
@@ -1059,12 +1082,26 @@ class HomeInternetService {
     final int anchorDay = (c.billingDayOfMonth ?? c.startDate.day).clamp(1, 28);
     DateTime firstDue = DateTime(c.startDate.year, c.startDate.month, anchorDay,
         c.startDate.hour, c.startDate.minute, c.startDate.second, c.startDate.millisecond, c.startDate.microsecond);
-    if (firstDue.isBefore(c.startDate)) {
+    if (!firstDue.isAfter(c.startDate)) {
       firstDue = DateTime(firstDue.year, firstDue.month + 1, anchorDay, firstDue.hour, firstDue.minute, firstDue.second, firstDue.millisecond, firstDue.microsecond);
     }
     if (ref.isBefore(firstDue)) return 0;
     final months = (ref.year - firstDue.year) * 12 + (ref.month - firstDue.month) + 1; // inclusive count
     return months;
+  }
+  /// Count only months whose due timestamp has actually occurred (<= ref)
+  static int _monthsDueUpTo(HomeCustomer c, DateTime ref) {
+    final int anchorDay = (c.billingDayOfMonth ?? c.startDate.day).clamp(1, 28);
+    DateTime firstDue = DateTime(c.startDate.year, c.startDate.month, anchorDay,
+        c.startDate.hour, c.startDate.minute, c.startDate.second, c.startDate.millisecond, c.startDate.microsecond);
+    if (!firstDue.isAfter(c.startDate)) {
+      firstDue = DateTime(firstDue.year, firstDue.month + 1, anchorDay, firstDue.hour, firstDue.minute, firstDue.second, firstDue.millisecond, firstDue.microsecond);
+    }
+    if (ref.isBefore(firstDue)) return 0;
+    final int monthsDiff = (ref.year - firstDue.year) * 12 + (ref.month - firstDue.month);
+    final DateTime dueThisMonth = DateTime(firstDue.year, firstDue.month + monthsDiff, anchorDay,
+        firstDue.hour, firstDue.minute, firstDue.second, firstDue.millisecond, firstDue.microsecond);
+    return ref.isBefore(dueThisMonth) ? monthsDiff : (monthsDiff + 1);
   }
 
   static DateTime? _fromTs(dynamic v) {

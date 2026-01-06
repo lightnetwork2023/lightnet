@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 import 'package:lightnetwork/controllers/HomeInternetService.dart';
 import 'package:lightnetwork/models/home_customer.dart';
@@ -31,7 +32,28 @@ class _HomeCustomerPeriodsScreenState extends State<HomeCustomerPeriodsScreen> {
     setState(() => _loading = true);
     try {
       final customer = await HomeInternetService.getCustomer(widget.customerId);
-      final periods = await HomeInternetService.listPeriodStatuses(widget.customerId);
+      List<PeriodPaymentStatus> periods = [];
+      if (customer?.status != null && customer!.status!['periods'] != null) {
+        final periodsList = customer.status!['periods'] as List;
+        periods = periodsList.map((p) {
+          final start = (p['start'] as Timestamp).toDate();
+          final end = (p['end'] as Timestamp).toDate();
+          final due = (p['due'] as Timestamp).toDate();
+          final required = (p['required_amount'] as num).toDouble();
+          final paid = (p['paid_amount'] as num).toDouble();
+          final stateStr = p['state'] as String;
+          final state = stateStr == 'paid' ? PeriodPayState.paid : 
+                       (stateStr == 'partial' ? PeriodPayState.partial : PeriodPayState.unpaid);
+          return PeriodPaymentStatus(
+            start: start,
+            end: end,
+            due: due,
+            requiredAmount: required,
+            paidAmount: paid,
+            state: state,
+          );
+        }).toList();
+      }
       if (!mounted) return;
       setState(() {
         _customer = customer;

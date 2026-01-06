@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import '../controllers/auth_controller.dart';
 import 'HomeScreen.dart';
+import 'AgentHomeScreen.dart';
+import 'SuperAgentHomeScreen.dart';
 import '../theme/app_theme.dart';
 import '../widgets/modern_components.dart';
 
@@ -30,32 +32,82 @@ class _LoginScreenState extends State<LoginScreen> {
   Future<void> _login() async {
     if (_formKey.currentState!.validate()) {
       setState(() => _isLoading = true);
+      
+      bool loginSucceeded = false;
+      
       try {
-        // 1. Just call the login method from the controller.
+        // 1. Call the login method from the controller
         await _authController.login(
           _emailController.text.trim(),
           _passwordController.text,
         );
-
-        // 2. The AuthController's built-in listener will automatically
-        //    fetch the user's role and update its state. We don't need to do it here.
-
-        if (mounted) {
-          // 3. Navigate to the HomeScreen. GetX will ensure the UI
-          //    rebuilds with the correct role information from the controller.
-          Get.offAll(() => const HomeScreen());
-        }
-
+        loginSucceeded = true;
       } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Login failed: ${e.toString()}')),
-          );
+        print('Login error during auth: $e');
+        final errorMsg = e.toString();
+        
+        // Check if it's the Firebase Auth internal error (which we can ignore)
+        if (errorMsg.contains('PigeonUserDetails') || errorMsg.contains('List<Object?>')) {
+          print('DEBUG: Ignoring Firebase Auth internal error, continuing...');
+          loginSucceeded = true; // Continue despite error
+        } else {
+          // Real login error
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Login failed: $errorMsg')),
+            );
+            setState(() => _isLoading = false);
+          }
+          return;
         }
-      } finally {
-        if (mounted) {
-          setState(() => _isLoading = false);
+      }
+
+      if (loginSucceeded) {
+        // 2. Wait for user to be authenticated and data loaded (with timeout of 5 seconds)
+        int attempts = 0;
+        while (attempts < 50) {
+          print('DEBUG: Waiting for data - attempt $attempts: user=${_authController.user != null}, dataLoaded=${_authController.isDataLoaded}, role=${_authController.userRole}');
+          
+          if (_authController.user != null && 
+              _authController.isDataLoaded && 
+              _authController.userRole.isNotEmpty) {
+            break; // Data loaded successfully
+          }
+          
+          await Future.delayed(const Duration(milliseconds: 100));
+          attempts++;
         }
+
+        // 3. Verify login was successful and data loaded
+        print('DEBUG: Final check - user=${_authController.user != null}, role=${_authController.userRole}');
+        
+        if (_authController.user != null && _authController.userRole.isNotEmpty) {
+          print('DEBUG: Navigating with role: ${_authController.userRole}');
+          if (mounted) {
+            // Navigate to appropriate screen based on role
+            final role = _authController.userRole.toLowerCase();
+            if (role == 'agent') {
+              Get.offAll(() => const AgentHomeScreen());
+            } else if (role == 'superagent') {
+              Get.offAll(() => const SuperAgentHomeScreen());
+            } else {
+              // boss, technician, or other roles
+              Get.offAll(() => const HomeScreen());
+            }
+          }
+        } else {
+          // Data didn't load, show error
+          print('DEBUG: Failed to load data - user=${_authController.user}, role=${_authController.userRole}, dataLoaded=${_authController.isDataLoaded}');
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Login succeeded but failed to load user data. Please try again.')),
+            );
+          }
+        }
+      }
+
+      if (mounted) {
+        setState(() => _isLoading = false);
       }
     }
   }
@@ -301,7 +353,23 @@ class _LoginScreenState extends State<LoginScreen> {
                                 return null;
                               },
                             ),
-                            const SizedBox(height: 16),
+                            const SizedBox(height: 32),
+                            
+                            // Sign In Button
+                            Align(
+                              alignment: Alignment.center,
+                              child: TextButton(
+                                onPressed: _isLoading ? null : _login,
+                                child: Text(
+                                  _isLoading ? 'Signing in...' : 'Sign In',
+                                  style: TextStyle(
+                                    color: AppTheme.primaryColor,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
                             
                             // Forgot Password Link
                             Align(
@@ -317,80 +385,10 @@ class _LoginScreenState extends State<LoginScreen> {
                                 ),
                               ),
                             ),
-                            const SizedBox(height: 16),
-                            
-                            // Login Button
-                            Container(
-                              height: 56,
-                              decoration: BoxDecoration(
-                                gradient: _isLoading ? null : AppGradients.primaryGradient,
-                                borderRadius: BorderRadius.circular(12),
-                                boxShadow: _isLoading ? null : [
-                                  BoxShadow(
-                                    color: AppTheme.primaryColor.withOpacity(0.3),
-                                    blurRadius: 8,
-                                    offset: const Offset(0, 4),
-                                  ),
-                                ],
-                              ),
-                              child: ElevatedButton(
-                                onPressed: _isLoading ? null : _login,
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: _isLoading ? AppTheme.textTertiary : Colors.transparent,
-                                  shadowColor: Colors.transparent,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                ),
-                                child: _isLoading
-                                    ? Row(
-                                        mainAxisAlignment: MainAxisAlignment.center,
-                                        children: [
-                                          SizedBox(
-                                            width: 20,
-                                            height: 20,
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                              valueColor: AlwaysStoppedAnimation<Color>(
-                                                _isLoading ? Colors.white : AppTheme.primaryColor,
-                                              ),
-                                            ),
-                                          ),
-                                          const SizedBox(width: 12),
-                                          Text(
-                                            'Signing in...',
-                                            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                              color: Colors.white,
-                                              fontWeight: FontWeight.w600,
-                                            ),
-                                          ),
-                                        ],
-                                      )
-                                    : Text(
-                                        'Sign In',
-                                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                          color: Colors.white,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
-                              ),
-                            ),
                           ],
                         ),
                       ),
                     ),
-                  ),
-                ),
-                
-                // Bottom Section
-                Container(
-                  padding: const EdgeInsets.all(32),
-                  child: Text(
-                    ' 2024 lightNET. All rights reserved.',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: AppTheme.textTertiary,
-                    ),
-                    textAlign: TextAlign.center,
                   ),
                 ),
               ],

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:intl/intl.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 import 'package:lightnetwork/controllers/HomeInternetService.dart';
 import 'package:lightnetwork/controllers/auth_controller.dart';
@@ -46,13 +47,19 @@ class _HomeUserScreenState extends State<HomeUserScreen> {
       }
       print('✅ Customer loaded: ${customer.name}');
 
-      print('📊 Computing customer status...');
-      final status = await HomeInternetService.computeCustomerStatus(customerId);
-      print('✅ Status computed');
-      
-      print('📋 Fetching period statuses...');
-      final periodStatuses = await HomeInternetService.listPeriodStatuses(customerId);
-      print('✅ Period statuses loaded: ${periodStatuses.length} periods');
+      Map<String, dynamic>? status;
+      if (customer.status != null) {
+        final s = Map<String, dynamic>.from(customer.status!);
+        final nd = s['next_due_date'];
+        if (nd is Timestamp) s['next_due_date'] = nd.toDate();
+        final lp = s['last_paid_at'];
+        if (lp is Timestamp) s['last_paid_at'] = lp.toDate();
+        status = s;
+        print('✅ Using server-computed status');
+      } else {
+        print('⏳ Waiting for server-computed status');
+        status = null;
+      }
 
       if (!mounted) return;
       setState(() {

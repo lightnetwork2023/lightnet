@@ -39,34 +39,53 @@ class AuthController extends GetxController {
   @override
   void onInit() {
     super.onInit();
-    _user.bindStream(_auth.authStateChanges());
-    _user.listen((User? user) async {
-      if (user != null) {
-        await _loadUserData(user);
-      } else {
-        await _clearUserData();
+    // Don't use bindStream, manually listen to avoid Firebase Auth internal errors
+    _auth.authStateChanges().listen((User? user) async {
+      try {
+        _user.value = user;
+        if (user != null) {
+          await _loadUserData(user);
+        } else {
+          await _clearUserData();
+        }
+      } catch (e) {
+        print('Error in auth state listener: $e');
+        // If error occurs, still try to load from cache/prefs
+        if (user != null) {
+          _user.value = user;
+          try {
+            final loaded = await _loadUserFromPrefs();
+            if (loaded) {
+              _isDataLoaded.value = true;
+            }
+          } catch (_) {}
+        }
       }
+    }, onError: (error) {
+      print('Firebase Auth stream error: $error');
+      // Silently catch Firebase Auth internal errors
     });
   }
 
   Future<void> _loadUserData(User user) async {
     try {
-      final userDoc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .get();
+      DocumentSnapshot<Map<String, dynamic>>? cacheDoc;
+      try {
+        cacheDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .get(const GetOptions(source: Source.cache));
+      } catch (_) {}
 
-      if (userDoc.exists) {
-        final userData = userDoc.data() as Map<String, dynamic>;
+      if (cacheDoc != null && cacheDoc.exists) {
+        final userData = cacheDoc.data() as Map<String, dynamic>;
         _userRole.value = userData['role'] ?? 'technician';
+        print('DEBUG AUTH: Loaded from CACHE - role: ${_userRole.value}, uid: ${user.uid}');
         _userName.value = userData['name'] ?? '';
         _userLocation.value = userData['location'] ?? '';
         _homeCustomerId.value = userData['home_customer_id'] ?? '';
-        
-        // Handle locations for superagents
         if (userData['locations'] != null && userData['locations'] is List) {
           _userLocations.assignAll(List<String>.from(userData['locations']));
-          // Set current location to first location if available
           if (_userLocations.isNotEmpty) {
             _userLocation.value = _userLocations.first;
           }
@@ -75,16 +94,12 @@ class AuthController extends GetxController {
         } else {
           _userLocations.clear();
         }
-        
         if (userData['allowed_bundles'] != null) {
           try {
-            // Handle both List and Map types for allowed_bundles
             final bundlesRaw = userData['allowed_bundles'];
             if (bundlesRaw is Map) {
-              final bundlesData = Map<String, dynamic>.from(bundlesRaw);
-              _allowedBundles.value = bundlesData;
+              _allowedBundles.value = Map<String, dynamic>.from(bundlesRaw);
             } else if (bundlesRaw is List) {
-              // Convert List to Map if needed, or handle as appropriate for your app
               _allowedBundles.clear();
               print('Warning: allowed_bundles is a List, expected Map. Data: $bundlesRaw');
             } else {
@@ -95,12 +110,9 @@ class AuthController extends GetxController {
             print('Error processing allowed_bundles: $e');
             _allowedBundles.clear();
           }
-          // Moved to try-catch block above
         } else {
           _allowedBundles.clear();
         }
-
-        // Load commission shares (supports various shapes)
         try {
           double saShare = 0.63;
           double coShare = 0.37;
@@ -109,11 +121,9 @@ class AuthController extends GetxController {
             if (comm is Map) {
               final m = Map<String, dynamic>.from(comm);
               saShare = _parseShare(m['superagent']) ?? saShare;
-              // if company provided use it, else derive remainder
               final parsedCompany = _parseShare(m['company']);
               coShare = parsedCompany ?? (1.0 - saShare);
             } else {
-              // Support legacy single value like 'superagent_percent'
               final legacy = _parseShare(comm);
               if (legacy != null) {
                 saShare = legacy;
@@ -127,25 +137,114 @@ class AuthController extends GetxController {
               coShare = 1.0 - saShare;
             }
           }
-          // Clamp to [0,1] and normalize if needed
           saShare = saShare.clamp(0.0, 1.0);
           coShare = (1.0 - saShare).clamp(0.0, 1.0);
           _commissionSuperAgent.value = saShare;
           _commissionCompany.value = coShare;
         } catch (e) {
-          // keep defaults on parse error
           _commissionSuperAgent.value = 0.63;
           _commissionCompany.value = 0.37;
           print('Warning: failed to parse commission shares: $e');
         }
-        await _saveUserRoleToPrefs(_userRole.value);
-        
-        // Mark data as loaded
+        await _saveUserToPrefs();
         _isDataLoaded.value = true;
+      }
+
+      try {
+        final serverDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .get();
+        if (serverDoc.exists) {
+          final userData = serverDoc.data() as Map<String, dynamic>;
+          _userRole.value = userData['role'] ?? 'technician';
+          print('DEBUG AUTH: Loaded from SERVER - role: ${_userRole.value}, uid: ${user.uid}');
+          _userName.value = userData['name'] ?? '';
+          _userLocation.value = userData['location'] ?? '';
+          _homeCustomerId.value = userData['home_customer_id'] ?? '';
+          if (userData['locations'] != null && userData['locations'] is List) {
+            _userLocations.assignAll(List<String>.from(userData['locations']));
+            if (_userLocations.isNotEmpty) {
+              _userLocation.value = _userLocations.first;
+            }
+          } else if (userData['location'] != null && userData['location'].isNotEmpty) {
+            _userLocations.assignAll([userData['location']]);
+          } else {
+            _userLocations.clear();
+          }
+          if (userData['allowed_bundles'] != null) {
+            try {
+              final bundlesRaw = userData['allowed_bundles'];
+              if (bundlesRaw is Map) {
+                _allowedBundles.value = Map<String, dynamic>.from(bundlesRaw);
+              } else if (bundlesRaw is List) {
+                _allowedBundles.clear();
+                print('Warning: allowed_bundles is a List, expected Map. Data: $bundlesRaw');
+              } else {
+                _allowedBundles.clear();
+                print('Warning: allowed_bundles has unexpected type: ${bundlesRaw.runtimeType}');
+              }
+            } catch (e) {
+              print('Error processing allowed_bundles: $e');
+              _allowedBundles.clear();
+            }
+          } else {
+            _allowedBundles.clear();
+          }
+          try {
+            double saShare = 0.63;
+            double coShare = 0.37;
+            dynamic comm = userData['commission'];
+            if (comm != null) {
+              if (comm is Map) {
+                final m = Map<String, dynamic>.from(comm);
+                saShare = _parseShare(m['superagent']) ?? saShare;
+                final parsedCompany = _parseShare(m['company']);
+                coShare = parsedCompany ?? (1.0 - saShare);
+              } else {
+                final legacy = _parseShare(comm);
+                if (legacy != null) {
+                  saShare = legacy;
+                  coShare = 1.0 - saShare;
+                }
+              }
+            } else if (userData['superagent_percent'] != null) {
+              final legacy = _parseShare(userData['superagent_percent']);
+              if (legacy != null) {
+                saShare = legacy;
+                coShare = 1.0 - saShare;
+              }
+            }
+            saShare = saShare.clamp(0.0, 1.0);
+            coShare = (1.0 - saShare).clamp(0.0, 1.0);
+            _commissionSuperAgent.value = saShare;
+            _commissionCompany.value = coShare;
+          } catch (e) {
+            _commissionSuperAgent.value = 0.63;
+            _commissionCompany.value = 0.37;
+            print('Warning: failed to parse commission shares: $e');
+          }
+          await _saveUserToPrefs();
+          _isDataLoaded.value = true;
+          print('DEBUG AUTH: Data loaded COMPLETE - Final role: ${_userRole.value}');
+        } else {
+          if (!_isDataLoaded.value) {
+            final loaded = await _loadUserFromPrefs();
+            if (!loaded) _isDataLoaded.value = false;
+          }
+        }
+      } catch (e) {
+        if (!_isDataLoaded.value) {
+          final loaded = await _loadUserFromPrefs();
+          if (!loaded) _isDataLoaded.value = false;
+        }
       }
     } catch (e) {
       print('Error loading user data: $e');
-      _isDataLoaded.value = false;
+      if (!_isDataLoaded.value) {
+        final loaded = await _loadUserFromPrefs();
+        if (!loaded) _isDataLoaded.value = false;
+      }
     }
   }
 
@@ -175,6 +274,10 @@ class AuthController extends GetxController {
     _isDataLoaded.value = false;
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('user_role');
+    await prefs.remove('user_name');
+    await prefs.remove('user_location');
+    await prefs.remove('home_customer_id');
+    await prefs.remove('user_locations_json');
   }
 
   Future<void> _loadUserRoleFromPrefs() async {
@@ -185,6 +288,44 @@ class AuthController extends GetxController {
   Future<void> _saveUserRoleToPrefs(String role) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('user_role', role);
+  }
+
+  Future<void> _saveUserToPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('user_role', _userRole.value);
+    await prefs.setString('user_name', _userName.value);
+    await prefs.setString('user_location', _userLocation.value);
+    await prefs.setString('home_customer_id', _homeCustomerId.value);
+    await prefs.setString('user_locations_json', jsonEncode(_userLocations.toList()));
+  }
+
+  Future<bool> _loadUserFromPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    final role = prefs.getString('user_role') ?? '';
+    if (role.isEmpty) return false;
+    _userRole.value = role;
+    _userName.value = prefs.getString('user_name') ?? '';
+    _userLocation.value = prefs.getString('user_location') ?? '';
+    _homeCustomerId.value = prefs.getString('home_customer_id') ?? '';
+    final locsJson = prefs.getString('user_locations_json');
+    if (locsJson != null) {
+      try {
+        final list = List<String>.from(jsonDecode(locsJson));
+        _userLocations.assignAll(list);
+      } catch (_) {
+        if (_userLocation.value.isNotEmpty) {
+          _userLocations.assignAll([_userLocation.value]);
+        } else {
+          _userLocations.clear();
+        }
+      }
+    } else if (_userLocation.value.isNotEmpty) {
+      _userLocations.assignAll([_userLocation.value]);
+    } else {
+      _userLocations.clear();
+    }
+    _isDataLoaded.value = true;
+    return true;
   }
 
   void setUserRole(String role) {
@@ -200,6 +341,9 @@ class AuthController extends GetxController {
 
   Future<UserCredential?> login(String email, String password) async {
     try {
+      // Reset data loaded flag before login
+      _isDataLoaded.value = false;
+      
       final credential = await _auth.signInWithEmailAndPassword(
         email: email,
         password: password,

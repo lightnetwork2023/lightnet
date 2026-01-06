@@ -92,8 +92,12 @@ class _TechnicianCommissionPageState extends State<TechnicianCommissionPage> {
 
   // Build a card that displays commission (total/30000) and shows payments total in subtitle
   Widget _commissionCard({required String title, required double total, required Color color, required IconData icon}) {
+    final auth = Get.isRegistered<AuthController>() ? Get.find<AuthController>() : null;
+    final isTechnician = auth?.userRole == 'technician';
     final commission = total / _commissionDivisor;
-    final subtitle = 'Payments total: ${total.toStringAsFixed(2)} TZS\nCommission = total / ${_commissionDivisor.toStringAsFixed(0)}';
+    final subtitle = isTechnician 
+        ? 'Your commission' 
+        : 'Payments total: ${total.toStringAsFixed(2)} TZS\nCommission = total / ${_commissionDivisor.toStringAsFixed(0)}';
     return StatCard(
       title: title,
       value: commission.toStringAsFixed(2),
@@ -235,14 +239,16 @@ class _TechnicianCommissionPageState extends State<TechnicianCommissionPage> {
                           textAlign: TextAlign.center,
                         ),
                       ],
-                      const SizedBox(height: 6),
-                      Text(
-                        'Formula: Commission = Payments total / ${_commissionDivisor.toStringAsFixed(0)}',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: Colors.white.withOpacity(0.9),
-                            ),
-                        textAlign: TextAlign.center,
-                      ),
+                      if (auth?.userRole != 'technician') ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          'Formula: Commission = Payments total / ${_commissionDivisor.toStringAsFixed(0)}',
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: Colors.white.withOpacity(0.9),
+                              ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
                     ],
                   ),
                 ),

@@ -277,24 +277,26 @@ class _HomeScreenState extends State<HomeScreen> {
                   children: [
                     Row(
                       children: [
-                        Expanded(
-                          child: StatCard(
-                            title: 'Active Sessions',
-                            value: activeMacs.length.toString(),
-                            subtitle: 'Connected users',
-                            icon: Icons.wifi_rounded,
-                            iconColor: AppTheme.successColor,
-                            onTap: activeMacs.isNotEmpty
-                                ? () => Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => ActiveMacsScreen(activeMacs: activeMacs),
-                              ),
-                            )
-                                : null,
+                        if (_authController.userRole != 'technician')
+                          Expanded(
+                            child: StatCard(
+                              title: 'Active Sessions',
+                              value: activeMacs.length.toString(),
+                              subtitle: 'Connected users',
+                              icon: Icons.wifi_rounded,
+                              iconColor: AppTheme.successColor,
+                              onTap: activeMacs.isNotEmpty
+                                  ? () => Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => ActiveMacsScreen(activeMacs: activeMacs),
+                                ),
+                              )
+                                  : null,
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 12),
+                        if (_authController.userRole != 'technician')
+                          const SizedBox(width: 12),
                         Expanded(
                           child: StatCard(
                             title: 'Offline Devices',
@@ -320,13 +322,13 @@ class _HomeScreenState extends State<HomeScreen> {
                         Expanded(
                           child: StatCard(
                             title: 'Today Logins',
-                            value: todayLoginsCount.toString(),
-                            subtitle: '$last24hLoginsCount in 24h',
+                            value: _authController.userRole == 'technician' ? '' : todayLoginsCount.toString(),
+                            subtitle: _authController.userRole == 'technician' ? 'View login vouchers' : '$last24hLoginsCount in 24h',
                             icon: Icons.login_rounded,
                             iconColor: AppTheme.infoColor,
                             onTap: () => Navigator.push(
                               context,
-                              MaterialPageRoute(builder: (_) => VouchersScreen()),
+                              MaterialPageRoute(builder: (_) => VouchersScreen(userRole: _authController.userRole)),
                             ),
                           ),
                         ),
@@ -334,8 +336,8 @@ class _HomeScreenState extends State<HomeScreen> {
                         Expanded(
                           child: StatCard(
                             title: 'Today Payments',
-                            value: todayPaymentsCount.toString(),
-                            subtitle: '$last24hPaymentsCount in 24h',
+                            value: _authController.userRole == 'technician' ? '' : todayPaymentsCount.toString(),
+                            subtitle: _authController.userRole == 'technician' ? 'View all payments' : '$last24hPaymentsCount in 24h',
                             icon: Icons.payment_rounded,
                             iconColor: AppTheme.warningColor,
                             onTap: () => Navigator.push(
@@ -352,7 +354,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             
             // Payments by Location Section
-            if (recentPaymentsByLocation.isNotEmpty) ...[
+            if (_authController.userRole != 'technician' && recentPaymentsByLocation.isNotEmpty) ...[
               const SliverToBoxAdapter(
                 child: SectionHeader(
                   title: 'Payments by Location',

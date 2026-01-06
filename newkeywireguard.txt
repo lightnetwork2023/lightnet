@@ -1,3 +1,88 @@
-/interface wireguard set [find name="wg0"] private-key=($k->"private-key")
+/interface wireguard set [find name="wg-vultr"] private-key=($k->"private-key")
+
+#second listenport  16134
+
 
 sudo wg-quick down wg0 && sudo wg-quick up wg0
+
+
+/ip firewall filter add chain=input in-interface=wg1 action=accept comment="Allow management via WireGuard (wg1)" place-before=0
+
+
+
+
+
+
+/interface wireguard set [find name="wg1"] private-key=($k->"private-key")
+
+sudo wg-quick down wg0 && sudo wg-quick up wg0
+
+/interface wireguard peers add interface=wg0 public-key="T415PTx+9B1SHVsmmV1YMycPHigARtYFSFl4SpsgmBo=" endpoint-address=167.179.100.104 endpoint-port=51820 allowed-address=0.0.0.0/0 persistent-keepalive=25
+
+/interface wireguard peers add interface=wg1 public-key="IcKEt3X8LBIr7BJgnKjKQMq/2YRCkGXIIHqigK/donU=" endpoint-address=34.1.223.97 endpoint-port=51820 allowed-address=10.0.1.0/24 persistent-keepalive=25s comment="Server 1 Google"
+
+/ip hotspot walled-garden ip
+add action=accept dst-address=10.0.0.1 comment="Allow FreeRADIUS server"
+add action=accept src-address=10.0.0.1 comment="Allow responses from FreeRADIUS"
+
+GOOGLE IP 
+34.1.223.97
+
+/ip firewall filter add chain=input in-interface=wg1 action=accept comment="Allow management via WireGuard"
+
+
+# Update Server 1 entries with explicit secret
+/radius set 0 address=10.0.1.1 secret=testing123 comment="Server 1 Primary - Login"
+/radius set 1 address=10.0.1.1 secret=testing123 comment="Server 1 Primary - Hotspot"
+
+# Add Server 2 backups with secret
+/radius add address=10.0.1.1 secret=testing123 service=login timeout=3s comment="Server 2 Backup - Login"
+/radius add address=10.0.1.1 secret=testing123 service=hotspot timeout=3s comment="Server 2 Backup - Hotspot"
+
+
+# Update Server 1 entries with explicit secret AND timeout
+/radius set 0 address=10.0.1.1 secret=testing123 timeout=3s comment="Server 1 Primary - Login"
+/radius set 1 address=10.0.1.1 secret=testing123 timeout=3s comment="Server 1 Primary - Hotspot"
+
+# Add Server 2 backups with secret
+/radius add address=10.0.0.1 secret=testing123 service=login timeout=3s comment="Server 2 Backup - Login"
+/radius add address=10.0.0.1 secret=testing123 service=hotspot timeout=3s comment="Server 2 Backup - Hotspot"
+
+
+# Verify
+/radius print detail
+
+
+
+
+#check replication status
+sudo mysql -u root -e "SHOW SLAVE STATUS\G" | grep -E "Slave_IO_Running|Slave_SQL_Running|Seconds_Behind_Master|Last_Error"
+
+/tmp/check-both-directions.sh
+
+
+
+#upgrade google ubuntu kernel 
+sudo ./update-kernel-once.sh
+
+
+
+
+flask app
+
+
+
+sudo systemctl status flask-app
+#see logs
+sudo journalctl -u flask-app -f
+
+
+/ip firewall filter disable [find where action=fasttrack-connection]
+disable [find where action=fasttrack-connection]
+
+/ip firewall filter print where action=fasttrack-connection
+
+
+
+set-inform http://34.1.223.97:8080/inform
+

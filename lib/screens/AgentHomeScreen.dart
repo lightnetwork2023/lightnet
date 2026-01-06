@@ -108,25 +108,56 @@ class _AgentHomeScreenState extends State<AgentHomeScreen> {
   Future<void> _loadData() async {
     // Ensure we have a location before fetching
     if (_authController.userLocation.isEmpty) {
+      print('DEBUG AGENT: Cannot load data - location is empty');
       if (mounted) {
         setState(() => _isLoading = false);
       }
       return;
     }
+    
+    if (!mounted) return;
+    
     setState(() => _isLoading = true);
+    
     try {
+      print('DEBUG AGENT: Loading valid users for location: ${_authController.userLocation}');
+      
       // Load valid users count for agent's location
       final response = await ApiService.fetchValidUsers(_authController.userLocation);
-      if (response != null) {
-        final users = response as List;
-        setState(() {
-          _validUsersCount = users.length;
-        });
+      
+      print('DEBUG AGENT: Response received - type: ${response.runtimeType}, value: $response');
+      
+      if (response != null && response is List) {
+        final count = response.length;
+        print('DEBUG AGENT: Valid users count: $count');
+        
+        if (mounted) {
+          setState(() {
+            _validUsersCount = count;
+          });
+        }
+      } else {
+        print('DEBUG AGENT: Invalid response - expected List, got: ${response.runtimeType}');
+        if (mounted) {
+          setState(() {
+            _validUsersCount = 0;
+          });
+        }
       }
-    } catch (e) {
+    } catch (e, stackTrace) {
+      print('DEBUG AGENT: Error loading valid users: $e');
+      print('DEBUG AGENT: Stack trace: $stackTrace');
+      
       if (mounted) {
+        setState(() {
+          _validUsersCount = 0;
+        });
+        
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading data: $e')),
+          SnackBar(
+            content: Text('Error loading valid users: $e'),
+            duration: const Duration(seconds: 5),
+          ),
         );
       }
     } finally {
@@ -304,15 +335,41 @@ class _AgentHomeScreenState extends State<AgentHomeScreen> {
 
                   // Valid Users Card
                   GestureDetector(
-                    onTap: () {
-                      Get.to(() => const AgentUsersScreen());
+                    onTap: () async {
+                      // Reload data if count is 0 to ensure fresh data
+                      if (_validUsersCount == 0 && !_isLoading) {
+                        print('DEBUG AGENT: Valid users count is 0, reloading...');
+                        await _loadData();
+                      }
+                      
+                      // Navigate to users screen
+                      if (mounted) {
+                        Get.to(() => const AgentUsersScreen());
+                      }
                     },
                     child: Card(
                       elevation: 4,
                       child: ListTile(
-                        leading: const Icon(Icons.people, size: 40, color: Colors.blue),
+                        leading: _isLoading 
+                          ? const SizedBox(
+                              width: 40,
+                              height: 40,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.people, size: 40, color: Colors.blue),
                         title: const Text('Valid Users'),
-                        subtitle: Text('$_validUsersCount users in your location'),
+                        subtitle: Text(
+                          _isLoading 
+                            ? 'Loading...' 
+                            : '$_validUsersCount users in your location',
+                        ),
+                        trailing: _validUsersCount == 0 && !_isLoading
+                          ? IconButton(
+                              icon: const Icon(Icons.refresh),
+                              onPressed: _loadData,
+                              tooltip: 'Reload',
+                            )
+                          : null,
                       ),
                     ),
                   ),

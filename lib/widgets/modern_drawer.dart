@@ -16,12 +16,18 @@ import '../screens/PaymentAnalyticsPage.dart';
 import '../screens/NetworkDevicesScreen.dart';
 import '../screens/BossTechnicianAnalyticsScreen.dart';
 import '../screens/LocationDataScreen.dart';
+import '../screens/LocationAnalyticsScreen.dart';
 import '../screens/LoginScreen.dart';
 import '../screens/TechnicianCommissionPage.dart';
 import '../screens/HomeInternetCustomersScreen.dart';
 import '../screens/UserManagementScreen.dart';
 import '../screens/BossSuperAgentAnalyticsScreen.dart';
 import '../screens/HomePaymentApprovalsScreen.dart';
+import '../screens/ExpenseCreationScreen.dart';
+import '../screens/ExpenseApprovalScreen.dart';
+import '../screens/ExpenseAnalyticsScreen.dart';
+import '../screens/TechnicianExpensesScreen.dart';
+import '../screens/UniFiAPManagementScreen.dart';
 
 class ModernDrawer extends StatelessWidget {
   const ModernDrawer({Key? key}) : super(key: key);
@@ -151,7 +157,14 @@ class ModernDrawer extends StatelessWidget {
                             icon: Icons.card_membership_outlined,
                             title: 'Vouchers',
                             subtitle: 'View all vouchers',
-                            onTap: () => _navigateTo(context, const VouchersScreen()),
+                            onTap: () => _navigateTo(context, VouchersScreen(userRole: authController.userRole)),
+                          ),
+                          _buildDrawerItem(
+                            context,
+                            icon: Icons.router,
+                            title: 'UniFi Access Points',
+                            subtitle: 'Register and manage APs',
+                            onTap: () => _navigateTo(context, const UniFiAPManagementScreen()),
                           ),
                           const SizedBox(height: 16),
                         ],
@@ -200,6 +213,16 @@ class ModernDrawer extends StatelessWidget {
                           icon: Icons.location_on_rounded,
                           title: 'Location Data',
                           onTap: () => _navigateTo(context, const LocationDataScreen()),
+                        )
+                      : const SizedBox.shrink()),
+                  // Location Analytics - Boss only
+                  Obx(() => authController.isBoss
+                      ? _buildDrawerItem(
+                          context,
+                          icon: Icons.analytics_outlined,
+                          title: 'Location Analytics',
+                          subtitle: 'Performance by location',
+                          onTap: () => _navigateTo(context, const LocationAnalyticsScreen()),
                         )
                       : const SizedBox.shrink()),
                   // SuperAgent Payments (SuperAgent only)
@@ -327,6 +350,31 @@ class ModernDrawer extends StatelessWidget {
                     subtitle: 'Device monitoring',
                     onTap: () => _navigateTo(context, NetworkDevicesScreen()),
                   ),
+                  
+                  // Expense Management Section
+                  const SizedBox(height: 16),
+                  _buildSectionHeader('Expense Management'),
+                  // Expense - Technician and Boss only
+                  Obx(() {
+                    if (authController.userRole == 'technician') {
+                      return _buildDrawerItem(
+                        context,
+                        icon: Icons.receipt_long_outlined,
+                        title: 'My Expenses',
+                        subtitle: 'View & manage my expenses',
+                        onTap: () => _navigateTo(context, const TechnicianExpensesScreen()),
+                      );
+                    } else if (authController.isBoss) {
+                      return _buildDrawerItem(
+                        context,
+                        icon: Icons.receipt_long_outlined,
+                        title: 'Expense Analytics',
+                        subtitle: 'Manage expenses & approvals',
+                        onTap: () => _navigateTo(context, const ExpenseAnalyticsScreen()),
+                      );
+                    }
+                    return const SizedBox.shrink();
+                  }),
                 ],
               ),
             ),

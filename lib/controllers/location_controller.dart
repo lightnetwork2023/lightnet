@@ -20,12 +20,20 @@ class LocationController extends GetxController {
     print('LocationController: Updated locations list: ${locations}');
   }
 
-  Future<void> addLocation(String newLocation) async {
+  Future<void> addLocation(
+    String newLocation, {
+    String? type,
+    String? parentLocation,
+  }) async {
     final docRef = _firestore.collection('locations').doc(newLocation);
     final exists = (await docRef.get()).exists;
 
     if (!exists) {
-      await docRef.set({});
+      final data = <String, dynamic>{};
+      if (type != null) data['type'] = type;
+      if (parentLocation != null) data['parent_location'] = parentLocation;
+      
+      await docRef.set(data);
       loadLocations();
     } else {
       throw Exception("Location already exists");

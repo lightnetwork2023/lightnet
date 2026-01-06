@@ -73,33 +73,110 @@ class _HomePaymentApprovalsScreenState extends State<HomePaymentApprovalsScreen>
               final created = fmtDate.format(pr.createdAt);
               final attachmentsCount = pr.attachments.length;
 
-              return ListTile(
-                leading: Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: AppTheme.warningColor.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const Icon(Icons.receipt_long_rounded, color: AppTheme.warningColor),
-                ),
-                title: Text('$amount  •  ${pr.customerId}', style: const TextStyle(fontWeight: FontWeight.w600)),
-                subtitle: Text('Created: $created  •  Attachments: $attachmentsCount'),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    IconButton(
-                      tooltip: 'Approve',
-                      onPressed: () => _approve(pr),
-                      icon: const Icon(Icons.check_circle_rounded, color: AppTheme.successColor),
+              return FutureBuilder<String>(
+                future: _getCustomerName(pr.customerId),
+                builder: (context, snapshot) {
+                  final customerName = snapshot.data ?? 'Loading...';
+                  
+                  return Card(
+                    margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    elevation: 2,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(14),
+                      onTap: () => _showDetails(context, pr),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          gradient: AppGradients.cardGradient,
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(14),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.all(10),
+                                    decoration: BoxDecoration(
+                                      color: AppTheme.warningColor.withOpacity(0.12),
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    child: const Icon(Icons.receipt_long_rounded, color: AppTheme.warningColor),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          customerName,
+                                          style: const TextStyle(
+                                            fontSize: 17,
+                                            fontWeight: FontWeight.w700,
+                                            color: AppTheme.textPrimary,
+                                          ),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          amount,
+                                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: AppTheme.primaryColor),
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          'ID: ${pr.customerId}',
+                                          style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                    decoration: BoxDecoration(
+                                      color: AppTheme.warningColor.withOpacity(0.1),
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    child: const Text(
+                                      'PENDING',
+                                      style: TextStyle(color: AppTheme.warningColor, fontSize: 11, fontWeight: FontWeight.w600),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  const Icon(Icons.chevron_right_rounded, color: AppTheme.textSecondary),
+                                ],
+                              ),
+                              const SizedBox(height: 10),
+                              Row(
+                                children: [
+                                  const Icon(Icons.access_time_rounded, size: 16, color: AppTheme.textSecondary),
+                                  const SizedBox(width: 6),
+                                  Text('Created: $created', style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 6,
+                                children: [
+                                  _miniChip(Icons.attach_file_rounded, 'Attachments: $attachmentsCount'),
+                                  if (pr.paymentType != null && pr.paymentType!.isNotEmpty)
+                                    _miniChip(Icons.payments_rounded, pr.paymentType!),
+                                  if (pr.reference != null && pr.reference!.isNotEmpty)
+                                    _miniChip(Icons.numbers_rounded, 'Ref: ${pr.reference}'),
+                                  _miniChip(Icons.person_rounded, 'By: ${pr.createdByName}'),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
                     ),
-                    IconButton(
-                      tooltip: 'Reject',
-                      onPressed: () => _reject(pr),
-                      icon: const Icon(Icons.cancel_rounded, color: AppTheme.errorColor),
-                    ),
-                  ],
-                ),
-                onTap: () => _showDetails(context, pr),
+                  );
+                },
               );
             },
           );
@@ -171,6 +248,15 @@ class _HomePaymentApprovalsScreenState extends State<HomePaymentApprovalsScreen>
         ),
       ),
     );
+  }
+
+  Future<String> _getCustomerName(String customerId) async {
+    try {
+      final customer = await HomeInternetService.getCustomer(customerId);
+      return customer?.name ?? 'Customer $customerId';
+    } catch (e) {
+      return 'Customer $customerId';
+    }
   }
 }
 
@@ -467,6 +553,31 @@ class _InfoRow extends StatelessWidget {
       ),
     );
   }
+}
+
+Widget _miniChip(IconData icon, String text) {
+  return Container(
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+    decoration: BoxDecoration(
+      color: AppTheme.textSecondary.withOpacity(0.1),
+      borderRadius: BorderRadius.circular(12),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 14, color: AppTheme.textSecondary),
+        const SizedBox(width: 6),
+        Text(
+          text,
+          style: const TextStyle(
+            color: AppTheme.textSecondary,
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ],
+    ),
+  );
 }
 
 class _AttachmentViewerScreen extends StatelessWidget {

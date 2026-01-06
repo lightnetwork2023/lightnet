@@ -8,6 +8,7 @@ import 'package:lightnetwork/controllers/auth_controller.dart';
 import 'package:lightnetwork/models/home_customer.dart';
 import 'AddHomeCustomerScreen.dart';
 import '../theme/app_theme.dart';
+import '../widgets/modern_components.dart';
 import 'CustomerPaymentsScreen.dart';
 import 'HomeCustomerPeriodsScreen.dart';
 import 'EditHomeCustomerScreen.dart';
@@ -15,8 +16,36 @@ import 'HomeInternetDropdownsScreen.dart';
 import 'HomeInternetAnalyticsScreen.dart';
 import 'ArchivedHomeCustomersScreen.dart';
 
-class HomeInternetCustomersScreen extends StatelessWidget {
+class HomeInternetCustomersScreen extends StatefulWidget {
   const HomeInternetCustomersScreen({super.key});
+
+  @override
+  State<HomeInternetCustomersScreen> createState() => _HomeInternetCustomersScreenState();
+}
+
+class _HomeInternetCustomersScreenState extends State<HomeInternetCustomersScreen> {
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  List<HomeCustomer> _filterCustomers(List<HomeCustomer> customers) {
+    if (_searchQuery.isEmpty) return customers;
+    
+    final query = _searchQuery.toLowerCase();
+    return customers.where((customer) {
+      return customer.name.toLowerCase().contains(query) ||
+             customer.phone.contains(query) ||
+             customer.id.contains(query) ||
+             customer.zone.toLowerCase().contains(query) ||
+             customer.customerType.toLowerCase().contains(query) ||
+             customer.location.toLowerCase().contains(query);
+    }).toList();
+  }
 
   Future<void> _makePhoneCall(String phoneNumber) async {
     final Uri phoneUri = Uri(scheme: 'tel', path: phoneNumber);
@@ -32,6 +61,8 @@ class HomeInternetCustomersScreen extends StatelessWidget {
       );
     }
   }
+
+  
 
   @override
   Widget build(BuildContext context) {
@@ -83,7 +114,57 @@ class HomeInternetCustomersScreen extends StatelessWidget {
         label: const Text('New Customer'),
         backgroundColor: AppTheme.primaryColor,
       ),
-      body: StreamBuilder<List<HomeCustomer>>(
+      body: Column(
+        children: [
+          // Search Bar
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: ModernSearchBar(
+              controller: _searchController,
+              hintText: 'Search by name, phone, ID, zone...',
+              onChanged: (value) {
+                setState(() {
+                  _searchQuery = value;
+                });
+              },
+              onClear: () {
+                _searchController.clear();
+                setState(() {
+                  _searchQuery = '';
+                });
+              },
+            ),
+          ),
+          
+          // Results count
+          if (_searchQuery.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(
+                children: [
+                  Icon(Icons.search_rounded, size: 16, color: AppTheme.textSecondary),
+                  const SizedBox(width: 8),
+                  StreamBuilder<List<HomeCustomer>>(
+                    stream: HomeInternetService.streamCustomers(),
+                    builder: (context, snapshot) {
+                      final customers = snapshot.data ?? [];
+                      final filtered = _filterCustomers(customers);
+                      return Text(
+                        'Found ${filtered.length} customer${filtered.length != 1 ? 's' : ''}',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: AppTheme.textSecondary,
+                        ),
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
+          const SizedBox(height: 8),
+          
+          // Customer List
+          Expanded(
+            child: StreamBuilder<List<HomeCustomer>>(
         stream: HomeInternetService.streamCustomers(),
         builder: (context, snapshot) {
           // Show cached data immediately, no loading spinner
@@ -110,18 +191,51 @@ class HomeInternetCustomersScreen extends StatelessWidget {
           }
           
           final customers = snapshot.data ?? [];
+          final filteredCustomers = _filterCustomers(customers);
+          
           if (customers.isEmpty && snapshot.connectionState != ConnectionState.waiting) {
             return const _EmptyState();
           }
           
-          // Show customers immediately without waiting for status computation
+          final toShow = filteredCustomers;
+
+          if (toShow.isEmpty && _searchQuery.isNotEmpty) {
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.search_off_rounded, size: 64, color: AppTheme.textTertiary),
+                  const SizedBox(height: 16),
+                  Text(
+                    'No customers found',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: AppTheme.textSecondary),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'No customers match "$_searchQuery"',
+                    style: TextStyle(color: AppTheme.textTertiary),
+                  ),
+                  const SizedBox(height: 16),
+                  TextButton.icon(
+                    onPressed: () {
+                      _searchController.clear();
+                      setState(() {
+                        _searchQuery = '';
+                      });
+                    },
+                    icon: const Icon(Icons.clear_rounded),
+                    label: const Text('Clear Search'),
+                  ),
+                ],
+              ),
+            );
+          }
+          
           return ListView.builder(
-            itemCount: customers.length,
+            itemCount: toShow.length,
             padding: const EdgeInsets.symmetric(vertical: 8),
             itemBuilder: (context, index) {
-              final customer = customers[index];
-              final fmt = NumberFormat('#,##0');
-              
+              final customer = toShow[index];
               return _CustomerCard(
                 key: ValueKey(customer.id),
                 customer: customer,
@@ -130,6 +244,9 @@ class HomeInternetCustomersScreen extends StatelessWidget {
             },
           );
         },
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -138,11 +255,13 @@ class HomeInternetCustomersScreen extends StatelessWidget {
 class _CustomerCard extends StatefulWidget {
   final HomeCustomer customer;
   final Function(String) onPhoneCall;
+  final Map<String, dynamic>? initialStatus;
   
   const _CustomerCard({
     super.key,
     required this.customer,
     required this.onPhoneCall,
+    this.initialStatus,
   });
 
   @override
@@ -156,7 +275,11 @@ class _CustomerCardState extends State<_CustomerCard> {
   @override
   void initState() {
     super.initState();
-    _loadStatus();
+    if (widget.customer.status != null) {
+      _status = widget.customer.status;
+    } else if (widget.initialStatus != null) {
+      _status = widget.initialStatus;
+    }
   }
 
   Future<void> _loadStatus() async {

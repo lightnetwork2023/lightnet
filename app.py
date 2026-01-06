@@ -13,6 +13,7 @@ import logging
 import urllib.parse
 import uuid
 import os
+import threading
 
 # Import MikroTik authentication helper
 try:
@@ -27,9 +28,12 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s'
 )
-from datetime import datetime, timedelta 
+from datetime import datetime, timedelta
+from decimal import Decimal 
 
 app = Flask(__name__)
+# CORS enabled for direct port 5000 access (hotspot pages)
+# Nginx also adds CORS for domain access, but it's safe
 CORS(app)
 
 @app.after_request
@@ -57,6 +61,7 @@ db_config = {
 #   AZAMPAY START
 
 FIREBASE_LOCATION_FUNCTION_URL = 'https://us-central1-lightnet-d2de9.cloudfunctions.net/storeUserLocation'
+FIREBASE_PAYMENT_FUNCTION_URL = 'https://storepaymentdata-3vxbatgzgq-uc.a.run.app'
 
 AZAM_CLIENT_ID = 'c7b6bda0-9a3f-47fb-b365-1110dfc37089'
 AZAM_CLIENT_SECRET = 'EsOPLBAfwnLGCQUHOqjMaTqXm/nPv4A8o0WndaEZ4yJ9oJYLkVgPHeQvKPKA2exyvWEAnFL0fBipGq1Qbll6ePoPNfYdsIxYGd5g9UhyK1l8ytGnS3XQj6GUjCfo0J35sb0wgdFwpruktQ2a9SXdKMkuaCtjHPesNHCqPtoy9fUZmabAh7Igi5ZSA2UlTP8WQjaXmaoYEn8aJ1AQxCIEcaIo+DijH7w4hsCmoVWQTHnfpuYDrz3ndpE0eAPRfP381UBxNPuuedtckpTILuGtvRPKgxMAdQh/Lf38tlNnedsSOXm1aZZFa3Vgm8N+Epk338gspvc1syAmOmnUtAFCQqShiUrgiA8SZqzYerMvGWAteprO+B89l2PdL2LXjYcbVyyyGiptCoKEsCaHIRgitNydEMYsEfHhlygEvMCuBqMzWrPlJgugeGD0GlhNW1gR9iq2GLQzRHYwfrSJeFBo1oQb0frIS7tBHy5WisaDJtJalOWOmEy5UuLAVSg8PHVXJ94yOEA9mdg9x4HV0x+bA5JSi0+29tVC59HPly+N9BvsYVRIGWsqW82Ki3OOpZuRtc7O4/YfhrNplTxBBCv6+SDqF5bCKJpNwXKV9t9peAFe39Jy18DMnZ8WnmYMKh4FP2YQUfE4XWnoXhPuRswSw6eRevNiYIYEZbP6YsLPlNY='
@@ -194,6 +199,53 @@ def get_access_token():
     
     # If we get here, all attempts failed
     raise Exception("All token generation attempts failed")
+
+def convert_decimals(obj):
+    """
+    Recursively convert Decimal objects to float for JSON serialization.
+    Handles dicts, lists, and individual values.
+    """
+    if isinstance(obj, list):
+        return [convert_decimals(item) for item in obj]
+    elif isinstance(obj, dict):
+        return {key: convert_decimals(value) for key, value in obj.items()}
+    elif isinstance(obj, Decimal):
+        return float(obj)
+    else:
+        return obj
+
+def _async_firestore_sync(payment_data):
+    """
+    Background worker - runs in separate thread.
+    Fire-and-forget - no retries, logs only.
+    Main callback has already returned by the time this runs.
+    """
+    try:
+        response = requests.post(
+            FIREBASE_PAYMENT_FUNCTION_URL,
+            json=payment_data,
+            timeout=2  # Short timeout - don't wait long
+        )
+        if response.status_code == 200:
+            print(f"? Firestore: {payment_data.get('location')} - TZS {payment_data.get('amount')}")
+        else:
+            print(f"?? Firestore sync failed: {response.status_code}")
+    except:
+        pass  # Silent failure - don't care
+
+def sync_to_firestore(payment_data):
+    """
+    Fire-and-forget: Start background sync, return IMMEDIATELY.
+    Does NOT block. Does NOT wait. Does NOT retry.
+    Callback continues instantly.
+    """
+    threading.Thread(
+        target=_async_firestore_sync,
+        args=(payment_data,),
+        daemon=True
+    ).start()
+    # Returns here immediately - thread runs in background
+
 @app.route('/make-payment', methods=['POST'])
 def make_payment():
     try:
@@ -518,7 +570,7 @@ def get_vouchers_by_name():
         vouchers = cursor.fetchall()
         
         if not vouchers:
-            return jsonify({"message": "No vouchers found with name specified"}), 404
+            return jsonify(convert_decimals({"message": "No vouchers found with name specified"})), 404
             
         return jsonify({"vouchers": vouchers, "count": len(vouchers), "message": f"Found {len(vouchers)} vouchers with name specified"})
 
@@ -550,53 +602,6 @@ def callback():
             additional_properties['location'] = 'unifi'
             location = 'unifi'
 
-        # Check payment status first
-        status = callback_data.get('transactionstatus', '').lower()
-        
-        # If location is 'HOME_USER', call Cloud Function to store payment in Firestore
-        if location == 'HOME_USER' and status == 'success':
-            try:
-                customer_id = additional_properties.get('quantity')  # Customer ID stored in quantity
-                amount = float(callback_data.get('amount', 0))
-                phone = callback_data.get('msisdn', callback_data.get('accountNumber', ''))
-                provider = callback_data.get('operator', 'Unknown')
-                reference = callback_data.get('transactionId', callback_data.get('externalId', ''))
-                
-                # Call Cloud Function to store payment
-                cloud_function_response = requests.post(
-                    'https://us-central1-lightnet-d2de9.cloudfunctions.net/storeHomeUserPayment',
-                    json={
-                        'customerId': customer_id,
-                        'amount': amount,
-                        'phone': phone,
-                        'provider': provider,
-                        'reference': reference,
-                        'createdByName': 'Home User Payment'
-                    },
-                    timeout=10
-                )
-                
-                if cloud_function_response.status_code == 200:
-                    print(f"✅ Home user payment stored in Firestore for customer {customer_id}")
-                    return jsonify({
-                        'success': True, 
-                        'message': 'Home user payment recorded successfully',
-                        'customerId': customer_id
-                    }), 200
-                else:
-                    print(f"⚠️ Failed to store home user payment: {cloud_function_response.text}")
-                    return jsonify({
-                        'success': False, 
-                        'error': 'Failed to record payment in Firestore'
-                    }), 500
-                    
-            except Exception as e:
-                print(f"❌ Error storing home user payment: {str(e)}")
-                return jsonify({
-                    'success': False, 
-                    'error': f'Error recording home user payment: {str(e)}'
-                }), 500
-
         # If location is 'unifi', forward the payload to the external URL
         if location == 'unifi':
             try:
@@ -624,6 +629,43 @@ def callback():
                     )
                     response.raise_for_status()
             return jsonify({'success': True, 'message': 'Payload forwarded to external service'}), 200
+
+        # Handle HOME_USER payments (home internet customers)
+        if location == 'HOME_USER':
+            status = callback_data.get('transactionstatus', '').lower()
+            if status == 'success':
+                customer_id = additional_properties.get('quantity')  # Customer ID passed as quantity
+                amount = float(callback_data.get('amount', 0))
+                phone = callback_data.get('msisdn', callback_data.get('accountNumber', ''))
+                provider = callback_data.get('operator', 'Mobile Money')
+                
+                if not customer_id:
+                    return jsonify({'success': False, 'error': 'Missing customer ID'}), 400
+                
+                try:
+                    # Store payment via Cloud Function
+                    payment_response = requests.post(
+                        'https://us-central1-lightnet-d2de9.cloudfunctions.net/storeHomeUserPayment',
+                        json={
+                            'customerId': customer_id,
+                            'amount': amount,
+                            'phone': phone,
+                            'provider': provider,
+                            'reference': f'{provider}-{phone}',
+                            'createdByName': 'Home Customer'
+                        },
+                        timeout=10
+                    )
+                    payment_response.raise_for_status()
+                    
+                    app.logger.info(f"Home customer payment recorded: {customer_id} - TZS {amount}")
+                    return jsonify({'success': True, 'message': 'Home customer payment recorded'}), 200
+                    
+                except requests.RequestException as e:
+                    app.logger.error(f"Failed to store home customer payment: {str(e)}")
+                    return jsonify({'success': False, 'error': 'Failed to record payment'}), 500
+            else:
+                return jsonify({'success': False, 'error': 'Payment failed'}), 400
 
         # Check for quantity (bulk user generation)
         quantity = additional_properties.get('quantity')
@@ -669,6 +711,17 @@ def callback():
                         conn.commit()
                         cursor.close()
                         conn.close()
+
+                        # Fire-and-forget: Sync to Firestore (returns instantly)
+                        sync_to_firestore({
+                            'location': location,
+                            'amount': float(amount),
+                            'duration': int(duration_seconds),
+                            'phone': '12345678',
+                            'payment_method': 'Mobile Money',
+                            'created_by': 'system',
+                            'payment_type': 'bulk_users'
+                        })
 
                         return jsonify({'success': True, 'message': f'Generated {quantity} users with 15M/15M speed limit for {days} days'}), 200
             except ValueError:
@@ -746,6 +799,20 @@ def store_voucher(voucher, seconds, location, amount, phone, mac_address):
         ''', (location, amount, seconds, voucher, phone))
         conn.commit()
         print("Voucher stored successfully!")
+        
+        # Fire-and-forget: Sync to Firestore (returns instantly)
+        sync_to_firestore({
+            'voucher': voucher,
+            'location': location,
+            'amount': float(amount),
+            'duration': int(seconds),
+            'phone': phone,
+            'mac_address': mac_address,
+            'payment_method': 'Mobile Money',
+            'created_by': 'system',
+            'payment_type': 'voucher'
+        })
+        
         return True
     except mysql.connector.Error as e:
         print(f"DB Error: {str(e)}")
@@ -834,7 +901,7 @@ def fetch_superagent_recent_vouchers():
         search_term = request.args.get('search', '').strip()  # Optional search parameter
         
         if not locations:
-            return jsonify({"error": "Locations parameter is required"}), 400
+            return jsonify(convert_decimals({"error": "Locations parameter is required"})), 400
         
         db_connection = mysql.connector.connect(**db_config)
         cursor = db_connection.cursor(dictionary=True)
@@ -845,7 +912,7 @@ def fetch_superagent_recent_vouchers():
         # Handle multiple locations for superagents
         location_list = [loc.strip() for loc in locations.split(',') if loc.strip()]
         if not location_list:
-            return jsonify({"error": "Valid locations required"}), 400
+            return jsonify(convert_decimals({"error": "Valid locations required"})), 400
             
         # Build location filter
         location_placeholders = ','.join(['%s'] * len(location_list))
@@ -978,6 +1045,13 @@ def fetch_recent_payments():
         cursor.execute(query, (time_threshold,))
         payments = cursor.fetchall()
 
+        # Convert Decimal to float for JSON serialization
+        for payment in payments:
+            if 'amount' in payment and isinstance(payment['amount'], Decimal):
+                payment['amount'] = float(payment['amount'])
+            if 'duration' in payment and isinstance(payment['duration'], Decimal):
+                payment['duration'] = float(payment['duration'])
+        
         # Calculate total amount
         total_amount = sum(payment['amount'] for payment in payments) if payments else 0
         print(f"Total amount for recent payments (last 24h): {total_amount}")  # Added print statement
@@ -985,7 +1059,7 @@ def fetch_recent_payments():
         return jsonify({
             "payments": payments,
             "count": len(payments),
-            "total_amount": total_amount,
+            "total_amount": float(total_amount) if isinstance(total_amount, Decimal) else total_amount,
             "message": f"Found {len(payments)} payments within last 24 hours with a total amount of {total_amount} TZS"
         })
         
@@ -1053,12 +1127,12 @@ def fetch_payments_today():
         total_amount = sum(float(payment['amount']) if payment['amount'] is not None else 0.0 for payment in payments) if payments else 0.0
         print(f"Total amount for today's payments: {total_amount}")  # Added print statement
 
-        return jsonify({
+        return jsonify(convert_decimals({
             "payments": payments,
             "count": len(payments),
             "total_amount": total_amount,
             "message": f"Found {len(payments)} payments made today with a total amount of {total_amount} TZS"
-        })
+        }))
         
     except mysql.connector.Error as err:
         return jsonify({"error": f"MySQL Error: {err}"}), 500
@@ -1134,7 +1208,7 @@ def fetch_payments_summary():
         daily_average_this_month = total_this_month / days_in_month if days_in_month > 0 else 0.0
 
         print(f"Payment summary - Today: {total_today}, Last 24h: {total_last_24}, Last Month: {total_last_month}, This Month: {total_this_month}, Daily Avg This Month: {daily_average_this_month}, This Year: {total_year}")
-        return jsonify({
+        return jsonify(convert_decimals({
             "success": True,
             "summary": {
                 "today": total_today,
@@ -1145,11 +1219,11 @@ def fetch_payments_summary():
                 "this_year": total_year
             },
             "message": f"Payment summary for {now.strftime('%Y-%m-%d %H:%M:%S')} retrieved"
-        }), 200
+        })), 200
 
     except mysql.connector.Error as err:
         print(f"DB Error during fetch: {str(err)}")
-        return jsonify({"success": False, "error": "Database error occurred"}), 500
+        return jsonify(convert_decimals({"success": False, "error": "Database error occurred"})), 500
     finally:
         if conn.is_connected():
             cursor.close()
@@ -1253,7 +1327,7 @@ def fetch_agent_payments_summary():
             location_info = ""
             
         print(f"Agent payment summary{location_info} - Today: {total_today}, Last 24h: {total_last_24}, Last Month: {total_last_month}, This Month: {total_this_month}, Daily Avg This Month: {daily_average_this_month}, This Year: {total_year}")
-        return jsonify({
+        return jsonify(convert_decimals({
             "success": True,
             "summary": {
                 "today": total_today,
@@ -1266,11 +1340,11 @@ def fetch_agent_payments_summary():
             "location": location,
             "locations": locations,
             "message": f"Agent payment summary{location_info} for {now.strftime('%Y-%m-%d %H:%M:%S')} retrieved"
-        }), 200
+        })), 200
 
     except mysql.connector.Error as err:
         print(f"DB Error during fetch: {str(err)}")
-        return jsonify({"success": False, "error": "Database error occurred"}), 500
+        return jsonify(convert_decimals({"success": False, "error": "Database error occurred"})), 500
     finally:
         if conn.is_connected():
             cursor.close()
@@ -1496,7 +1570,7 @@ def payments():
         cursor.execute(query)
         payments = cursor.fetchall()
 
-        return jsonify({"payments": payments})
+        return jsonify(convert_decimals({"payments": payments}))
 
     except mysql.connector.Error as err:
         return jsonify({"error": f"MySQL Error: {err}"}), 500
@@ -1831,12 +1905,120 @@ def update_voucher():
             conn.close()
             print("Database connection closed.")
 
+
+
+
+@app.route('/update_voucher_settings', methods=['POST'])
+def update_voucher_settings():
+    """
+    Update speed_limit and/or expire_time for a voucher.
+    Identifies voucher by username or mac_address.
+    Also updates radreply table if speed_limit is changed.
+    """
+    try:
+        data = request.json
+        username = data.get('username')
+        mac_address = data.get('mac_address')
+        speed_limit = data.get('speed_limit')  # Optional
+        expire_time_str = data.get('expire_time')  # Optional, ISO8601 format
+
+        # Need at least one identifier
+        if not username and not mac_address:
+            return jsonify(convert_decimals({'success': False, 'error': 'Either username or mac_address is required'})), 400
+
+        # Need at least one field to update
+        if speed_limit is None and expire_time_str is None:
+            return jsonify(convert_decimals({'success': False, 'error': 'At least one of speed_limit or expire_time must be provided'})), 400
+
+        conn = mysql.connector.connect(**db_config)
+        cursor = conn.cursor(dictionary=True)
+
+        # Find the voucher first
+        if username:
+            cursor.execute("SELECT username, mac_address, speed_limit FROM vouchers WHERE username = %s", (username,))
+        else:
+            cursor.execute("SELECT username, mac_address, speed_limit FROM vouchers WHERE mac_address = %s", (mac_address,))
+        
+        voucher = cursor.fetchone()
+        if not voucher:
+            return jsonify(convert_decimals({'success': False, 'error': 'Voucher not found'})), 404
+
+        voucher_username = voucher['username']
+        old_speed_limit = voucher['speed_limit']
+
+        # Build UPDATE query for vouchers table
+        update_fields = []
+        update_values = []
+        
+        if speed_limit is not None:
+            update_fields.append("speed_limit = %s")
+            update_values.append(speed_limit)
+        
+        if expire_time_str is not None:
+            try:
+                # Parse ISO8601 format
+                expire_time = datetime.fromisoformat(expire_time_str.replace('Z', '+00:00'))
+                update_fields.append("expire_time = %s")
+                update_values.append(expire_time)
+            except ValueError:
+                return jsonify(convert_decimals({'success': False, 'error': 'Invalid expire_time format. Use ISO8601 format.'})), 400
+        
+        update_fields.append("updated_at = %s")
+        update_values.append(datetime.now())
+        update_values.append(voucher_username)
+
+        # Update vouchers table
+        query = f"""
+            UPDATE vouchers 
+            SET {', '.join(update_fields)}
+            WHERE username = %s
+        """
+        cursor.execute(query, tuple(update_values))
+
+        # Update radreply table if speed_limit changed
+        if speed_limit is not None and speed_limit != old_speed_limit:
+            # Delete old speed limit entry
+            cursor.execute(
+                "DELETE FROM radreply WHERE username = %s AND attribute = 'Mikrotik-Rate-Limit'",
+                (voucher_username,)
+            )
+            # Insert new speed limit
+            cursor.execute(
+                "INSERT INTO radreply (username, attribute, op, value) VALUES (%s, 'Mikrotik-Rate-Limit', ':=', %s)",
+                (voucher_username, speed_limit)
+            )
+
+        conn.commit()
+        
+        updated_fields = []
+        if speed_limit is not None:
+            updated_fields.append(f"speed_limit: {speed_limit}")
+        if expire_time_str is not None:
+            updated_fields.append(f"expire_time: {expire_time_str}")
+        
+        print(f"Updated voucher settings for username: {voucher_username}, {', '.join(updated_fields)}")
+        return jsonify(convert_decimals({
+            'success': True, 
+            'message': 'Voucher settings updated successfully',
+            'username': voucher_username,
+            'updated_fields': updated_fields
+        })), 200
+
+    except mysql.connector.Error as e:
+        print(f"DB Error during update_voucher_settings: {str(e)}")
+        return jsonify(convert_decimals({'success': False, 'error': 'Database error occurred'})), 500
+    finally:
+        if 'conn' in locals() and conn.is_connected():
+            cursor.close()
+            conn.close()
+            print("Database connection closed.")
+
 @app.route('/search_payments', methods=['GET'])
 def search_payments():
     phone = request.args.get('phone')
     
     if not phone:
-        return jsonify({"error": "Phone number is required"}), 400
+        return jsonify(convert_decimals({"error": "Phone number is required"})), 400
     
     try:
         db_connection = mysql.connector.connect(**db_config)
@@ -1852,12 +2034,12 @@ def search_payments():
         cursor.execute(query, (phone,))
         payments = cursor.fetchall()
         
-        return jsonify({
+        return jsonify(convert_decimals({
             "payments": payments,
             "count": len(payments),
             "search_term": phone,
             "message": f"Found {len(payments)} payments matching phone number '{phone}'"
-        })
+        }))
         
     except mysql.connector.Error as err:
         return jsonify({"error": f"MySQL Error: {err}"}), 500
@@ -1948,7 +2130,7 @@ def fetch_technician_payments_summary():
         days_in_month = (now - start_of_month).days + 1
         daily_average_this_month = total_this_month / days_in_month if days_in_month > 0 else 0.0
 
-        return jsonify({
+        return jsonify(convert_decimals({
             "success": True,
             "summary": {
                 "today": total_today,
@@ -1961,11 +2143,11 @@ def fetch_technician_payments_summary():
             "location": location,
             "locations": locations,
             "message": "Technician payments summary (includes test phone)"
-        }), 200
+        })), 200
 
     except mysql.connector.Error as err:
         print(f"DB Error during fetch: {str(err)}")
-        return jsonify({"success": False, "error": "Database error occurred"}), 500
+        return jsonify(convert_decimals({"success": False, "error": "Database error occurred"})), 500
     finally:
         if conn.is_connected():
             cursor.close()
@@ -1977,7 +2159,7 @@ def get_voucher_by_phone():
     phone = request.args.get('phone')
 
     if not phone:
-        return jsonify({"error": "Phone number is required"}), 400
+        return jsonify(convert_decimals({"error": "Phone number is required"})), 400
 
     try:
         db_connection = mysql.connector.connect(**db_config)
@@ -1995,10 +2177,10 @@ def get_voucher_by_phone():
         result = cursor.fetchone()
 
         if not result or not result.get('username'):
-            return jsonify({"error": "No voucher found for this phone number"}), 404
+            return jsonify(convert_decimals({"error": "No voucher found for this phone number"})), 404
 
         voucher_code = result['username']
-        return jsonify({"voucher_code": voucher_code})
+        return jsonify(convert_decimals({"voucher_code": voucher_code}))
 
     except mysql.connector.Error as err:
         return jsonify({"error": f"MySQL Error: {err}"}), 500
@@ -2052,7 +2234,7 @@ def fetch_superagent_payments():
         locations = request.args.getlist('locations')
         
         if not locations:
-            return jsonify({"error": "Locations parameter is required"}), 400
+            return jsonify(convert_decimals({"error": "Locations parameter is required"})), 400
         
         db_connection = mysql.connector.connect(**db_config)
         cursor = db_connection.cursor(dictionary=True)
@@ -2066,11 +2248,19 @@ def fetch_superagent_payments():
             SELECT id, location, amount, duration, username, phone, timestamp
             FROM payments 
             WHERE timestamp >= %s AND location IN ({location_placeholders})
+            AND phone <> '12345678'
             ORDER BY timestamp DESC
         """
         
         cursor.execute(query, [time_threshold] + locations)
         payments = cursor.fetchall()
+
+        # Convert Decimal to float for JSON serialization
+        for payment in payments:
+            if 'amount' in payment and isinstance(payment['amount'], Decimal):
+                payment['amount'] = float(payment['amount'])
+            if 'duration' in payment and isinstance(payment['duration'], Decimal):
+                payment['duration'] = float(payment['duration'])
 
         # Calculate total amount
         total_amount = sum(float(payment['amount']) if payment['amount'] is not None else 0.0 for payment in payments) if payments else 0.0
@@ -2093,6 +2283,6 @@ def fetch_superagent_payments():
             db_connection.close()
 
 
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=False) # Add debug=True for development
- 

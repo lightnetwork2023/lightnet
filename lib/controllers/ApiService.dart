@@ -19,7 +19,7 @@ class _CacheEntry {
 // New Data Model for Payment Analytics
 
 class ApiService {
-  static const String baseUrl = 'http://167.179.100.104:5000';
+  static const String baseUrl = 'https://lightnet.lightnetwork.pro';
 
   // Cache storage
   static final Map<String, _CacheEntry> _cache = {};
@@ -46,7 +46,7 @@ class ApiService {
 
   static Future<Map<String, dynamic>> generateUsers({
     required int numUsers,
-    required int numDays,
+    required double numDays,
     required String location,
     String? speedLimit,
   }) async {
@@ -786,6 +786,42 @@ class ApiService {
     return jsonDecode(response.body);
   }
 
+  /// Update voucher settings (speed_limit and/or expire_time)
+  /// Can identify by username or mac_address
+  static Future<Map<String, dynamic>> updateVoucherSettings({
+    String? username,
+    String? macAddress,
+    String? speedLimit,
+    DateTime? expireTime,
+  }) async {
+    if (username == null && macAddress == null) {
+      throw ArgumentError('Either username or macAddress must be provided');
+    }
+    if (speedLimit == null && expireTime == null) {
+      throw ArgumentError('At least one of speedLimit or expireTime must be provided');
+    }
+
+    final Map<String, dynamic> body = {
+      if (username != null) 'username': username,
+      if (macAddress != null) 'mac_address': macAddress,
+      if (speedLimit != null) 'speed_limit': speedLimit,
+      if (expireTime != null) 'expire_time': expireTime.toIso8601String(),
+    };
+
+    final response = await http.post(
+      Uri.parse('$baseUrl/update_voucher_settings'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(body),
+    );
+
+    if (response.statusCode == 200) {
+      clearCache(); // Clear cache after update
+      return jsonDecode(response.body);
+    } else {
+      throw Exception('Failed to update voucher settings: ${response.body}');
+    }
+  }
+
   static Future<Map<String, dynamic>> fetchSuperAgentPayments(List<String> locations) async {
     final locationsParam = locations.map((loc) => 'locations=${Uri.encodeComponent(loc)}').join('&');
     final response = await http.get(
@@ -853,4 +889,52 @@ class ApiService {
     _cacheData(cacheKey, data);
     return data;
   }
+
+  // Get all UniFi Access Points
+  static Future<List<dynamic>> getUnifiAPs({String? location}) async {
+    final uri = location != null && location.isNotEmpty
+        ? Uri.parse('$baseUrl/get_unifi_aps?location=$location')
+        : Uri.parse('$baseUrl/get_unifi_aps');
+
+    final response = await http.get(
+      uri,
+      headers: {'Content-Type': 'application/json'},
+    );
+
+    final result = jsonDecode(response.body);
+    
+    if (response.statusCode == 200 && result['success'] == true) {
+      return result['access_points'] ?? [];
+    } else {
+      throw Exception(result['error'] ?? 'Failed to fetch UniFi APs');
+    }
+  }
+
+  // Register or update UniFi Access Point
+  static Future<Map<String, dynamic>> registerUnifiAP({
+    required String macAddress,
+    required String location,
+    String? deviceName,
+    String? notes,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/register_unifi_ap'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'mac_address': macAddress,
+        'location': location,
+        'device_name': deviceName ?? '',
+        'notes': notes ?? '',
+      }),
+    );
+
+    final result = jsonDecode(response.body);
+    
+    if (response.statusCode == 200 && result['success'] == true) {
+      return result;
+    } else {
+      throw Exception(result['error'] ?? 'Failed to register UniFi AP');
+    }
+  }
+
 }
