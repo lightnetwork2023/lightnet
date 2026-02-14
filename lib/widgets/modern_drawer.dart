@@ -28,6 +28,9 @@ import '../screens/ExpenseApprovalScreen.dart';
 import '../screens/ExpenseAnalyticsScreen.dart';
 import '../screens/TechnicianExpensesScreen.dart';
 import '../screens/UniFiAPManagementScreen.dart';
+import '../screens/PayablesManagementScreen.dart';
+import '../screens/ReceivablesManagementScreen.dart';
+import '../screens/MikroTikMonitorScreen.dart';
 
 class ModernDrawer extends StatelessWidget {
   const ModernDrawer({Key? key}) : super(key: key);
@@ -159,12 +162,47 @@ class ModernDrawer extends StatelessWidget {
                             subtitle: 'View all vouchers',
                             onTap: () => _navigateTo(context, VouchersScreen(userRole: authController.userRole)),
                           ),
-                          _buildDrawerItem(
+                          _buildExpandableSection(
                             context,
-                            icon: Icons.router,
-                            title: 'UniFi Access Points',
-                            subtitle: 'Register and manage APs',
-                            onTap: () => _navigateTo(context, const UniFiAPManagementScreen()),
+                            title: 'Network Infrastructure',
+                            icon: Icons.router_outlined,
+                            children: [
+                              _buildDrawerItem(
+                                context,
+                                icon: Icons.wifi_tethering_outlined,
+                                title: 'UniFi Access Points',
+                                subtitle: 'Manage UniFi APs',
+                                onTap: () => _navigateTo(context, const UniFiAPManagementScreen()),
+                              ),
+                              _buildDrawerItem(
+                                context,
+                                icon: Icons.devices_outlined,
+                                title: 'MikroTik Monitoring',
+                                subtitle: 'Monitor router status',
+                                onTap: () => _navigateTo(context, const MikroTikMonitorScreen()),
+                              ),
+                            ],
+                          ),
+                          _buildExpandableSection(
+                            context,
+                            title: 'Debt Management',
+                            icon: Icons.account_balance_outlined,
+                            children: [
+                              _buildDrawerItem(
+                                context,
+                                icon: Icons.payment_outlined,
+                                title: 'Payables (We Owe)',
+                                subtitle: 'Track money we owe',
+                                onTap: () => _navigateTo(context, const PayablesManagementScreen()),
+                              ),
+                              _buildDrawerItem(
+                                context,
+                                icon: Icons.account_balance_wallet_outlined,
+                                title: 'Receivables (They Owe)',
+                                subtitle: 'Track money owed to us',
+                                onTap: () => _navigateTo(context, const ReceivablesManagementScreen()),
+                              ),
+                            ],
                           ),
                           const SizedBox(height: 16),
                         ],
@@ -182,23 +220,29 @@ class ModernDrawer extends StatelessWidget {
                     subtitle: 'View active users',
                     onTap: () => _navigateTo(context, ValidUsersScreen()),
                   ),
-                  _buildDrawerItem(
+                  _buildExpandableSection(
                     context,
+                    title: 'Home Internet',
                     icon: Icons.home_rounded,
-                    title: 'Home Internet Users',
-                    subtitle: 'Manage home customers',
-                    onTap: () => _navigateTo(context, const HomeInternetCustomersScreen()),
+                    children: [
+                      _buildDrawerItem(
+                        context,
+                        icon: Icons.people_alt_outlined,
+                        title: 'Home Customers',
+                        subtitle: 'Manage home users',
+                        onTap: () => _navigateTo(context, const HomeInternetCustomersScreen()),
+                      ),
+                      Obx(() => authController.isBoss
+                          ? _buildDrawerItem(
+                              context,
+                              icon: Icons.verified_rounded,
+                              title: 'Payment Approvals',
+                              subtitle: 'Approve receipts',
+                              onTap: () => _navigateTo(context, const HomePaymentApprovalsScreen()),
+                            )
+                          : const SizedBox.shrink()),
+                    ],
                   ),
-                  // Boss-only: Home Payment Approvals
-                  Obx(() => authController.isBoss
-                      ? _buildDrawerItem(
-                          context,
-                          icon: Icons.verified_rounded,
-                          title: 'Home Payment Approvals',
-                          subtitle: 'Approve or reject receipts',
-                          onTap: () => _navigateTo(context, const HomePaymentApprovalsScreen()),
-                        )
-                      : const SizedBox.shrink()),
                   _buildDrawerItem(
                     context,
                     icon: Icons.location_on_outlined,
@@ -206,23 +250,28 @@ class ModernDrawer extends StatelessWidget {
                     subtitle: 'Location-based vouchers',
                     onTap: () => _navigateTo(context, const VouchersByLocationScreen()),
                   ),
-                  // Location Data - Boss only
-                  Obx(() => authController.isBoss
-                      ? _buildDrawerItem(
-                          context,
-                          icon: Icons.location_on_rounded,
-                          title: 'Location Data',
-                          onTap: () => _navigateTo(context, const LocationDataScreen()),
-                        )
-                      : const SizedBox.shrink()),
                   // Location Analytics - Boss only
                   Obx(() => authController.isBoss
-                      ? _buildDrawerItem(
+                      ? _buildExpandableSection(
                           context,
-                          icon: Icons.analytics_outlined,
-                          title: 'Location Analytics',
-                          subtitle: 'Performance by location',
-                          onTap: () => _navigateTo(context, const LocationAnalyticsScreen()),
+                          title: 'Location Management',
+                          icon: Icons.location_on_rounded,
+                          children: [
+                            _buildDrawerItem(
+                              context,
+                              icon: Icons.map_outlined,
+                              title: 'Location Data',
+                              subtitle: 'View location details',
+                              onTap: () => _navigateTo(context, const LocationDataScreen()),
+                            ),
+                            _buildDrawerItem(
+                              context,
+                              icon: Icons.analytics_outlined,
+                              title: 'Location Analytics',
+                              subtitle: 'Performance by location',
+                              onTap: () => _navigateTo(context, const LocationAnalyticsScreen()),
+                            ),
+                          ],
                         )
                       : const SizedBox.shrink()),
                   // SuperAgent Payments (SuperAgent only)
@@ -230,30 +279,32 @@ class ModernDrawer extends StatelessWidget {
                     print('DEBUG: User role: ${authController.userRole}');
                     print('DEBUG: Is SuperAgent: ${authController.isSuperAgent}');
                     return authController.isSuperAgent
-                        ? _buildDrawerItem(
+                        ? _buildExpandableSection(
                             context,
+                            title: 'My Payments',
                             icon: Icons.payment_rounded,
-                            title: 'Recent Payments',
-                            subtitle: 'View payment history',
-                            onTap: () {
-                              Navigator.pop(context);
-                              Get.to(() => SuperAgentPaymentsScreen());
-                            },
-                          )
-                        : const SizedBox.shrink();
-                  }),
-                  // SuperAgent Payments by Location (SuperAgent only)
-                  Obx(() {
-                    return authController.isSuperAgent
-                        ? _buildDrawerItem(
-                            context,
-                            icon: Icons.location_on_rounded,
-                            title: 'Payments by Location',
-                            subtitle: 'Counts per assigned locations',
-                            onTap: () {
-                              Navigator.pop(context);
-                              Get.to(() => const SuperAgentPaymentsByLocationScreen());
-                            },
+                            children: [
+                              _buildDrawerItem(
+                                context,
+                                icon: Icons.history_outlined,
+                                title: 'Recent Payments',
+                                subtitle: 'View payment history',
+                                onTap: () {
+                                  Navigator.pop(context);
+                                  Get.to(() => SuperAgentPaymentsScreen());
+                                },
+                              ),
+                              _buildDrawerItem(
+                                context,
+                                icon: Icons.location_on_outlined,
+                                title: 'Payments by Location',
+                                subtitle: 'Counts per location',
+                                onTap: () {
+                                  Navigator.pop(context);
+                                  Get.to(() => const SuperAgentPaymentsByLocationScreen());
+                                },
+                              ),
+                            ],
                           )
                         : const SizedBox.shrink();
                   }),
@@ -274,73 +325,84 @@ class ModernDrawer extends StatelessWidget {
                   
                   const SizedBox(height: 16),
                   _buildSectionHeader('Analytics & Reports'),
-                  _buildDrawerItem(
+                  _buildExpandableSection(
                     context,
-                    icon: Icons.payment_outlined,
-                    title: 'View Payments',
-                    subtitle: 'Payment history',
-                    onTap: () => _navigateTo(context, PaymentsScreen()),
-                  ),
-                  Obx(() {
-                    if (authController.userRole != 'technician') {
-                      return _buildDrawerItem(
+                    title: 'Payment Analytics',
+                    icon: Icons.analytics_outlined,
+                    children: [
+                      _buildDrawerItem(
                         context,
-                        icon: Icons.analytics_outlined,
-                        title: 'Payment Analytics',
-                        subtitle: 'Financial insights',
-                        onTap: () {
-                          if (authController.isBoss) {
-                            _navigateTo(context, PaymentAnalyticsPage(
-                              userRole: authController.userRole,
-                            ));
-                          } else if (authController.isSuperAgent) {
-                            _navigateTo(context, PaymentAnalyticsPage(
-                              userRole: authController.userRole,
-                              locations: authController.userLocations,
-                            ));
-                          } else if (authController.isAgent) {
-                            _navigateTo(context, PaymentAnalyticsPage(
-                              userRole: authController.userRole,
-                              location: authController.userLocation,
-                            ));
-                          } else {
-                            _navigateTo(context, PaymentAnalyticsPage(
-                              userRole: authController.userRole,
-                            ));
-                          }
-                        },
-                      );
-                    }
-                    return const SizedBox.shrink();
-                  }),
-                  // Technician Commission (Technician only)
-                  Obx(() => authController.userRole == 'technician'
-                      ? _buildDrawerItem(
-                          context,
-                          icon: Icons.calculate_rounded,
-                          title: 'Technician Commission',
-                          subtitle: 'Your commission for your location',
-                          onTap: () => _navigateTo(context, const TechnicianCommissionPage()),
-                        )
-                      : const SizedBox.shrink()),
-                  // Boss-only: View SuperAgent Analytics selector
+                        icon: Icons.payment_outlined,
+                        title: 'View Payments',
+                        subtitle: 'Payment history',
+                        onTap: () => _navigateTo(context, PaymentsScreen()),
+                      ),
+                      Obx(() {
+                        if (authController.userRole != 'technician') {
+                          return _buildDrawerItem(
+                            context,
+                            icon: Icons.bar_chart_outlined,
+                            title: 'Financial Insights',
+                            subtitle: 'Analytics dashboard',
+                            onTap: () {
+                              if (authController.isBoss) {
+                                _navigateTo(context, PaymentAnalyticsPage(
+                                  userRole: authController.userRole,
+                                ));
+                              } else if (authController.isSuperAgent) {
+                                _navigateTo(context, PaymentAnalyticsPage(
+                                  userRole: authController.userRole,
+                                  locations: authController.userLocations,
+                                ));
+                              } else if (authController.isAgent) {
+                                _navigateTo(context, PaymentAnalyticsPage(
+                                  userRole: authController.userRole,
+                                  location: authController.userLocation,
+                                ));
+                              } else {
+                                _navigateTo(context, PaymentAnalyticsPage(
+                                  userRole: authController.userRole,
+                                ));
+                              }
+                            },
+                          );
+                        }
+                        return const SizedBox.shrink();
+                      }),
+                      // Technician Commission (Technician only)
+                      Obx(() => authController.userRole == 'technician'
+                          ? _buildDrawerItem(
+                              context,
+                              icon: Icons.calculate_rounded,
+                              title: 'My Commission',
+                              subtitle: 'Your earnings',
+                              onTap: () => _navigateTo(context, const TechnicianCommissionPage()),
+                            )
+                          : const SizedBox.shrink()),
+                    ],
+                  ),
+                  // Boss-only: Staff Analytics
                   Obx(() => authController.isBoss
-                      ? _buildDrawerItem(
+                      ? _buildExpandableSection(
                           context,
-                          icon: Icons.supervisor_account_rounded,
-                          title: 'SuperAgent Analytics',
-                          subtitle: 'Select and view by SuperAgent',
-                          onTap: () => _navigateTo(context, BossSuperAgentAnalyticsScreen()),
-                        )
-                      : const SizedBox.shrink()),
-                  // Boss-only: View Technician Analytics selector
-                  Obx(() => authController.isBoss
-                      ? _buildDrawerItem(
-                          context,
-                          icon: Icons.handyman_rounded,
-                          title: 'Technician Analytics',
-                          subtitle: 'Select and view by Technician',
-                          onTap: () => _navigateTo(context, const BossTechnicianAnalyticsScreen()),
+                          title: 'Staff Analytics',
+                          icon: Icons.people_alt_outlined,
+                          children: [
+                            _buildDrawerItem(
+                              context,
+                              icon: Icons.supervisor_account_rounded,
+                              title: 'SuperAgent Analytics',
+                              subtitle: 'View by SuperAgent',
+                              onTap: () => _navigateTo(context, BossSuperAgentAnalyticsScreen()),
+                            ),
+                            _buildDrawerItem(
+                              context,
+                              icon: Icons.handyman_rounded,
+                              title: 'Technician Analytics',
+                              subtitle: 'View by Technician',
+                              onTap: () => _navigateTo(context, const BossTechnicianAnalyticsScreen()),
+                            ),
+                          ],
                         )
                       : const SizedBox.shrink()),
                   _buildDrawerItem(
@@ -433,6 +495,43 @@ class ModernDrawer extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildExpandableSection(
+    BuildContext context, {
+    required String title,
+    required IconData icon,
+    required List<Widget> children,
+  }) {
+    return Theme(
+      data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: ExpansionTile(
+          leading: Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: AppTheme.primaryColor.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(icon, color: AppTheme.primaryColor, size: 20),
+          ),
+          title: Text(
+            title,
+            style: const TextStyle(
+              color: AppTheme.textPrimary,
+              fontWeight: FontWeight.w500,
+              fontSize: 16,
+            ),
+          ),
+          trailing: const Icon(Icons.expand_more, color: AppTheme.textTertiary),
+          children: children,
+        ),
       ),
     );
   }

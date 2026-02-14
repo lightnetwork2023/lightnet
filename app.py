@@ -14,6 +14,8 @@ import urllib.parse
 import uuid
 import os
 import threading
+import firebase_admin
+from firebase_admin import credentials, firestore
 
 # Import MikroTik authentication helper
 try:
@@ -35,6 +37,16 @@ app = Flask(__name__)
 # CORS enabled for direct port 5000 access (hotspot pages)
 # Nginx also adds CORS for domain access, but it's safe
 CORS(app)
+
+# Initialize Firebase Admin SDK
+try:
+    cred = credentials.Certificate('/root/lightnetwork-firebase-key.json')
+    firebase_admin.initialize_app(cred)
+    db = firestore.client()
+    logging.info("Firebase Admin SDK initialized successfully")
+except Exception as e:
+    logging.error(f"Failed to initialize Firebase Admin SDK: {e}")
+    db = None
 
 @app.after_request
 def add_csp_header(response):
@@ -585,6 +597,156 @@ def get_vouchers_by_name():
             print("Database connection closed.")
 
 
+def is_unifi_location(location):
+    """Check if location uses UniFi controller by querying unifi_access_points table"""
+    if not location:
+        return False
+    try:
+        conn = mysql.connector.connect(**db_config)
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT COUNT(*) FROM unifi_access_points WHERE LOWER(location) = LOWER(%s)",
+            (location,)
+        )
+        count = cursor.fetchone()[0]
+        cursor.close()
+        conn.close()
+        return count > 0
+    except Exception as e:
+        # On error, default to False (MikroTik)
+        print(f"Error checking UniFi location: {e}")
+        return False
+
+
+
+@app.route('/register_unifi_ap', methods=['POST'])
+def register_unifi_ap():
+    """Register a UniFi Access Point to the database"""
+    try:
+        data = request.json
+        
+        # Validate required fields
+        ap_mac = data.get('mac_address', '').strip()
+        location = data.get('location', '').strip()
+        ap_name = data.get('device_name', '').strip()
+        notes = data.get('notes', '').strip()
+        
+        if not ap_mac:
+            return jsonify({'success': False, 'error': 'MAC address is required'}), 400
+        
+        if not location:
+            return jsonify({'success': False, 'error': 'Location is required'}), 400
+            
+        # Normalize MAC address to colon format
+        ap_mac_clean = ap_mac.upper().replace('-', ':').replace('.', ':')
+        
+        # Insert or update the AP in database
+        conn = mysql.connector.connect(**db_config)
+        cursor = conn.cursor()
+        
+        # Check if AP already exists
+        cursor.execute(
+            "SELECT id FROM unifi_access_points WHERE ap_mac = %s",
+            (ap_mac_clean,)
+        )
+        existing = cursor.fetchone()
+        
+        if existing:
+            # Update existing AP
+            cursor.execute(
+                """UPDATE unifi_access_points 
+                   SET location = %s, ap_name = %s, notes = %s, updated_at = NOW()
+                   WHERE ap_mac = %s""",
+                (location, ap_name, notes, ap_mac_clean)
+            )
+            action = 'updated'
+        else:
+            # Insert new AP
+            cursor.execute(
+                """INSERT INTO unifi_access_points (ap_mac, location, ap_name, notes)
+                   VALUES (%s, %s, %s, %s)""",
+                (ap_mac_clean, location, ap_name, notes)
+            )
+            action = 'registered'
+        
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        app.logger.info(f"UniFi AP {action}: {ap_mac_clean} -> {location} ({ap_name})")
+        
+        return jsonify({
+            'success': True,
+            'message': f'UniFi AP {action} successfully',
+            'ap_mac': ap_mac_clean,
+            'location': location,
+            'ap_name': ap_name,
+            'action': action
+        }), 200
+        
+    except mysql.connector.Error as db_err:
+        app.logger.error(f"Database error registering AP: {str(db_err)}")
+        return jsonify({'success': False, 'error': f'Database error: {str(db_err)}'}), 500
+        
+    except Exception as e:
+        app.logger.error(f"Error registering AP: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+
+@app.route('/get_unifi_aps', methods=['GET'])
+def get_unifi_aps():
+    """Get all UniFi Access Points from database"""
+    try:
+        # Optional filter by location
+        location_filter = request.args.get('location')
+        
+        conn = mysql.connector.connect(**db_config)
+        cursor = conn.cursor(dictionary=True)
+        
+        if location_filter:
+            cursor.execute(
+                """SELECT id, ap_mac, location, ap_name, notes, 
+                          created_at, updated_at 
+                   FROM unifi_access_points 
+                   WHERE location = %s
+                   ORDER BY location, ap_name""",
+                (location_filter,)
+            )
+        else:
+            cursor.execute(
+                """SELECT id, ap_mac, location, ap_name, notes, 
+                          created_at, updated_at 
+                   FROM unifi_access_points 
+                   ORDER BY location, ap_name"""
+            )
+        
+        aps = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        
+        # Convert datetime objects to strings
+        for ap in aps:
+            if ap.get('created_at'):
+                ap['created_at'] = ap['created_at'].strftime('%Y-%m-%d %H:%M:%S')
+            if ap.get('updated_at'):
+                ap['updated_at'] = ap['updated_at'].strftime('%Y-%m-%d %H:%M:%S')
+        
+        return jsonify({
+            'success': True,
+            'count': len(aps),
+            'access_points': aps
+        }), 200
+        
+    except mysql.connector.Error as db_err:
+        app.logger.error(f"Database error fetching APs: {str(db_err)}")
+        return jsonify({'success': False, 'error': f'Database error: {str(db_err)}'}), 500
+        
+    except Exception as e:
+        app.logger.error(f"Error fetching APs: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @app.route('/callback', methods=['POST'])
 def callback():
     try:
@@ -755,16 +917,35 @@ def callback():
         if not store_voucher(voucher, duration, location, amount, phone, mac_address):
             return jsonify({'success': False, 'error': 'Voucher creation failed'}), 500
 
-        # **NEW: Authenticate user via MikroTik after successful voucher storage**
-        if mac_address and nas_ip and MIKROTIK_AUTH_AVAILABLE:
-            try:
-                auth_result = authenticate_user_via_mikrotik(mac_address, nas_ip)
-                if auth_result['success']:
-                    app.logger.info(f"MikroTik authentication successful for {mac_address}: {auth_result['message']}")
-                else:
-                    app.logger.warning(f"MikroTik authentication failed for {mac_address}: {auth_result['error']}")
-            except Exception as e:
-                app.logger.error(f"MikroTik authentication error for {mac_address}: {str(e)}")
+        # Route to appropriate authorization based on location
+        app.logger.info(f"CALLBACK DEBUG: location={location}, mac_address={mac_address}, duration={duration}")
+        if location and is_unifi_location(location):
+            app.logger.info(f"ROUTING TO UNIFI: {mac_address}")
+            # UniFi location - call PHP endpoint
+            if mac_address:
+                try:
+                    unifi_url = 'http://127.0.0.1:8000/authorize-mac.php'
+                    minutes = int(duration) // 60 if duration else 1440
+                    response = requests.get(unifi_url, params={'mac': mac_address, 'minutes': minutes}, timeout=10)
+                    if response.status_code == 200:
+                        result = response.json()
+                        if result.get('success'):
+                            app.logger.info(f"UniFi authorization successful for {mac_address}")
+                        else:
+                            app.logger.warning(f"UniFi authorization failed: {result.get('error')}")
+                except Exception as e:
+                    app.logger.error(f"UniFi authorization error: {str(e)}")
+        else:
+            # Other locations - use MikroTik
+            if mac_address and nas_ip and MIKROTIK_AUTH_AVAILABLE:
+                try:
+                    auth_result = authenticate_user_via_mikrotik(mac_address, nas_ip)
+                    if auth_result['success']:
+                        app.logger.info(f"MikroTik authentication successful for {mac_address}")
+                    else:
+                        app.logger.warning(f"MikroTik authentication failed: {auth_result['error']}")
+                except Exception as e:
+                    app.logger.error(f"MikroTik authentication error: {str(e)}")
 
         return jsonify({'success': True}), 200
 
@@ -2283,6 +2464,157 @@ def fetch_superagent_payments():
             db_connection.close()
 
 
+@app.route('/check_mikrotik_status', methods=['POST'])
+def check_mikrotik_status():
+    """Check status of all MikroTik devices and update Firestore"""
+    try:
+        if db is None:
+            return jsonify({'error': 'Firestore not initialized'}), 500
+
+        # Get all MikroTik devices from Firestore
+        devices_ref = db.collection('mikrotik_devices')
+        devices = devices_ref.stream()
+
+        checked_count = 0
+        online_count = 0
+        offline_count = 0
+        results = []
+
+        for device_doc in devices:
+            device_data = device_doc.to_dict()
+            device_id = device_doc.id
+            ip_address = device_data.get('ipAddress', '')
+            device_name = device_data.get('name', 'Unknown')
+
+            if not ip_address:
+                logging.warning(f"Device {device_name} has no IP address")
+                continue
+
+            # Ping the device (2 packets)
+            try:
+                result = subprocess.run(
+                    ['ping', '-c', '2', '-W', '2', ip_address],
+                    capture_output=True,
+                    timeout=5
+                )
+                is_online = result.returncode == 0
+
+                # Update Firestore
+                update_data = {
+                    'status': 'online' if is_online else 'offline',
+                    'lastChecked': firestore.SERVER_TIMESTAMP,
+                }
+                
+                if is_online:
+                    update_data['lastSeen'] = firestore.SERVER_TIMESTAMP
+                    online_count += 1
+                else:
+                    offline_count += 1
+
+                devices_ref.document(device_id).update(update_data)
+                checked_count += 1
+
+                results.append({
+                    'id': device_id,
+                    'name': device_name,
+                    'ip': ip_address,
+                    'status': 'online' if is_online else 'offline'
+                })
+
+                logging.info(f"Checked {device_name} ({ip_address}): {'online' if is_online else 'offline'}")
+
+            except subprocess.TimeoutExpired:
+                # Device timeout - mark as offline
+                devices_ref.document(device_id).update({
+                    'status': 'offline',
+                    'lastChecked': firestore.SERVER_TIMESTAMP,
+                })
+                offline_count += 1
+                checked_count += 1
+                results.append({
+                    'id': device_id,
+                    'name': device_name,
+                    'ip': ip_address,
+                    'status': 'offline'
+                })
+                logging.warning(f"Device {device_name} ({ip_address}) timed out")
+
+            except Exception as e:
+                logging.error(f"Error checking {device_name} ({ip_address}): {e}")
+
+        return jsonify({
+            'success': True,
+            'checked': checked_count,
+            'online': online_count,
+            'offline': offline_count,
+            'results': results,
+            'message': f'Checked {checked_count} devices: {online_count} online, {offline_count} offline'
+        })
+
+    except Exception as e:
+        logging.error(f"Error in check_mikrotik_status: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/check_single_mikrotik', methods=['POST'])
+def check_single_mikrotik():
+    """Check status of a single MikroTik device"""
+    try:
+        if db is None:
+            return jsonify({'error': 'Firestore not initialized'}), 500
+
+        data = request.json
+        device_id = data.get('deviceId')
+        ip_address = data.get('ipAddress')
+
+        if not device_id or not ip_address:
+            return jsonify({'error': 'deviceId and ipAddress are required'}), 400
+
+        # Ping the device
+        result = subprocess.run(
+            ['ping', '-c', '2', '-W', '2', ip_address],
+            capture_output=True,
+            timeout=5
+        )
+        is_online = result.returncode == 0
+
+        # Update Firestore
+        update_data = {
+            'status': 'online' if is_online else 'offline',
+            'lastChecked': firestore.SERVER_TIMESTAMP,
+        }
+        
+        if is_online:
+            update_data['lastSeen'] = firestore.SERVER_TIMESTAMP
+
+        db.collection('mikrotik_devices').document(device_id).update(update_data)
+
+        return jsonify({
+            'success': True,
+            'deviceId': device_id,
+            'ipAddress': ip_address,
+            'status': 'online' if is_online else 'offline',
+            'message': f'Device is {"online" if is_online else "offline"}'
+        })
+
+    except subprocess.TimeoutExpired:
+        db.collection('mikrotik_devices').document(device_id).update({
+            'status': 'offline',
+            'lastChecked': firestore.SERVER_TIMESTAMP,
+        })
+        return jsonify({
+            'success': True,
+            'deviceId': device_id,
+            'ipAddress': ip_address,
+            'status': 'offline',
+            'message': 'Device timed out'
+        })
+
+    except Exception as e:
+        logging.error(f"Error in check_single_mikrotik: {e}")
+        return jsonify({'error': str(e)}), 500
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=False) # Add debug=True for development
+ 

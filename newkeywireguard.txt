@@ -77,12 +77,20 @@ sudo systemctl status flask-app
 sudo journalctl -u flask-app -f
 
 
-/ip firewall filter disable [find where action=fasttrack-connection]
-disable [find where action=fasttrack-connection]
+/ip firewall filter disable [find where action=fasttrack-connection] disable [find where action=fasttrack-connection]
+
 
 /ip firewall filter print where action=fasttrack-connection
 
-
-
 set-inform http://34.1.223.97:8080/inform
+
+enable hotspot
+
+/system/device-mode print
+
+/system/device-mode update hotspot=yes
+
+
+
+
 
