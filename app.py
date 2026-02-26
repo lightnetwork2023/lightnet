@@ -14,8 +14,6 @@ import urllib.parse
 import uuid
 import os
 import threading
-import firebase_admin
-from firebase_admin import credentials, firestore
 
 # Import MikroTik authentication helper
 try:
@@ -37,16 +35,6 @@ app = Flask(__name__)
 # CORS enabled for direct port 5000 access (hotspot pages)
 # Nginx also adds CORS for domain access, but it's safe
 CORS(app)
-
-# Initialize Firebase Admin SDK
-try:
-    cred = credentials.Certificate('/root/lightnetwork-firebase-key.json')
-    firebase_admin.initialize_app(cred)
-    db = firestore.client()
-    logging.info("Firebase Admin SDK initialized successfully")
-except Exception as e:
-    logging.error(f"Failed to initialize Firebase Admin SDK: {e}")
-    db = None
 
 @app.after_request
 def add_csp_header(response):
@@ -2464,155 +2452,6 @@ def fetch_superagent_payments():
             db_connection.close()
 
 
-@app.route('/check_mikrotik_status', methods=['POST'])
-def check_mikrotik_status():
-    """Check status of all MikroTik devices and update Firestore"""
-    try:
-        if db is None:
-            return jsonify({'error': 'Firestore not initialized'}), 500
-
-        # Get all MikroTik devices from Firestore
-        devices_ref = db.collection('mikrotik_devices')
-        devices = devices_ref.stream()
-
-        checked_count = 0
-        online_count = 0
-        offline_count = 0
-        results = []
-
-        for device_doc in devices:
-            device_data = device_doc.to_dict()
-            device_id = device_doc.id
-            ip_address = device_data.get('ipAddress', '')
-            device_name = device_data.get('name', 'Unknown')
-
-            if not ip_address:
-                logging.warning(f"Device {device_name} has no IP address")
-                continue
-
-            # Ping the device (2 packets)
-            try:
-                result = subprocess.run(
-                    ['ping', '-c', '2', '-W', '2', ip_address],
-                    capture_output=True,
-                    timeout=5
-                )
-                is_online = result.returncode == 0
-
-                # Update Firestore
-                update_data = {
-                    'status': 'online' if is_online else 'offline',
-                    'lastChecked': firestore.SERVER_TIMESTAMP,
-                }
-                
-                if is_online:
-                    update_data['lastSeen'] = firestore.SERVER_TIMESTAMP
-                    online_count += 1
-                else:
-                    offline_count += 1
-
-                devices_ref.document(device_id).update(update_data)
-                checked_count += 1
-
-                results.append({
-                    'id': device_id,
-                    'name': device_name,
-                    'ip': ip_address,
-                    'status': 'online' if is_online else 'offline'
-                })
-
-                logging.info(f"Checked {device_name} ({ip_address}): {'online' if is_online else 'offline'}")
-
-            except subprocess.TimeoutExpired:
-                # Device timeout - mark as offline
-                devices_ref.document(device_id).update({
-                    'status': 'offline',
-                    'lastChecked': firestore.SERVER_TIMESTAMP,
-                })
-                offline_count += 1
-                checked_count += 1
-                results.append({
-                    'id': device_id,
-                    'name': device_name,
-                    'ip': ip_address,
-                    'status': 'offline'
-                })
-                logging.warning(f"Device {device_name} ({ip_address}) timed out")
-
-            except Exception as e:
-                logging.error(f"Error checking {device_name} ({ip_address}): {e}")
-
-        return jsonify({
-            'success': True,
-            'checked': checked_count,
-            'online': online_count,
-            'offline': offline_count,
-            'results': results,
-            'message': f'Checked {checked_count} devices: {online_count} online, {offline_count} offline'
-        })
-
-    except Exception as e:
-        logging.error(f"Error in check_mikrotik_status: {e}")
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/check_single_mikrotik', methods=['POST'])
-def check_single_mikrotik():
-    """Check status of a single MikroTik device"""
-    try:
-        if db is None:
-            return jsonify({'error': 'Firestore not initialized'}), 500
-
-        data = request.json
-        device_id = data.get('deviceId')
-        ip_address = data.get('ipAddress')
-
-        if not device_id or not ip_address:
-            return jsonify({'error': 'deviceId and ipAddress are required'}), 400
-
-        # Ping the device
-        result = subprocess.run(
-            ['ping', '-c', '2', '-W', '2', ip_address],
-            capture_output=True,
-            timeout=5
-        )
-        is_online = result.returncode == 0
-
-        # Update Firestore
-        update_data = {
-            'status': 'online' if is_online else 'offline',
-            'lastChecked': firestore.SERVER_TIMESTAMP,
-        }
-        
-        if is_online:
-            update_data['lastSeen'] = firestore.SERVER_TIMESTAMP
-
-        db.collection('mikrotik_devices').document(device_id).update(update_data)
-
-        return jsonify({
-            'success': True,
-            'deviceId': device_id,
-            'ipAddress': ip_address,
-            'status': 'online' if is_online else 'offline',
-            'message': f'Device is {"online" if is_online else "offline"}'
-        })
-
-    except subprocess.TimeoutExpired:
-        db.collection('mikrotik_devices').document(device_id).update({
-            'status': 'offline',
-            'lastChecked': firestore.SERVER_TIMESTAMP,
-        })
-        return jsonify({
-            'success': True,
-            'deviceId': device_id,
-            'ipAddress': ip_address,
-            'status': 'offline',
-            'message': 'Device timed out'
-        })
-
-    except Exception as e:
-        logging.error(f"Error in check_single_mikrotik: {e}")
-        return jsonify({'error': str(e)}), 500
 
 
 if __name__ == '__main__':

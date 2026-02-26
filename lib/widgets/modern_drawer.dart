@@ -31,6 +31,7 @@ import '../screens/UniFiAPManagementScreen.dart';
 import '../screens/PayablesManagementScreen.dart';
 import '../screens/ReceivablesManagementScreen.dart';
 import '../screens/MikroTikMonitorScreen.dart';
+import '../screens/SimCardManagementScreen.dart';
 
 class ModernDrawer extends StatelessWidget {
   const ModernDrawer({Key? key}) : super(key: key);
@@ -157,6 +158,13 @@ class ModernDrawer extends StatelessWidget {
                           ),
                           _buildDrawerItem(
                             context,
+                            icon: Icons.sim_card_outlined,
+                            title: 'Simcards',
+                            subtitle: 'Manage SIM cards',
+                            onTap: () => _navigateTo(context, const SimCardManagementScreen()),
+                          ),
+                          _buildDrawerItem(
+                            context,
                             icon: Icons.card_membership_outlined,
                             title: 'Vouchers',
                             subtitle: 'View all vouchers',
@@ -180,6 +188,13 @@ class ModernDrawer extends StatelessWidget {
                                 title: 'MikroTik Monitoring',
                                 subtitle: 'Monitor router status',
                                 onTap: () => _navigateTo(context, const MikroTikMonitorScreen()),
+                              ),
+                              _buildDrawerItem(
+                                context,
+                                icon: Icons.router_outlined,
+                                title: 'Network Devices',
+                                subtitle: 'Device monitoring',
+                                onTap: () => _navigateTo(context, NetworkDevicesScreen()),
                               ),
                             ],
                           ),
@@ -405,14 +420,6 @@ class ModernDrawer extends StatelessWidget {
                           ],
                         )
                       : const SizedBox.shrink()),
-                  _buildDrawerItem(
-                    context,
-                    icon: Icons.router_outlined,
-                    title: 'Network Devices',
-                    subtitle: 'Device monitoring',
-                    onTap: () => _navigateTo(context, NetworkDevicesScreen()),
-                  ),
-                  
                   // Expense Management Section
                   const SizedBox(height: 16),
                   _buildSectionHeader('Expense Management'),
