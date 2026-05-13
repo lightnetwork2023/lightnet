@@ -90,6 +90,13 @@ enable hotspot
 
 /system/device-mode update hotspot=yes
 
+cookie scrip clear
+/system script add name=clear-mac-cookie source="/ip hotspot cookie remove [find]"
+
+/system scheduler add name=run-clear-mac-cookie start-time=02:00:00 interval=1d on-event=clear-mac-cookie
+
+
+
 
 
 
