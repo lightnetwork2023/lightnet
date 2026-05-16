@@ -3,9 +3,9 @@ import 'package:get/get.dart';
 import '../theme/app_theme.dart';
 import '../controllers/auth_controller.dart';
 import '../screens/GenerateUserScreen.dart';
+import '../screens/TechnicianGenerateUserScreen.dart';
 import '../screens/VoucherManagementScreen.dart';
 import '../screens/VouchersScreen.dart';
-import '../screens/VouchersByLocationScreen.dart';
 import '../screens/valid_users.dart';
 import '../screens/SuperAgentPaymentsScreen.dart';
 import '../screens/SuperAgentPaymentsByLocationScreen.dart';
@@ -226,15 +226,25 @@ class ModernDrawer extends StatelessWidget {
                     return const SizedBox.shrink();
                   }),
                   
-                  // Common items
-                  _buildSectionHeader('Operations'),
-                  _buildDrawerItem(
-                    context,
-                    icon: Icons.people_outline,
-                    title: 'Valid Users',
-                    subtitle: 'View active users',
-                    onTap: () => _navigateTo(context, ValidUsersScreen()),
-                  ),
+                  // Common items (Valid Users — not for technicians)
+                  Obx(() {
+                    if (authController.isTechnician) {
+                      return const SizedBox.shrink();
+                    }
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _buildSectionHeader('Operations'),
+                        _buildDrawerItem(
+                          context,
+                          icon: Icons.people_outline,
+                          title: 'Valid Users',
+                          subtitle: 'View active users',
+                          onTap: () => _navigateTo(context, ValidUsersScreen()),
+                        ),
+                      ],
+                    );
+                  }),
                   _buildExpandableSection(
                     context,
                     title: 'Home Internet',
@@ -257,13 +267,6 @@ class ModernDrawer extends StatelessWidget {
                             )
                           : const SizedBox.shrink()),
                     ],
-                  ),
-                  _buildDrawerItem(
-                    context,
-                    icon: Icons.location_on_outlined,
-                    title: 'Vouchers by Location',
-                    subtitle: 'Location-based vouchers',
-                    onTap: () => _navigateTo(context, const VouchersByLocationScreen()),
                   ),
                   // Location Analytics - Boss only
                   Obx(() => authController.isBoss
@@ -326,7 +329,7 @@ class ModernDrawer extends StatelessWidget {
                   
                   // Boss and Technician items
                   Obx(() {
-                    if (authController.isBoss || authController.userRole == 'technician') {
+                    if (authController.isBoss || authController.isTechnician) {
                       return _buildDrawerItem(
                         context,
                         icon: Icons.shopping_cart_outlined,
@@ -337,65 +340,92 @@ class ModernDrawer extends StatelessWidget {
                     }
                     return const SizedBox.shrink();
                   }),
+                  Obx(() {
+                    if (!authController.isTechnician) {
+                      return const SizedBox.shrink();
+                    }
+                    return _buildDrawerItem(
+                      context,
+                      icon: Icons.person_add_alt_1_outlined,
+                      title: 'Generate one user',
+                      subtitle: 'One voucher (10 Mbps)',
+                      onTap: () => _navigateTo(context, const TechnicianGenerateUserScreen()),
+                    );
+                  }),
                   
-                  const SizedBox(height: 16),
-                  _buildSectionHeader('Analytics & Reports'),
-                  _buildExpandableSection(
-                    context,
-                    title: 'Payment Analytics',
-                    icon: Icons.analytics_outlined,
-                    children: [
-                      _buildDrawerItem(
-                        context,
-                        icon: Icons.payment_outlined,
-                        title: 'View Payments',
-                        subtitle: 'Payment history',
-                        onTap: () => _navigateTo(context, PaymentsScreen()),
-                      ),
-                      Obx(() {
-                        if (authController.userRole != 'technician') {
-                          return _buildDrawerItem(
+                  Obx(() {
+                    if (authController.isTechnician) {
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const SizedBox(height: 16),
+                          _buildSectionHeader('Payments'),
+                          _buildDrawerItem(
                             context,
-                            icon: Icons.bar_chart_outlined,
-                            title: 'Financial Insights',
-                            subtitle: 'Analytics dashboard',
-                            onTap: () {
-                              if (authController.isBoss) {
-                                _navigateTo(context, PaymentAnalyticsPage(
-                                  userRole: authController.userRole,
-                                ));
-                              } else if (authController.isSuperAgent) {
-                                _navigateTo(context, PaymentAnalyticsPage(
-                                  userRole: authController.userRole,
-                                  locations: authController.userLocations,
-                                ));
-                              } else if (authController.isAgent) {
-                                _navigateTo(context, PaymentAnalyticsPage(
-                                  userRole: authController.userRole,
-                                  location: authController.userLocation,
-                                ));
-                              } else {
-                                _navigateTo(context, PaymentAnalyticsPage(
-                                  userRole: authController.userRole,
-                                ));
-                              }
-                            },
-                          );
-                        }
-                        return const SizedBox.shrink();
-                      }),
-                      // Technician Commission (Technician only)
-                      Obx(() => authController.userRole == 'technician'
-                          ? _buildDrawerItem(
+                            icon: Icons.payment_outlined,
+                            title: 'View Payments',
+                            subtitle: 'Search by phone number',
+                            onTap: () => _navigateTo(context, PaymentsScreen()),
+                          ),
+                          _buildDrawerItem(
+                            context,
+                            icon: Icons.calculate_rounded,
+                            title: 'My Commission',
+                            subtitle: 'Your earnings',
+                            onTap: () => _navigateTo(context, const TechnicianCommissionPage()),
+                          ),
+                        ],
+                      );
+                    }
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const SizedBox(height: 16),
+                        _buildSectionHeader('Analytics & Reports'),
+                        _buildExpandableSection(
+                          context,
+                          title: 'Payment Analytics',
+                          icon: Icons.analytics_outlined,
+                          children: [
+                            _buildDrawerItem(
                               context,
-                              icon: Icons.calculate_rounded,
-                              title: 'My Commission',
-                              subtitle: 'Your earnings',
-                              onTap: () => _navigateTo(context, const TechnicianCommissionPage()),
-                            )
-                          : const SizedBox.shrink()),
-                    ],
-                  ),
+                              icon: Icons.payment_outlined,
+                              title: 'View Payments',
+                              subtitle: 'Payment history',
+                              onTap: () => _navigateTo(context, PaymentsScreen()),
+                            ),
+                            _buildDrawerItem(
+                              context,
+                              icon: Icons.bar_chart_outlined,
+                              title: 'Financial Insights',
+                              subtitle: 'Analytics dashboard',
+                              onTap: () {
+                                if (authController.isBoss) {
+                                  _navigateTo(context, PaymentAnalyticsPage(
+                                    userRole: authController.userRole,
+                                  ));
+                                } else if (authController.isSuperAgent) {
+                                  _navigateTo(context, PaymentAnalyticsPage(
+                                    userRole: authController.userRole,
+                                    locations: authController.userLocations,
+                                  ));
+                                } else if (authController.isAgent) {
+                                  _navigateTo(context, PaymentAnalyticsPage(
+                                    userRole: authController.userRole,
+                                    location: authController.userLocation,
+                                  ));
+                                } else {
+                                  _navigateTo(context, PaymentAnalyticsPage(
+                                    userRole: authController.userRole,
+                                  ));
+                                }
+                              },
+                            ),
+                          ],
+                        ),
+                      ],
+                    );
+                  }),
                   // Boss-only: Staff Analytics
                   Obx(() => authController.isBoss
                       ? _buildExpandableSection(

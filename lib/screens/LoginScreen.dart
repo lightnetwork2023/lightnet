@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import '../controllers/auth_controller.dart';
 import 'HomeScreen.dart';
+import 'TechnicianHomeScreen.dart';
 import 'AgentHomeScreen.dart';
 import 'SuperAgentHomeScreen.dart';
 import '../theme/app_theme.dart';
@@ -90,8 +91,9 @@ class _LoginScreenState extends State<LoginScreen> {
               Get.offAll(() => const AgentHomeScreen());
             } else if (role == 'superagent') {
               Get.offAll(() => const SuperAgentHomeScreen());
+            } else if (role == 'technician') {
+              Get.offAll(() => const TechnicianHomeScreen());
             } else {
-              // boss, technician, or other roles
               Get.offAll(() => const HomeScreen());
             }
           }

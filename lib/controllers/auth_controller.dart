@@ -34,6 +34,7 @@ class AuthController extends GetxController {
   bool get isAgent => _userRole.value == 'agent';
   bool get isSuperAgent => _userRole.value == 'superagent';
   bool get isHomeUser => _userRole.value == 'homeuser';
+  bool get isTechnician => _userRole.value == 'technician';
   bool get isDataLoaded => _isDataLoaded.value; // Expose data loaded state
 
   @override

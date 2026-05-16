@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 // Cache entry class to store data with timestamp
 class _CacheEntry {
@@ -64,6 +65,39 @@ class ApiService {
     // Clear cache after generating new users
     clearCache();
     return result;
+  }
+
+  /// Technician-only: one voucher at `/generateoneuser` (Bearer Firebase ID token).
+  /// Server always uses location `general`; only [durationKey] is sent (`3h` or `1d`).
+  static Future<Map<String, dynamic>> generateOneUser({
+    required String durationKey,
+  }) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      throw Exception('You must be signed in to generate a user.');
+    }
+    final token = await user.getIdToken();
+    final response = await http.post(
+      Uri.parse('$baseUrl/generateoneuser'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $token',
+      },
+      body: jsonEncode({
+        'duration_key': durationKey,
+      }),
+    );
+    Map<String, dynamic> decoded;
+    try {
+      decoded = jsonDecode(response.body) as Map<String, dynamic>;
+    } catch (_) {
+      throw Exception('Server error (${response.statusCode}): ${response.body}');
+    }
+    clearCache();
+    if (response.statusCode != 201) {
+      throw Exception(decoded['error']?.toString() ?? 'Request failed (${response.statusCode})');
+    }
+    return decoded;
   }
 
   static Future<List<dynamic>> fetchPayments() async {

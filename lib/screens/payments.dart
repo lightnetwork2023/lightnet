@@ -123,13 +123,18 @@ class _PaymentsScreenState extends State<PaymentsScreen> {
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Row(
                 children: [
-                  if (_authController.userRole != 'technician')
-                    Text(
-                      _searchText.isEmpty 
-                          ? 'Showing ${_filteredPayments.length} recent payments (24h)'
-                          : 'Found ${_filteredPayments.length} payments matching "$_searchText"',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: AppTheme.textSecondary,
+                  if (!_authController.isTechnician ||
+                      _searchText.isNotEmpty)
+                    Expanded(
+                      child: Text(
+                        _authController.isTechnician
+                            ? 'Found ${_filteredPayments.length} payments matching "$_searchText"'
+                            : (_searchText.isEmpty
+                                ? 'Showing ${_filteredPayments.length} recent payments (24h)'
+                                : 'Found ${_filteredPayments.length} payments matching "$_searchText"'),
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: AppTheme.textSecondary,
+                            ),
                       ),
                     ),
                 ],

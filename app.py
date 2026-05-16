@@ -14,6 +14,8 @@ import urllib.parse
 import uuid
 import os
 import threading
+import firebase_admin
+from firebase_admin import credentials, firestore, auth as firebase_auth
 
 # Import MikroTik authentication helper
 try:
@@ -35,6 +37,26 @@ app = Flask(__name__)
 # CORS enabled for direct port 5000 access (hotspot pages)
 # Nginx also adds CORS for domain access, but it's safe
 CORS(app)
+
+# Initialize Firebase Admin SDK
+try:
+    cred = credentials.Certificate('/root/lightnetwork-firebase-key.json')
+    firebase_admin.initialize_app(cred)
+    db = firestore.client()
+    logging.info("Firebase Admin SDK initialized successfully")
+except Exception as e:
+    logging.error(f"Failed to initialize Firebase Admin SDK: {e}")
+    db = None
+
+# Technician single-user generation (see /generateoneuser)
+TECHNICIAN_ONE_USER_MAX_PER_DAY = 10
+TECHNICIAN_ONE_USER_SPEED = '10M/10M'
+TECHNICIAN_ONE_USER_LOCATION = 'general'
+# duration_key -> session timeout in seconds (3 hours, 1 day)
+TECHNICIAN_ONE_USER_DURATIONS_SEC = {
+    '3h': 3 * 3600,
+    '1d': 24 * 3600,
+}
 
 @app.after_request
 def add_csp_header(response):
@@ -735,6 +757,181 @@ def get_unifi_aps():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+
+
+@app.route('/register_simcard', methods=['POST'])
+def register_simcard():
+    """Register or update a SIM card in the database"""
+    try:
+        data = request.json
+        
+        # Validate required fields
+        customer_name = data.get('customer_name', '').strip()
+        phone_number = data.get('phone_number', '').strip()
+        speed_limit = data.get('speed_limit', '').strip()
+        
+        if not customer_name:
+            return jsonify({'success': False, 'error': 'Customer name is required'}), 400
+        
+        if not phone_number:
+            return jsonify({'success': False, 'error': 'Phone number is required'}), 400
+            
+        if not speed_limit:
+            return jsonify({'success': False, 'error': 'Speed limit is required'}), 400
+        
+        # Optional fields
+        card_number = data.get('card_number', '').strip() or None
+        location = data.get('location', '').strip() or None
+        sim_type = data.get('sim_type', 'customer').strip()
+        status = data.get('status', 'active').strip()
+        date_given = data.get('date_given_to_customer', '').strip() or None
+        assigned_by = data.get('assigned_by', '').strip() or None
+        notes = data.get('notes', '').strip() or None
+        
+        # Validate sim_type
+        if sim_type not in ['office', 'customer']:
+            return jsonify({'success': False, 'error': 'sim_type must be office or customer'}), 400
+        
+        # Validate status
+        if status not in ['active', 'inactive', 'suspended']:
+            return jsonify({'success': False, 'error': 'status must be active, inactive, or suspended'}), 400
+        
+        conn = mysql.connector.connect(**db_config)
+        cursor = conn.cursor()
+        
+        # Check if SIM card with this phone number already exists
+        cursor.execute(
+            "SELECT id FROM simcards WHERE phone_number = %s",
+            (phone_number,)
+        )
+        existing = cursor.fetchone()
+        
+        if existing:
+            # Update existing SIM card
+            cursor.execute(
+                """UPDATE simcards 
+                   SET customer_name = %s, speed_limit = %s, card_number = %s,
+                       location = %s, sim_type = %s, status = %s,
+                       date_given_to_customer = %s, assigned_by = %s, notes = %s,
+                       updated_at = NOW()
+                   WHERE phone_number = %s""",
+                (customer_name, speed_limit, card_number, location, sim_type,
+                 status, date_given, assigned_by, notes, phone_number)
+            )
+            action = 'updated'
+            sim_id = existing[0]
+        else:
+            # Insert new SIM card
+            cursor.execute(
+                """INSERT INTO simcards 
+                   (customer_name, phone_number, speed_limit, card_number, location,
+                    sim_type, status, date_given_to_customer, assigned_by, notes)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                (customer_name, phone_number, speed_limit, card_number, location,
+                 sim_type, status, date_given, assigned_by, notes)
+            )
+            action = 'registered'
+            sim_id = cursor.lastrowid
+        
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        app.logger.info(f"SIM card {action}: {phone_number} for {customer_name}")
+        
+        return jsonify({
+            'success': True,
+            'message': f'SIM card {action} successfully',
+            'id': sim_id,
+            'phone_number': phone_number,
+            'customer_name': customer_name,
+            'action': action
+        }), 200
+        
+    except mysql.connector.Error as db_err:
+        app.logger.error(f"Database error registering SIM card: {str(db_err)}")
+        return jsonify({'success': False, 'error': f'Database error: {str(db_err)}'}), 500
+        
+    except Exception as e:
+        app.logger.error(f"Error registering SIM card: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/get_simcards', methods=['GET'])
+def get_simcards():
+    """Get SIM cards from database with optional filters"""
+    try:
+        # Optional filters
+        sim_type = request.args.get('sim_type')
+        status = request.args.get('status')
+        location = request.args.get('location')
+        customer_name = request.args.get('customer_name')
+        phone_number = request.args.get('phone_number')
+        
+        conn = mysql.connector.connect(**db_config)
+        cursor = conn.cursor(dictionary=True)
+        
+        # Build query with filters
+        query = """SELECT id, customer_name, phone_number, speed_limit, card_number,
+                           location, sim_type, status, registered_date,
+                           date_given_to_customer, assigned_by, notes,
+                           created_at, updated_at
+                    FROM simcards WHERE 1=1"""
+        params = []
+        
+        if sim_type:
+            query += " AND sim_type = %s"
+            params.append(sim_type)
+        
+        if status:
+            query += " AND status = %s"
+            params.append(status)
+        
+        if location:
+            query += " AND location = %s"
+            params.append(location)
+        
+        if customer_name:
+            query += " AND customer_name LIKE %s"
+            params.append(f"%{customer_name}%")
+        
+        if phone_number:
+            query += " AND phone_number = %s"
+            params.append(phone_number)
+        
+        query += " ORDER BY registered_date DESC"
+        
+        cursor.execute(query, params)
+        simcards = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        
+        # Convert datetime objects to strings
+        for sim in simcards:
+            if sim.get('registered_date'):
+                sim['registered_date'] = sim['registered_date'].strftime('%Y-%m-%d %H:%M:%S')
+            if sim.get('date_given_to_customer'):
+                sim['date_given_to_customer'] = sim['date_given_to_customer'].strftime('%Y-%m-%d')
+            if sim.get('created_at'):
+                sim['created_at'] = sim['created_at'].strftime('%Y-%m-%d %H:%M:%S')
+            if sim.get('updated_at'):
+                sim['updated_at'] = sim['updated_at'].strftime('%Y-%m-%d %H:%M:%S')
+        
+        return jsonify({
+            'success': True,
+            'count': len(simcards),
+            'simcards': simcards
+        }), 200
+        
+    except mysql.connector.Error as db_err:
+        app.logger.error(f"Database error fetching SIM cards: {str(db_err)}")
+        return jsonify({'success': False, 'error': f'Database error: {str(db_err)}'}), 500
+        
+    except Exception as e:
+        app.logger.error(f"Error fetching SIM cards: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @app.route('/callback', methods=['POST'])
 def callback():
     try:
@@ -914,7 +1111,11 @@ def callback():
                 try:
                     unifi_url = 'http://127.0.0.1:8000/authorize-mac.php'
                     minutes = int(duration) // 60 if duration else 1440
-                    response = requests.get(unifi_url, params={'mac': mac_address, 'minutes': minutes}, timeout=10)
+                    # Pass speed_limit parameter to avoid database query in PHP
+                    params = {'mac': mac_address, 'minutes': minutes}
+                    # Speed limit is hardcoded as 15M/15M in store_voucher
+                    params['speed_limit'] = '15M/15M'
+                    response = requests.get(unifi_url, params=params, timeout=10)
                     if response.status_code == 200:
                         result = response.json()
                         if result.get('success'):
@@ -1922,6 +2123,197 @@ def generate_users():
             db_connection.close()
 
 
+def _generateoneuser_decode_uid():
+    """Return (uid, None) or (None, (jsonify_response, http_status))."""
+    auth_header = request.headers.get('Authorization') or ''
+    if not auth_header.startswith('Bearer '):
+        return None, (jsonify({'error': 'Authorization: Bearer <Firebase ID token> is required'}), 401)
+    token = auth_header.split(' ', 1)[1].strip()
+    if not token:
+        return None, (jsonify({'error': 'Empty bearer token'}), 401)
+    try:
+        decoded = firebase_auth.verify_id_token(token)
+        return decoded['uid'], None
+    except Exception as e:
+        logging.warning('generateoneuser: invalid ID token: %s', e)
+        return None, (jsonify({'error': 'Invalid or expired ID token'}), 401)
+
+
+def _generateoneuser_require_technician(uid):
+    """Return None if Firestore user has role technician; else (jsonify, http_status) error tuple."""
+    if db is None:
+        return (jsonify({'error': 'Firestore is not available'}), 503)
+    doc = db.collection('users').document(uid).get()
+    if not doc.exists:
+        return (jsonify({'error': 'User profile not found in Firestore'}), 403)
+    role = str((doc.to_dict() or {}).get('role', '')).strip().lower()
+    if role != 'technician':
+        return (jsonify({'error': 'Technician role required'}), 403)
+    return None
+
+
+@app.route('/generateoneuser', methods=['POST'])
+def generateoneuser():
+    """
+    Technician-only: create exactly one RADIUS/voucher user per request.
+    Fixed speed 10M/10M; location is always 'general'.
+    Allowed duration_key: 3h, 1d (3 hours, 1 day).
+    Requires Authorization: Bearer <Firebase ID token>; uid must have role 'technician' in Firestore users/{uid}.
+    Writes audit trail to Firestore: technician_one_user_logs, technician_one_user_daily, technician_one_user_monthly.
+    Enforces TECHNICIAN_ONE_USER_MAX_PER_DAY per technician (UTC calendar day).
+    """
+    if db is None:
+        return jsonify({'error': 'Firestore is not available; technician audit disabled.'}), 503
+
+    uid, err = _generateoneuser_decode_uid()
+    if err is not None:
+        return err
+    role_err = _generateoneuser_require_technician(uid)
+    if role_err is not None:
+        return role_err
+
+    data = request.get_json(silent=True) or {}
+    duration_key = (data.get('duration_key') or '').strip().lower()
+    location = TECHNICIAN_ONE_USER_LOCATION
+
+    session_timeout = TECHNICIAN_ONE_USER_DURATIONS_SEC.get(duration_key)
+    if session_timeout is None:
+        return jsonify({
+            'error': 'Invalid duration_key',
+            'allowed': sorted(TECHNICIAN_ONE_USER_DURATIONS_SEC.keys()),
+        }), 400
+
+    day_str = datetime.utcnow().strftime('%Y-%m-%d')
+    month_str = datetime.utcnow().strftime('%Y-%m')
+    daily_doc_id = f'{uid}_{day_str}'
+    daily_ref = db.collection('technician_one_user_daily').document(daily_doc_id)
+    daily_snap = daily_ref.get()
+    prev_daily = int((daily_snap.to_dict() or {}).get('count', 0))
+    if prev_daily >= TECHNICIAN_ONE_USER_MAX_PER_DAY:
+        return jsonify({
+            'error': 'Daily generation limit reached',
+            'limit': TECHNICIAN_ONE_USER_MAX_PER_DAY,
+            'date': day_str,
+            'count_today': prev_daily,
+        }), 429
+
+    username = ''.join(random.choices(string.digits, k=10))
+    password = 'ROCKY221122'
+    speed_limit = TECHNICIAN_ONE_USER_SPEED
+
+    db_connection = None
+    cursor = None
+    try:
+        db_connection = mysql.connector.connect(**db_config)
+        cursor = db_connection.cursor()
+        cursor.execute(
+            "INSERT INTO radcheck (username, attribute, op, value) VALUES (%s, 'Cleartext-Password', ':=', %s)",
+            (username, password),
+        )
+        cursor.execute(
+            "INSERT INTO location (username, location, speed_limit, session_timeout) VALUES (%s, %s, %s, %s)",
+            (username, location, speed_limit, session_timeout),
+        )
+        cursor.execute(
+            "INSERT INTO vouchers (username, location, speed_limit, session_timeout, used) VALUES (%s, %s, %s, %s, 0)",
+            (username, location, speed_limit, session_timeout),
+        )
+        cursor.execute(
+            "INSERT INTO radreply (username, attribute, op, value) VALUES (%s, 'Mikrotik-Rate-Limit', ':=', %s)",
+            (username, speed_limit),
+        )
+        db_connection.commit()
+    except mysql.connector.Error as err:
+        if db_connection and db_connection.is_connected():
+            db_connection.rollback()
+        logging.exception('generateoneuser MySQL error: %s', err)
+        return jsonify({'error': f'MySQL Error: {err}'}), 500
+    finally:
+        if cursor is not None:
+            try:
+                cursor.close()
+            except Exception:
+                pass
+        if db_connection is not None and db_connection.is_connected():
+            try:
+                db_connection.close()
+            except Exception:
+                pass
+
+    new_daily = prev_daily + 1
+    month_doc_id = f'{uid}_{month_str}'
+    month_ref = db.collection('technician_one_user_monthly').document(month_doc_id)
+    month_snap = month_ref.get()
+    prev_month = int((month_snap.to_dict() or {}).get('count', 0))
+    new_month = prev_month + 1
+    now_ts = datetime.utcnow()
+
+    batch = db.batch()
+    batch.set(daily_ref, {
+        'count': new_daily,
+        'technician_uid': uid,
+        'date': day_str,
+        'last_username': username,
+        'last_duration_key': duration_key,
+        'last_location': location,
+        'updated_at': now_ts,
+    }, merge=True)
+    batch.set(month_ref, {
+        'count': new_month,
+        'technician_uid': uid,
+        'month': month_str,
+        'updated_at': now_ts,
+    }, merge=True)
+    log_ref = db.collection('technician_one_user_logs').document()
+    batch.set(log_ref, {
+        'technician_uid': uid,
+        'username': username,
+        'location': location,
+        'duration_key': duration_key,
+        'session_timeout_seconds': session_timeout,
+        'speed_limit': speed_limit,
+        'day': day_str,
+        'month': month_str,
+        'created_at': now_ts,
+    })
+    try:
+        batch.commit()
+    except Exception as e:
+        logging.exception('generateoneuser Firestore audit failed (user was created in MySQL): %s', e)
+        return jsonify({
+            'success': True,
+            'warning': 'User created but Firestore audit write failed; reconcile manually.',
+            'user': {
+                'username': username,
+                'session_timeout': session_timeout,
+                'speed_limit': speed_limit,
+                'duration_key': duration_key,
+                'location': location,
+            },
+        }), 201
+
+    logging.info(
+        'generateoneuser: uid=%s username=%s location=%s duration=%s day_count=%s month_count=%s',
+        uid, username, location, duration_key, new_daily, new_month,
+    )
+
+    return jsonify({
+        'success': True,
+        'message': 'One user generated successfully.',
+        'user': {
+            'username': username,
+            'session_timeout': session_timeout,
+            'speed_limit': speed_limit,
+            'duration_key': duration_key,
+            'location': location,
+        },
+        'daily_count_today': new_daily,
+        'daily_limit': TECHNICIAN_ONE_USER_MAX_PER_DAY,
+        'month_key': month_str,
+        'monthly_count': new_month,
+    }), 201
+
+
 @app.route('/insert_voucher', methods=['POST'])
 def insert_voucher():
     try:
@@ -2450,6 +2842,157 @@ def fetch_superagent_payments():
         if 'db_connection' in locals() and db_connection.is_connected():
             cursor.close()
             db_connection.close()
+
+
+@app.route('/check_mikrotik_status', methods=['POST'])
+def check_mikrotik_status():
+    """Check status of all MikroTik devices and update Firestore"""
+    try:
+        if db is None:
+            return jsonify({'error': 'Firestore not initialized'}), 500
+
+        # Get all MikroTik devices from Firestore
+        devices_ref = db.collection('mikrotik_devices')
+        devices = devices_ref.stream()
+
+        checked_count = 0
+        online_count = 0
+        offline_count = 0
+        results = []
+
+        for device_doc in devices:
+            device_data = device_doc.to_dict()
+            device_id = device_doc.id
+            ip_address = device_data.get('ipAddress', '')
+            device_name = device_data.get('name', 'Unknown')
+
+            if not ip_address:
+                logging.warning(f"Device {device_name} has no IP address")
+                continue
+
+            # Ping the device (2 packets)
+            try:
+                result = subprocess.run(
+                    ['ping', '-c', '2', '-W', '2', ip_address],
+                    capture_output=True,
+                    timeout=5
+                )
+                is_online = result.returncode == 0
+
+                # Update Firestore
+                update_data = {
+                    'status': 'online' if is_online else 'offline',
+                    'lastChecked': firestore.SERVER_TIMESTAMP,
+                }
+                
+                if is_online:
+                    update_data['lastSeen'] = firestore.SERVER_TIMESTAMP
+                    online_count += 1
+                else:
+                    offline_count += 1
+
+                devices_ref.document(device_id).update(update_data)
+                checked_count += 1
+
+                results.append({
+                    'id': device_id,
+                    'name': device_name,
+                    'ip': ip_address,
+                    'status': 'online' if is_online else 'offline'
+                })
+
+                logging.info(f"Checked {device_name} ({ip_address}): {'online' if is_online else 'offline'}")
+
+            except subprocess.TimeoutExpired:
+                # Device timeout - mark as offline
+                devices_ref.document(device_id).update({
+                    'status': 'offline',
+                    'lastChecked': firestore.SERVER_TIMESTAMP,
+                })
+                offline_count += 1
+                checked_count += 1
+                results.append({
+                    'id': device_id,
+                    'name': device_name,
+                    'ip': ip_address,
+                    'status': 'offline'
+                })
+                logging.warning(f"Device {device_name} ({ip_address}) timed out")
+
+            except Exception as e:
+                logging.error(f"Error checking {device_name} ({ip_address}): {e}")
+
+        return jsonify({
+            'success': True,
+            'checked': checked_count,
+            'online': online_count,
+            'offline': offline_count,
+            'results': results,
+            'message': f'Checked {checked_count} devices: {online_count} online, {offline_count} offline'
+        })
+
+    except Exception as e:
+        logging.error(f"Error in check_mikrotik_status: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/check_single_mikrotik', methods=['POST'])
+def check_single_mikrotik():
+    """Check status of a single MikroTik device"""
+    try:
+        if db is None:
+            return jsonify({'error': 'Firestore not initialized'}), 500
+
+        data = request.json
+        device_id = data.get('deviceId')
+        ip_address = data.get('ipAddress')
+
+        if not device_id or not ip_address:
+            return jsonify({'error': 'deviceId and ipAddress are required'}), 400
+
+        # Ping the device
+        result = subprocess.run(
+            ['ping', '-c', '2', '-W', '2', ip_address],
+            capture_output=True,
+            timeout=5
+        )
+        is_online = result.returncode == 0
+
+        # Update Firestore
+        update_data = {
+            'status': 'online' if is_online else 'offline',
+            'lastChecked': firestore.SERVER_TIMESTAMP,
+        }
+        
+        if is_online:
+            update_data['lastSeen'] = firestore.SERVER_TIMESTAMP
+
+        db.collection('mikrotik_devices').document(device_id).update(update_data)
+
+        return jsonify({
+            'success': True,
+            'deviceId': device_id,
+            'ipAddress': ip_address,
+            'status': 'online' if is_online else 'offline',
+            'message': f'Device is {"online" if is_online else "offline"}'
+        })
+
+    except subprocess.TimeoutExpired:
+        db.collection('mikrotik_devices').document(device_id).update({
+            'status': 'offline',
+            'lastChecked': firestore.SERVER_TIMESTAMP,
+        })
+        return jsonify({
+            'success': True,
+            'deviceId': device_id,
+            'ipAddress': ip_address,
+            'status': 'offline',
+            'message': 'Device timed out'
+        })
+
+    except Exception as e:
+        logging.error(f"Error in check_single_mikrotik: {e}")
+        return jsonify({'error': str(e)}), 500
 
 
 
