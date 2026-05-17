@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:get/get.dart';
 import '../controllers/auth_controller.dart';
 import '../controllers/location_controller.dart';
+import '../services/app_logger.dart';
 
 class UserManagementScreen extends StatefulWidget {
   const UserManagementScreen({super.key});
@@ -681,13 +682,17 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
     if (confirmed != true) return;
 
     try {
+      final userData = userDoc.data() as Map<String, dynamic>;
+      final targetName = userData['name'] as String?;
       await authController.deleteAppUser(uid: userDoc.id);
+      AppLogger.logUserDeleted(targetUid: userDoc.id, targetName: targetName);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('User deleted successfully')),
         );
       }
     } catch (e) {
+      AppLogger.logError('user_deleted_ui', e);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Failed to delete user: $e')),
@@ -1233,6 +1238,11 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                               onChanged: (String? newRole) {
                                 if (newRole != null && newRole != currentRole) {
                                   authController.updateUserRole(user.id, newRole);
+                                  AppLogger.logUserRoleUpdated(
+                                    targetUid: user.id,
+                                    newRole: newRole,
+                                    oldRole: currentRole,
+                                  );
                                 }
                               },
                             ),

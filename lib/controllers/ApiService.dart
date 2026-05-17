@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import '../services/app_logger.dart';
 
 // Cache entry class to store data with timestamp
 class _CacheEntry {
@@ -62,8 +63,17 @@ class ApiService {
       }),
     );
     final result = jsonDecode(response.body);
-    // Clear cache after generating new users
     clearCache();
+    if (result['success'] == true || response.statusCode == 200) {
+      AppLogger.logVouchersGenerated(
+        numUsers: numUsers,
+        numDays: numDays,
+        location: location,
+        speedLimit: speedLimit,
+      );
+    } else {
+      AppLogger.logError('vouchers_generated', result['error'] ?? 'Unknown error');
+    }
     return result;
   }
 
@@ -95,8 +105,10 @@ class ApiService {
     }
     clearCache();
     if (response.statusCode != 201) {
+      AppLogger.logError('voucher_generated_one', decoded['error'] ?? 'Request failed (${response.statusCode})');
       throw Exception(decoded['error']?.toString() ?? 'Request failed (${response.statusCode})');
     }
+    AppLogger.logVoucherGeneratedOne(durationKey: durationKey);
     return decoded;
   }
 
@@ -120,8 +132,12 @@ class ApiService {
       body: jsonEncode({'username': username}),
     );
     final result = jsonDecode(response.body);
-    // Clear cache after deleting a user
     clearCache();
+    if (result['success'] == true || response.statusCode == 200) {
+      AppLogger.logUserDeletedRadius(username);
+    } else {
+      AppLogger.logError('user_deleted_radius', result['error'] ?? 'Unknown error');
+    }
     return result;
   }
 
@@ -497,12 +513,14 @@ class ApiService {
         'status': 'active'
       });
 
+      AppLogger.logNetworkDeviceAdded(name: name, location: location, macId: macId);
       return {
         'success': true,
         'device_id': docRef.id,
         'message': 'Device added successfully'
       };
     } catch (e) {
+      AppLogger.logError('network_device_added', e);
       throw Exception('Error adding network device: $e');
     }
   }
@@ -525,14 +543,14 @@ class ApiService {
           .doc(deviceQuery.docs.first.id)
           .delete();
 
-      // Clear the devices cache to force a refresh
       clearCache();
-
+      AppLogger.logNetworkDeviceDeleted(macId);
       return {
         'success': true,
         'message': 'Device deleted successfully'
       };
     } catch (e) {
+      AppLogger.logError('network_device_deleted', e);
       throw Exception('Error deleting network device: $e');
     }
   }
@@ -690,10 +708,19 @@ class ApiService {
       if (response.statusCode == 200) {
         final result = jsonDecode(response.body);
         print('✅ Payment request successful: $result');
+        AppLogger.logPaymentInitiated(
+          provider: provider,
+          phone: phone,
+          amount: amount,
+          quantity: quantity,
+          location: location,
+          days: days,
+        );
         return result;
       } else {
         print('❌ Payment request failed with status: ${response.statusCode}');
         print('❌ Error response: ${response.body}');
+        AppLogger.logError('payment_initiated', 'HTTP ${response.statusCode}: ${response.body}');
         return {
           'success': false,
           'error': 'HTTP ${response.statusCode}: ${response.body}',
@@ -780,7 +807,13 @@ class ApiService {
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'username': username}),
     );
-    return jsonDecode(response.body);
+    final result = jsonDecode(response.body);
+    if (response.statusCode == 200) {
+      AppLogger.logVoucherDeleted(username);
+    } else {
+      AppLogger.logError('voucher_deleted', result['error'] ?? 'Unknown error');
+    }
+    return result;
   }
 
   static Future<Map<String, dynamic>> updateVoucher({
@@ -849,9 +882,16 @@ class ApiService {
     );
 
     if (response.statusCode == 200) {
-      clearCache(); // Clear cache after update
+      clearCache();
+      AppLogger.logVoucherSettingsUpdated(
+        username: username,
+        macAddress: macAddress,
+        speedLimit: speedLimit,
+        expireTime: expireTime?.toIso8601String(),
+      );
       return jsonDecode(response.body);
     } else {
+      AppLogger.logError('voucher_settings_updated', 'Failed: ${response.body}');
       throw Exception('Failed to update voucher settings: ${response.body}');
     }
   }

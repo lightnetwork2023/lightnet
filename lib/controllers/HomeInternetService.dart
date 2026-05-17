@@ -11,6 +11,7 @@ import 'package:lightnetwork/models/payment_record.dart';
 import 'package:lightnetwork/models/attachment_ref.dart';
 import 'package:lightnetwork/models/attachment_upload.dart';
 import 'package:lightnetwork/models/plan_snapshot.dart';
+import 'package:lightnetwork/services/app_logger.dart';
 
 class HomeInternetService {
   static final _db = FirebaseFirestore.instance;
@@ -107,6 +108,7 @@ class HomeInternetService {
 
     // 4) Delete customer doc from primary
     await custRef.delete();
+    AppLogger.logHomeCustomerArchived(id);
   }
 
   /// Boss-only: Restore an archived customer back to active collection.
@@ -179,6 +181,7 @@ class HomeInternetService {
 
     // 4) Delete customer doc from archive
     await archRef.delete();
+    AppLogger.logHomeCustomerRestored(id);
   }
 
   /// Fetch archived customers (boss-only)
@@ -428,13 +431,13 @@ class HomeInternetService {
     );
 
     await _db.collection(customersCol).doc(id).set(customer.toMap());
-    // record initial plan snapshot so historical periods stick to their price
     final initialPlan = PlanSnapshot(
       amount: planAmount,
       currency: currency,
       effectiveFrom: startDate,
     );
     await _plansCol(id).add(initialPlan.toMap());
+    AppLogger.logHomeCustomerCreated(customerId: id, name: name, location: location);
     return customer;
   }
 
@@ -511,8 +514,8 @@ class HomeInternetService {
     setIf<bool>('active', active);
 
     await _db.collection(customersCol).doc(id).set(updates, SetOptions(merge: true));
+    AppLogger.logHomeCustomerUpdated(id);
 
-    // If plan amount or currency changed, append a new snapshot effective now
     if (existing != null) {
       final newAmount = planAmount ?? existing.planAmount;
       final newCurrency = currency ?? existing.currency;
@@ -576,6 +579,7 @@ class HomeInternetService {
 
     // 3) Delete the customer document
     await _db.collection(customersCol).doc(id).delete();
+    AppLogger.logHomeCustomerDeleted(customerId: id);
   }
 
   // ------------------------------
@@ -727,6 +731,11 @@ class HomeInternetService {
     );
 
     await payDoc.set(record.toMap());
+    AppLogger.logHomePaymentAdded(
+      customerId: customerId,
+      amount: amountPaid,
+      currency: currency,
+    );
     return record;
   }
 
@@ -756,6 +765,7 @@ class HomeInternetService {
       'approved_by_name': _auth.userName,
       'approved_at': FieldValue.serverTimestamp(),
     });
+    AppLogger.logHomePaymentApproved(customerId: customerId, paymentId: paymentId);
   }
 
   static Future<void> rejectPayment({
@@ -786,6 +796,11 @@ class HomeInternetService {
       'approved_at': FieldValue.serverTimestamp(),
       if (reason != null) 'notes': 'Rejected: $reason',
     });
+    AppLogger.logHomePaymentRejected(
+      customerId: customerId,
+      paymentId: paymentId,
+      reason: reason,
+    );
   }
 
   // ------------------------------

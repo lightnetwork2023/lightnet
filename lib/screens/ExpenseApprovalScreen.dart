@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../theme/app_theme.dart';
+import '../services/app_logger.dart';
 
 class ExpenseApprovalScreen extends StatefulWidget {
   @override
@@ -672,11 +673,16 @@ class _ExpenseApprovalScreenState extends State<ExpenseApprovalScreen> {
         'approved_at': FieldValue.serverTimestamp(),
         'updated_at': FieldValue.serverTimestamp(),
       });
-      
+      AppLogger.logExpenseApproved(
+        expenseId: expenseId,
+        amount: (expense['total_amount'] as num?)?.toDouble(),
+        submittedBy: expense['submitted_by'] as String?,
+      );
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('✅ Expense approved')),
       );
     } catch (e) {
+      AppLogger.logError('expense_approved', e);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('❌ Error approving expense: $e')),
       );
@@ -771,11 +777,12 @@ class _ExpenseApprovalScreenState extends State<ExpenseApprovalScreen> {
         'rejection_reason': reason,
         'updated_at': FieldValue.serverTimestamp(),
       });
-      
+      AppLogger.logExpenseRejected(expenseId: expenseId, reason: reason);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('✅ Expense rejected')),
       );
     } catch (e) {
+      AppLogger.logError('expense_rejected', e);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('❌ Error rejecting expense: $e')),
       );

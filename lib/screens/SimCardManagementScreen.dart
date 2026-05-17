@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../theme/app_theme.dart';
 import '../widgets/modern_components.dart';
+import '../services/app_logger.dart';
 
 class SimCardManagementScreen extends StatefulWidget {
   const SimCardManagementScreen({super.key});
@@ -137,8 +138,14 @@ class _SimCardManagementScreenState extends State<SimCardManagementScreen> {
                             };
                             if (doc == null) {
                               await FirebaseFirestore.instance.collection('simcards').add(data);
+                              AppLogger.logSimcardAdded(
+                                msisdn: msisdn,
+                                location: location.isNotEmpty ? location : null,
+                                type: type.isNotEmpty ? type : null,
+                              );
                             } else {
                               await FirebaseFirestore.instance.collection('simcards').doc(doc.id).set(data, SetOptions(merge: true));
+                              AppLogger.logSimcardUpdated(docId: doc.id, msisdn: msisdn);
                             }
                             if (mounted) Navigator.pop(context);
                           } catch (e) {
@@ -176,7 +183,12 @@ class _SimCardManagementScreenState extends State<SimCardManagementScreen> {
       ),
     );
     if (ok == true) {
+      final data = doc.data() ?? {};
       await FirebaseFirestore.instance.collection('simcards').doc(doc.id).delete();
+      AppLogger.logSimcardDeleted(
+        docId: doc.id,
+        msisdn: data['msisdn'] as String?,
+      );
     }
   }
 

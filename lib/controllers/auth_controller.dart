@@ -4,6 +4,7 @@ import 'package:get/get.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import '../services/app_logger.dart';
 
 class AuthController extends GetxController {
   final FirebaseAuth _auth = FirebaseAuth.instance;
@@ -228,6 +229,7 @@ class AuthController extends GetxController {
           await _saveUserToPrefs();
           _isDataLoaded.value = true;
           print('DEBUG AUTH: Data loaded COMPLETE - Final role: ${_userRole.value}');
+          AppLogger.logSignIn(_userRole.value, _userName.value);
         } else {
           if (!_isDataLoaded.value) {
             final loaded = await _loadUserFromPrefs();
@@ -394,17 +396,22 @@ class AuthController extends GetxController {
 
       if (response.statusCode == 200) {
         print('AuthController: User created successfully via Cloud Function');
-        // User created successfully via Cloud Function
-        // Return null to indicate success without UserCredential
+        AppLogger.logUserCreated(
+          email: email,
+          role: role,
+          name: name,
+          location: location,
+        );
         return null;
       } else {
-        // Handle Cloud Function errors
         final errorMessage = responseData['error'] ?? 'Failed to create user';
         print('AuthController: Cloud Function error: $errorMessage');
+        AppLogger.logError('user_created', errorMessage);
         throw errorMessage;
       }
     } on FirebaseAuthException catch (e) {
       print('AuthController: FirebaseAuthException: ${e.code} - ${e.message}');
+      AppLogger.logError('user_created', e);
       if (e.code == 'weak-password') {
         throw 'The password provided is too weak.';
       } else if (e.code == 'email-already-in-use') {
@@ -419,6 +426,7 @@ class AuthController extends GetxController {
 
   Future<void> logout() async {
     try {
+      await AppLogger.logSignOut();
       await _auth.signOut();
       await _clearUserData();
     } catch (e) {
@@ -435,7 +443,9 @@ class AuthController extends GetxController {
           .collection('users')
           .doc(userId)
           .update({'role': newRole});
+      AppLogger.logUserRoleUpdated(targetUid: userId, newRole: newRole);
     } catch (e) {
+      AppLogger.logError('user_role_updated', e);
       throw 'Failed to update user role.';
     }
   }
@@ -458,8 +468,11 @@ class AuthController extends GetxController {
       );
       if (resp.statusCode != 200) {
         final data = jsonDecode(resp.body);
-        throw data['error'] ?? 'Delete failed with status ${resp.statusCode}';
+        final errMsg = data['error'] ?? 'Delete failed with status ${resp.statusCode}';
+        AppLogger.logError('user_deleted', errMsg);
+        throw errMsg;
       }
+      AppLogger.logUserDeleted(targetUid: uid ?? '', targetName: email);
     } catch (e) {
       rethrow;
     }
@@ -469,7 +482,9 @@ class AuthController extends GetxController {
   Future<void> sendPasswordResetEmail(String email) async {
     try {
       await _auth.sendPasswordResetEmail(email: email);
+      AppLogger.logPasswordResetSent(email);
     } on FirebaseAuthException catch (e) {
+      AppLogger.logError('password_reset_sent', e);
       if (e.code == 'user-not-found') {
         throw 'No user found with this email address.';
       } else if (e.code == 'invalid-email') {

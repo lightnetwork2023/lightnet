@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../theme/app_theme.dart';
+import '../services/app_logger.dart';
 
 class ExpenseCreationScreen extends StatefulWidget {
   final String? expenseId;
@@ -265,14 +266,18 @@ class _ExpenseCreationScreenState extends State<ExpenseCreationScreen> {
       };
       
       if (widget.expenseId != null) {
-        // Update existing expense
         await _firestore.collection('expenses').doc(widget.expenseId).update(expenseData);
-        
+        AppLogger.logExpenseSubmitted(
+          expenseId: widget.expenseId!,
+          amount: _totalAmount,
+          title: _titleController.text.trim(),
+          location: _selectedLocation,
+          isUpdate: true,
+        );
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('✅ Expense updated successfully')),
         );
       } else {
-        // Create new expense
         final now = DateTime.now();
         final timestamp = now.millisecondsSinceEpoch;
         final expenseId = 'EXP-$timestamp';
@@ -281,19 +286,24 @@ class _ExpenseCreationScreenState extends State<ExpenseCreationScreen> {
           'expense_id': expenseId,
           'submitted_by': user.email,
           'submitted_by_name': user.displayName ?? user.email,
-          'submitted_at': Timestamp.fromDate(now), // Use client timestamp for immediate visibility
+          'submitted_at': Timestamp.fromDate(now),
           'status': 'pending',
           'approved_by': null,
           'approved_by_name': null,
           'approved_at': null,
           'rejection_reason': null,
-          'created_at': Timestamp.fromDate(now), // Use client timestamp for immediate visibility
+          'created_at': Timestamp.fromDate(now),
         });
         
         print('DEBUG: Creating expense $expenseId for user: ${user.email}');
         await _firestore.collection('expenses').doc(expenseId).set(expenseData);
         print('DEBUG: Expense created successfully');
-        
+        AppLogger.logExpenseSubmitted(
+          expenseId: expenseId,
+          amount: _totalAmount,
+          title: _titleController.text.trim(),
+          location: _selectedLocation,
+        );
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('✅ Expense submitted for approval')),
         );
@@ -301,6 +311,7 @@ class _ExpenseCreationScreenState extends State<ExpenseCreationScreen> {
       
       Navigator.pop(context);
     } catch (e) {
+      AppLogger.logError('expense_submitted', e);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('❌ Error: $e')),
       );

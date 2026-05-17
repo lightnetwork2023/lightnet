@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'app_logger.dart';
 
 class DebtService {
   static final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -29,6 +30,7 @@ class DebtService {
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
     });
+    AppLogger.logPayableAdded(docId: doc.id, amount: totalAmount, creditorName: creditorName);
     return doc.id;
   }
 
@@ -54,6 +56,7 @@ class DebtService {
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
     });
+    AppLogger.logReceivableAdded(docId: doc.id, amount: totalAmount, debtorName: debtorName);
     return doc.id;
   }
 
@@ -95,13 +98,13 @@ class DebtService {
       status = 'unpaid';
     }
 
-    // Update main document
     await debtDoc.update({
       'amountPaid': newPaid,
       'balance': newBalance,
       'status': status,
       'updatedAt': FieldValue.serverTimestamp(),
     });
+    AppLogger.logDebtPaymentRecorded(debtId: debtId, amount: amount, isPayable: true);
   }
 
   // Record payment for receivable
@@ -142,13 +145,13 @@ class DebtService {
       status = 'unpaid';
     }
 
-    // Update main document
     await debtDoc.update({
       'amountPaid': newPaid,
       'balance': newBalance,
       'status': status,
       'updatedAt': FieldValue.serverTimestamp(),
     });
+    AppLogger.logDebtPaymentRecorded(debtId: debtId, amount: amount, isPayable: false);
   }
 
   // Get payment history for a debt
@@ -162,11 +165,13 @@ class DebtService {
   // Delete payable
   static Future<void> deletePayable(String debtId) async {
     await payables.doc(debtId).delete();
+    AppLogger.logDebtDeleted(debtId: debtId, isPayable: true);
   }
 
   // Delete receivable
   static Future<void> deleteReceivable(String debtId) async {
     await receivables.doc(debtId).delete();
+    AppLogger.logDebtDeleted(debtId: debtId, isPayable: false);
   }
 
   // Update payable

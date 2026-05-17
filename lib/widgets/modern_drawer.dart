@@ -15,6 +15,8 @@ import '../screens/payments.dart';
 import '../screens/PaymentAnalyticsPage.dart';
 import '../screens/NetworkDevicesScreen.dart';
 import '../screens/BossTechnicianAnalyticsScreen.dart';
+import '../screens/TechnicianOneUserLogsScreen.dart';
+import '../screens/AppLogsScreen.dart';
 import '../screens/LocationDataScreen.dart';
 import '../screens/LocationAnalyticsScreen.dart';
 import '../screens/LoginScreen.dart';
@@ -446,6 +448,20 @@ class ModernDrawer extends StatelessWidget {
                               title: 'Technician Analytics',
                               subtitle: 'View by Technician',
                               onTap: () => _navigateTo(context, const BossTechnicianAnalyticsScreen()),
+                            ),
+                            _buildDrawerItem(
+                              context,
+                              icon: Icons.history_edu_outlined,
+                              title: 'Technician voucher logs',
+                              subtitle: 'One-user generations (Firestore)',
+                              onTap: () => _navigateTo(context, const TechnicianOneUserLogsScreen()),
+                            ),
+                            _buildDrawerItem(
+                              context,
+                              icon: Icons.receipt_long_outlined,
+                              title: 'App Activity Logs',
+                              subtitle: 'All writes & errors',
+                              onTap: () => _navigateTo(context, const AppLogsScreen()),
                             ),
                           ],
                         )
