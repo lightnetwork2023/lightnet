@@ -1,9 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:get/get.dart';
 import '../controllers/auth_controller.dart';
 import '../controllers/location_controller.dart';
-import '../services/app_logger.dart';
+import '../services/SiteService.dart';
+import 'FieldDetailsScreen.dart';
+import 'SiteRegistrationScreen.dart';
+import 'SiteOverviewScreen.dart';
+import 'TechnicianDivisorsScreen.dart';
 
 class UserManagementScreen extends StatefulWidget {
   const UserManagementScreen({super.key});
@@ -20,9 +25,11 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
   final _nameController = TextEditingController();
+  final _commissionDivisorController = TextEditingController(text: '30000');
   String _selectedRole = 'technician';
   String _selectedLocation = '';
   List<String> _selectedLocations = [];
+  List<String> _technicianSelectedLocations = [];
   String _searchQuery = '';
   bool _isLoading = false;
   List<Map<String, dynamic>> _availableAmountOptions = [];
@@ -38,77 +45,220 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
 
   void _showEditTechnicianDivisorDialog(DocumentSnapshot user) {
     final userData = user.data() as Map<String, dynamic>;
-    double divisor = 30000.0;
-    try {
-      final raw = userData['commission_divisor'];
-      if (raw is num) divisor = raw.toDouble();
-      if (raw is String) divisor = double.tryParse(raw) ?? divisor;
-      if (divisor <= 0) divisor = 30000.0;
-    } catch (_) {}
+    final userName = (userData['name'] ?? userData['email'] ?? 'Technician').toString();
 
-    final controller = TextEditingController(text: divisor.toStringAsFixed(0));
+    // Pre-populate: use saved commission_locations, else fall back to user's assigned locations
+    final savedCommissionLocs = List<String>.from(userData['commission_locations'] ?? []);
+    final assignedLocs        = List<String>.from(userData['locations'] ?? []);
+    final singleLoc           = (userData['location'] ?? '').toString();
+    final defaultSel = savedCommissionLocs.isNotEmpty
+        ? savedCommissionLocs
+        : assignedLocs.isNotEmpty
+            ? assignedLocs
+            : (singleLoc.isNotEmpty ? [singleLoc] : <String>[]);
+
+    // Read existing divisor to avoid overwriting a manually-set custom value
+    final rawDiv = userData['commission_divisor'];
+    final existingDivisor = rawDiv is num ? rawDiv.toDouble() : null;
+    final prevLocCount    = savedCommissionLocs.length.toDouble();
+
+    // All available locations from location controller
+    final allLocs = locationController.locations.toList();
+
+    // Ensure anything already selected is visible even if not in allLocs
+    final fullList = {...allLocs, ...defaultSel}.toList()..sort();
+
+    final Set<String> selected = Set<String>.from(defaultSel);
+    final TextEditingController searchCtrl = TextEditingController();
+    String searchQ = '';
 
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Set Technician Commission Divisor'),
-        content: SizedBox(
-          width: 380,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('Commission = Payments total / Divisor'),
-              const SizedBox(height: 12),
-              TextField(
-                controller: controller,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                decoration: const InputDecoration(
-                  labelText: 'Divisor',
-                  hintText: 'e.g., 30000',
-                  border: OutlineInputBorder(),
-                ),
+      builder: (context) => StatefulBuilder(builder: (ctx, setLocal) {
+        final count = selected.length;
+        const samplePayments = 300000.0;
+        final sampleCommission = count > 0 ? samplePayments / count : 0.0;
+
+        final visible = fullList
+            .where((l) => searchQ.isEmpty || l.toLowerCase().contains(searchQ))
+            .toList();
+
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Row(children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.deepPurple.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(10),
               ),
-            ],
+              child: const Icon(Icons.location_on_rounded, color: Colors.deepPurple),
+            ),
+            const SizedBox(width: 12),
+            Expanded(child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Commission Locations', style: TextStyle(fontSize: 17)),
+                Text('For: $userName', style: const TextStyle(fontSize: 11, color: Colors.grey)),
+              ],
+            )),
+          ]),
+          content: SizedBox(
+            width: 400,
+            height: 460,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Formula explanation
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.withOpacity(0.05),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.blue.withOpacity(0.2)),
+                  ),
+                  child: const Text(
+                    'Select the locations to include in this technician\'s commission.\n'
+                    'Formula: Commission = Payments total ÷ number of selected locations',
+                    style: TextStyle(fontSize: 12, color: Colors.blueGrey),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                // Search + select-all row
+                Row(children: [
+                  Expanded(
+                    child: TextField(
+                      controller: searchCtrl,
+                      decoration: InputDecoration(
+                        hintText: 'Search locations…',
+                        prefixIcon: const Icon(Icons.search, size: 18),
+                        isDense: true,
+                        contentPadding: const EdgeInsets.symmetric(vertical: 8),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
+                      onChanged: (v) => setLocal(() => searchQ = v.toLowerCase().trim()),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  TextButton(
+                    onPressed: () => setLocal(() {
+                      if (selected.length == visible.length) {
+                        selected.removeAll(visible);
+                      } else {
+                        selected.addAll(visible);
+                      }
+                    }),
+                    child: Text(selected.length == visible.length ? 'None' : 'All',
+                        style: const TextStyle(fontSize: 12)),
+                  ),
+                ]),
+                const SizedBox(height: 6),
+                // Selected count badge
+                Text('$count location${count == 1 ? '' : 's'} selected  ·  Divisor = $count',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: count > 0 ? Colors.deepPurple : Colors.red,
+                    )),
+                const SizedBox(height: 6),
+                // Location checkboxes
+                Expanded(
+                  child: ListView.builder(
+                    itemCount: visible.length,
+                    itemBuilder: (_, i) {
+                      final loc = visible[i];
+                      final isSel = selected.contains(loc);
+                      return CheckboxListTile(
+                        dense: true,
+                        value: isSel,
+                        title: Text(loc, style: const TextStyle(fontSize: 13)),
+                        activeColor: Colors.deepPurple,
+                        controlAffinity: ListTileControlAffinity.leading,
+                        contentPadding: EdgeInsets.zero,
+                        onChanged: (_) => setLocal(() {
+                          if (isSel) selected.remove(loc); else selected.add(loc);
+                        }),
+                      );
+                    },
+                  ),
+                ),
+                const Divider(height: 8),
+                // Preview
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.green.withOpacity(0.07),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.green.withOpacity(0.3)),
+                  ),
+                  child: Row(children: [
+                    const Icon(Icons.calculate_rounded, size: 16, color: Colors.green),
+                    const SizedBox(width: 6),
+                    Expanded(child: Text(
+                      count > 0
+                          ? 'Preview: 300,000 TZS ÷ $count = ${sampleCommission.toStringAsFixed(2)} TZS'
+                          : 'Select at least one location',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: count > 0 ? Colors.green[800] : Colors.red,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    )),
+                  ]),
+                ),
+              ],
+            ),
           ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              final val = double.tryParse(controller.text.trim());
-              if (val == null || val <= 0) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Please enter a valid positive number')),
-                );
-                return;
-              }
-              try {
-                await FirebaseFirestore.instance
-                    .collection('users')
-                    .doc(user.id)
-                    .update({'commission_divisor': val});
-                if (mounted) {
-                  Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Commission divisor updated successfully')),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.deepPurple, foregroundColor: Colors.white),
+              icon: const Icon(Icons.save_rounded, size: 18),
+              label: const Text('Save'),
+              onPressed: () async {
+                if (selected.isEmpty) {
+                  ScaffoldMessenger.of(ctx).showSnackBar(
+                    const SnackBar(content: Text('Select at least one location')),
                   );
+                  return;
                 }
-              } catch (e) {
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Failed to update divisor: $e')),
-                  );
+                final selList = selected.toList()..sort();
+                try {
+                  // Only reset divisor to location count if it was auto-set or unset.
+                  // Preserve a custom divisor (e.g. 33) that differs from old location count.
+                  final newDivisor = (existingDivisor == null || existingDivisor == prevLocCount)
+                      ? selList.length.toDouble()
+                      : existingDivisor;
+                  await FirebaseFirestore.instance.collection('users').doc(user.id).update({
+                    'commission_locations': selList,
+                    'commission_divisor': newDivisor,
+                    'commission_divisor_updated_at': FieldValue.serverTimestamp(),
+                    'commission_divisor_updated_by': authController.user?.uid,
+                  });
+                  if (mounted) {
+                    Navigator.pop(context);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Commission: ${selList.length} locations set for $userName'),
+                        backgroundColor: Colors.green,
+                      ),
+                    );
+                  }
+                } catch (e) {
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Failed to save: $e')),
+                    );
+                  }
                 }
-              }
-            },
-            child: const Text('Save'),
-          ),
-        ],
-      ),
+              },
+            ),
+          ],
+        );
+      }),
     );
   }
 
@@ -261,6 +411,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
     _passwordController.dispose();
     _confirmPasswordController.dispose();
     _nameController.dispose();
+    _commissionDivisorController.dispose();
     super.dispose();
   }
 
@@ -268,13 +419,21 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
     if (_formKey.currentState!.validate()) {
       setState(() => _isLoading = true);
       try {
+        final double? techDivisor = _selectedRole == 'technician'
+            ? (double.tryParse(_commissionDivisorController.text.trim()) ?? 30000.0)
+            : null;
         await authController.createNewAccount(
           _emailController.text.trim(),
           _passwordController.text,
           _selectedRole,
-          name: (_selectedRole == 'agent' || _selectedRole == 'superagent') ? _nameController.text.trim() : null,
-          location: _selectedRole == 'agent' ? _selectedLocation : (_selectedRole == 'superagent' && _selectedLocations.isNotEmpty ? _selectedLocations.first : null),
-          locations: _selectedRole == 'superagent' ? _selectedLocations : null,
+          name: (_selectedRole == 'agent' || _selectedRole == 'superagent' || _selectedRole == 'technician')
+              ? _nameController.text.trim()
+              : null,
+          location: _selectedRole == 'agent' ? _selectedLocation : null,
+          locations: _selectedRole == 'superagent'
+              ? _selectedLocations
+              : (_selectedRole == 'technician' ? _technicianSelectedLocations : null),
+          commissionDivisor: techDivisor,
         );
 
         if (mounted) {
@@ -285,10 +444,12 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
           _passwordController.clear();
           _confirmPasswordController.clear();
           _nameController.clear();
+          _commissionDivisorController.text = '30000';
           setState(() {
             _selectedRole = 'technician';
-            _selectedLocation = ''; // Reset to blank
-            _selectedLocations.clear(); // Reset selected locations
+            _selectedLocation = '';
+            _selectedLocations.clear();
+            _technicianSelectedLocations.clear();
           });
         }
       } catch (e) {
@@ -424,6 +585,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                                       const DropdownMenuItem<String>(value: 'agent', child: Text('Agent')),
                                       const DropdownMenuItem<String>(value: 'superagent', child: Text('Super Agent')),
                                       const DropdownMenuItem<String>(value: 'boss', child: Text('Boss')),
+                                      const DropdownMenuItem<String>(value: 'md', child: Text('Main Director (MD)')),
                                     ],
                                     onChanged: (String? value) {
                                       if (value != null) {
@@ -599,10 +761,135 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                                       ),
                                     ),
                                   ],
+                                if (_selectedRole == 'technician') ...[
+                                  const SizedBox(height: 16),
+                                  TextFormField(
+                                    controller: _nameController,
+                                    decoration: InputDecoration(
+                                      labelText: 'Name',
+                                      prefixIcon: const Icon(Icons.badge_outlined),
+                                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+                                      filled: true,
+                                    ),
+                                    validator: (value) {
+                                      if (value == null || value.isEmpty) return 'Please enter a name';
+                                      return null;
+                                    },
+                                  ),
+                                  const SizedBox(height: 16),
+                                  GestureDetector(
+                                    onTap: () async {
+                                      await showModalBottomSheet(
+                                        context: context,
+                                        isScrollControlled: true,
+                                        shape: const RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+                                        ),
+                                        builder: (context) => StatefulBuilder(
+                                          builder: (context, setSheetState) => Container(
+                                            height: MediaQuery.of(context).size.height * 0.7,
+                                            child: Column(
+                                              children: [
+                                                const SizedBox(height: 16),
+                                                const Text('Select Locations', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+                                                const Text('Technician can cover multiple locations', style: TextStyle(color: Colors.grey)),
+                                                const Divider(),
+                                                Expanded(
+                                                  child: ListView(
+                                                    children: locationController.locations.map((loc) => CheckboxListTile(
+                                                      title: Text(loc),
+                                                      value: _technicianSelectedLocations.contains(loc),
+                                                      onChanged: (bool? val) {
+                                                        setSheetState(() {
+                                                          if (val == true) {
+                                                            _technicianSelectedLocations.add(loc);
+                                                          } else {
+                                                            _technicianSelectedLocations.remove(loc);
+                                                          }
+                                                        });
+                                                      },
+                                                    )).toList(),
+                                                  ),
+                                                ),
+                                                Padding(
+                                                  padding: const EdgeInsets.all(16.0),
+                                                  child: Row(
+                                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                                    children: [
+                                                      Text('${_technicianSelectedLocations.length} locations selected'),
+                                                      ElevatedButton(
+                                                        onPressed: () {
+                                                          Navigator.pop(context);
+                                                          setDialogState(() {});
+                                                        },
+                                                        child: const Text('Done'),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                    child: AbsorbPointer(
+                                      child: TextFormField(
+                                        decoration: InputDecoration(
+                                          labelText: 'Locations',
+                                          prefixIcon: const Icon(Icons.location_on_outlined),
+                                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+                                          filled: true,
+                                          hintText: 'Select Locations',
+                                        ),
+                                        controller: TextEditingController(
+                                          text: _technicianSelectedLocations.isEmpty
+                                              ? ''
+                                              : '${_technicianSelectedLocations.length} location${_technicianSelectedLocations.length == 1 ? '' : 's'} selected',
+                                        ),
+                                        validator: (value) {
+                                          if (_technicianSelectedLocations.isEmpty) return 'Please select at least one location';
+                                          return null;
+                                        },
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 16),
+                                  TextFormField(
+                                    controller: _commissionDivisorController,
+                                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                    decoration: InputDecoration(
+                                      labelText: 'Commission Divisor',
+                                      hintText: 'e.g. 30000',
+                                      helperText: 'Commission = Payments total ÷ Divisor',
+                                      prefixIcon: const Icon(Icons.calculate_outlined),
+                                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+                                      filled: true,
+                                    ),
+                                    validator: (value) {
+                                      if (value == null || value.isEmpty) return 'Enter a divisor';
+                                      final v = double.tryParse(value);
+                                      if (v == null || v <= 0) return 'Must be a positive number';
+                                      return null;
+                                    },
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Align(
+                                    alignment: Alignment.centerRight,
+                                    child: IconButton(
+                                      icon: const Icon(Icons.refresh),
+                                      onPressed: () async {
+                                        await locationController.loadLocations();
+                                        setDialogState(() {});
+                                      },
+                                      tooltip: 'Refresh locations',
+                                    ),
+                                  ),
                                 ],
-                              ),
+                              ],
                             ),
                           ),
+                        ),
                         ),
                         const SizedBox(height: 16),
                         Row(
@@ -682,17 +969,13 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
     if (confirmed != true) return;
 
     try {
-      final userData = userDoc.data() as Map<String, dynamic>;
-      final targetName = userData['name'] as String?;
       await authController.deleteAppUser(uid: userDoc.id);
-      AppLogger.logUserDeleted(targetUid: userDoc.id, targetName: targetName);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('User deleted successfully')),
         );
       }
     } catch (e) {
-      AppLogger.logError('user_deleted_ui', e);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Failed to delete user: $e')),
@@ -705,11 +988,23 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
   void _showEditUserDialog(DocumentSnapshot user) {
     final userData = user.data() as Map<String, dynamic>;
     final currentRole = userData['role']?.toString() ?? 'agent';
-    
+    final userName = userData['name']?.toString() ?? userData['email']?.toString() ?? '';
+    final userLocation = userData['location']?.toString() ?? '';
+    final userLocations = List<String>.from(userData['locations'] ?? []);
+    final resolvedLocation = userLocations.isNotEmpty ? userLocations.first : userLocation;
+
+    String roleLabel;
+    switch (currentRole) {
+      case 'superagent': roleLabel = 'Super Agent'; break;
+      case 'technician': roleLabel = 'Technician'; break;
+      case 'md': roleLabel = 'Main Director'; break;
+      default: roleLabel = 'Agent';
+    }
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Edit ${currentRole == 'superagent' ? 'Super Agent' : (currentRole == 'technician' ? 'Technician' : 'Agent')}'),
+        title: Text('Edit $roleLabel'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -723,25 +1018,45 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                   _showEditAgentDialog(user);
                 },
               ),
-            ListTile(
-              leading: const Icon(Icons.location_on),
-              title: Text('Edit ${(currentRole == 'superagent' || currentRole == 'technician') ? 'Locations' : 'Location'}'),
-              subtitle: Text('Manage assigned ${(currentRole == 'superagent' || currentRole == 'technician') ? 'locations' : 'location'}'),
-              onTap: () {
-                Navigator.pop(context);
-                _showEditLocationDialog(user);
-              },
-            ),
-            if (currentRole == 'technician')
+            if (currentRole != 'md')
               ListTile(
-                leading: const Icon(Icons.calculate_rounded),
-                title: const Text('Set Commission Divisor'),
-                subtitle: const Text('Payments total will be divided by this value'),
+                leading: const Icon(Icons.location_on),
+                title: Text('Edit ${(currentRole == 'superagent' || currentRole == 'technician') ? 'Locations' : 'Location'}'),
+                subtitle: Text('Manage assigned ${(currentRole == 'superagent' || currentRole == 'technician') ? 'locations' : 'location'}'),
                 onTap: () {
                   Navigator.pop(context);
-                  _showEditTechnicianDivisorDialog(user);
+                  _showEditLocationDialog(user);
                 },
               ),
+            if (currentRole == 'technician')
+              Builder(builder: (_) {
+                final ud = user.data() as Map<String, dynamic>;
+                double cur = 30000.0;
+                final raw = ud['commission_divisor'];
+                if (raw is num) cur = raw.toDouble();
+                if (raw is String) cur = double.tryParse(raw) ?? cur;
+                if (cur <= 0) cur = 30000.0;
+                return ListTile(
+                  leading: const Icon(Icons.calculate_rounded, color: Colors.deepPurple),
+                  title: const Text('Set Commission Divisor'),
+                  subtitle: Text(
+                    'Current: ${cur.toStringAsFixed(0)}  ·  Commission = Payments ÷ ${cur.toStringAsFixed(0)}',
+                  ),
+                  trailing: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.deepPurple.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text('÷${cur.toStringAsFixed(0)}',
+                        style: const TextStyle(fontWeight: FontWeight.w600, color: Colors.deepPurple, fontSize: 12)),
+                  ),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _showEditTechnicianDivisorDialog(user);
+                  },
+                );
+              }),
             if (currentRole == 'superagent')
               ListTile(
                 leading: const Icon(Icons.percent),
@@ -752,7 +1067,38 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                   _showEditCommissionDialog(user);
                 },
               ),
-            if (authController.isBoss && authController.user?.uid != user.id)
+            if (currentRole == 'agent' || currentRole == 'superagent')
+              ListTile(
+                leading: const Icon(Icons.assignment_ind_outlined, color: Colors.teal),
+                title: const Text('Field Details'),
+                subtitle: const Text('Client sites, coordinates & equipment'),
+                onTap: () {
+                  Navigator.pop(context);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => FieldDetailsScreen(
+                        ownerId: user.id,
+                        ownerName: userName,
+                        ownerRole: currentRole,
+                        ownerLocation: resolvedLocation,
+                      ),
+                    ),
+                  );
+                },
+              ),
+            if (authController.isBoss)
+              ListTile(
+                leading: const Icon(Icons.visibility_rounded, color: Colors.blueGrey),
+                title: const Text('View Password'),
+                subtitle: const Text('See the stored account password'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showViewPasswordDialog(user.id, userName);
+                },
+              ),
+            if ((authController.isBoss || (authController.isMD && currentRole != 'boss')) &&
+                authController.user?.uid != user.id)
               ListTile(
                 leading: const Icon(Icons.delete_forever_rounded, color: Colors.redAccent),
                 title: const Text('Delete Account'),
@@ -771,6 +1117,214 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  void _showViewPasswordDialog(String userId, String userName) {
+    bool _obscure = true;
+    showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: Row(
+                children: [
+                  const Icon(Icons.lock_person_rounded, color: Colors.blueGrey),
+                  const SizedBox(width: 8),
+                  Expanded(child: Text('Password — $userName', overflow: TextOverflow.ellipsis)),
+                ],
+              ),
+              content: FutureBuilder<DocumentSnapshot>(
+                future: FirebaseFirestore.instance.collection('users').doc(userId).get(),
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const SizedBox(
+                      height: 60,
+                      child: Center(child: CircularProgressIndicator()),
+                    );
+                  }
+                  if (!snapshot.hasData || !snapshot.data!.exists) {
+                    return const Text('User not found.');
+                  }
+                  final data = snapshot.data!.data() as Map<String, dynamic>;
+                  final password = data['password']?.toString() ?? '';
+                  if (password.isEmpty) {
+                    return const Text(
+                      'No password stored.\nThis account was created before password storage was enabled.',
+                      style: TextStyle(color: Colors.grey),
+                    );
+                  }
+                  return Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Account Password:', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade100,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.grey.shade300),
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                _obscure ? '•' * password.length : password,
+                                style: const TextStyle(fontSize: 16, fontFamily: 'monospace', letterSpacing: 1.5),
+                              ),
+                            ),
+                            IconButton(
+                              icon: Icon(_obscure ? Icons.visibility_rounded : Icons.visibility_off_rounded),
+                              onPressed: () => setDialogState(() => _obscure = !_obscure),
+                              tooltip: _obscure ? 'Reveal' : 'Hide',
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.copy_rounded),
+                              onPressed: () {
+                                Clipboard.setData(ClipboardData(text: password));
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('Password copied to clipboard')),
+                                );
+                              },
+                              tooltip: 'Copy',
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Close'),
+                ),
+                TextButton(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    _showChangePasswordDialog(userId, userName);
+                  },
+                  child: const Text('Change Password'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _showChangePasswordDialog(String userId, String userName) {
+    final _newPassController = TextEditingController();
+    final _confirmPassController = TextEditingController();
+    bool _obscureNew = true;
+    bool _obscureConfirm = true;
+    final _formKey = GlobalKey<FormState>();
+    bool _isLoading = false;
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: Row(
+                children: [
+                  const Icon(Icons.lock_reset_rounded, color: Colors.orange),
+                  const SizedBox(width: 8),
+                  Expanded(child: Text('Change Password — $userName', overflow: TextOverflow.ellipsis)),
+                ],
+              ),
+              content: Form(
+                key: _formKey,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextFormField(
+                      controller: _newPassController,
+                      obscureText: _obscureNew,
+                      decoration: InputDecoration(
+                        labelText: 'New Password',
+                        border: const OutlineInputBorder(),
+                        suffixIcon: IconButton(
+                          icon: Icon(_obscureNew ? Icons.visibility_rounded : Icons.visibility_off_rounded),
+                          onPressed: () => setDialogState(() => _obscureNew = !_obscureNew),
+                        ),
+                      ),
+                      validator: (v) {
+                        if (v == null || v.isEmpty) return 'Enter new password';
+                        if (v.length < 6) return 'Minimum 6 characters';
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: _confirmPassController,
+                      obscureText: _obscureConfirm,
+                      decoration: InputDecoration(
+                        labelText: 'Confirm Password',
+                        border: const OutlineInputBorder(),
+                        suffixIcon: IconButton(
+                          icon: Icon(_obscureConfirm ? Icons.visibility_rounded : Icons.visibility_off_rounded),
+                          onPressed: () => setDialogState(() => _obscureConfirm = !_obscureConfirm),
+                        ),
+                      ),
+                      validator: (v) {
+                        if (v != _newPassController.text) return 'Passwords do not match';
+                        return null;
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: _isLoading ? null : () => Navigator.pop(context),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: _isLoading
+                      ? null
+                      : () async {
+                          if (!_formKey.currentState!.validate()) return;
+                          setDialogState(() => _isLoading = true);
+                          try {
+                            final userDoc = await FirebaseFirestore.instance.collection('users').doc(userId).get();
+                            final email = (userDoc.data() as Map<String, dynamic>)['email']?.toString() ?? '';
+                            final authController = Get.find<AuthController>();
+                            final response = await authController.callResetUserPassword(
+                              email: email,
+                              newPassword: _newPassController.text,
+                            );
+                            if (mounted) {
+                              Navigator.pop(context);
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(response ? 'Password changed for $userName' : 'Failed to change password'),
+                                  backgroundColor: response ? Colors.green : Colors.red,
+                                ),
+                              );
+                            }
+                          } catch (e) {
+                            setDialogState(() => _isLoading = false);
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+                            );
+                          }
+                        },
+                  child: _isLoading
+                      ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      : const Text('Update'),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 
@@ -1091,6 +1645,127 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
     );
   }
 
+  void _showSitesSheet(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (ctx) => DraggableScrollableSheet(
+        initialChildSize: 0.85,
+        maxChildSize: 0.95,
+        minChildSize: 0.5,
+        expand: false,
+        builder: (_, sc) => Padding(
+          padding: const EdgeInsets.fromLTRB(16, 20, 16, 0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.location_city_rounded, color: Colors.teal, size: 24),
+                  const SizedBox(width: 10),
+                  const Expanded(child: Text('Manage Sites', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold))),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.pop(ctx),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              const Text('Create and manage site profiles visible on the dashboard.', style: TextStyle(color: Colors.grey, fontSize: 13)),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    Navigator.push(context, MaterialPageRoute(builder: (_) => const SiteRegistrationScreen()));
+                  },
+                  icon: const Icon(Icons.add),
+                  label: const Text('Add New Site'),
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.teal, foregroundColor: Colors.white),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Expanded(
+                child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                  stream: SiteService.streamAll(),
+                  builder: (context, snap) {
+                    if (snap.connectionState == ConnectionState.waiting) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+                    if (!snap.hasData || snap.data!.docs.isEmpty) {
+                      return const Center(child: Text('No sites registered yet.\nTap "Add New Site" to create one.', textAlign: TextAlign.center, style: TextStyle(color: Colors.grey)));
+                    }
+                    return ListView.builder(
+                      controller: sc,
+                      itemCount: snap.data!.docs.length,
+                      itemBuilder: (context, i) {
+                        final doc = snap.data!.docs[i];
+                        final d = doc.data();
+                        final name = d['name'] as String? ?? 'Site';
+                        final loc = d['main_location'] as String? ?? '';
+                        final agentCount = (d['agent_ids'] as List?)?.length ?? 0;
+                        final custCount = (d['home_customer_ids'] as List?)?.length ?? 0;
+                        return Card(
+                          margin: const EdgeInsets.only(bottom: 10),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                          child: ListTile(
+                            leading: CircleAvatar(backgroundColor: Colors.teal.withOpacity(0.1), child: const Icon(Icons.location_city_rounded, color: Colors.teal)),
+                            title: Text(name, style: const TextStyle(fontWeight: FontWeight.w600)),
+                            subtitle: Text('$loc  •  $agentCount agents  •  $custCount customers'),
+                            trailing: PopupMenuButton(
+                              itemBuilder: (_) => [
+                                const PopupMenuItem(value: 'view', child: Row(children: [Icon(Icons.visibility_outlined, size: 18), SizedBox(width: 10), Text('View')])),
+                                const PopupMenuItem(value: 'edit', child: Row(children: [Icon(Icons.edit_outlined, size: 18), SizedBox(width: 10), Text('Edit')])),
+                                const PopupMenuItem(value: 'delete', child: Row(children: [Icon(Icons.delete_outline, size: 18, color: Colors.red), SizedBox(width: 10), Text('Delete', style: TextStyle(color: Colors.red))])),
+                              ],
+                              onSelected: (val) async {
+                                if (val == 'view') {
+                                  Navigator.pop(ctx);
+                                  Navigator.push(context, MaterialPageRoute(builder: (_) => SiteOverviewScreen(siteId: doc.id)));
+                                } else if (val == 'edit') {
+                                  Navigator.pop(ctx);
+                                  Navigator.push(context, MaterialPageRoute(builder: (_) => SiteRegistrationScreen(existingId: doc.id, existingData: d)));
+                                } else if (val == 'delete') {
+                                  final confirm = await showDialog<bool>(
+                                    context: context,
+                                    builder: (_) => AlertDialog(
+                                      title: const Text('Delete Site'),
+                                      content: Text('Delete "$name"? This cannot be undone.'),
+                                      actions: [
+                                        TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+                                        ElevatedButton(
+                                          style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+                                          onPressed: () => Navigator.pop(context, true),
+                                          child: const Text('Delete'),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                  if (confirm == true) {
+                                    await SiteService.delete(doc.id);
+                                    if (context.mounted) {
+                                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('"$name" deleted.')));
+                                    }
+                                  }
+                                }
+                              },
+                            ),
+                          ),
+                        );
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1099,6 +1774,21 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
         backgroundColor: Colors.white,
         elevation: 0,
         foregroundColor: Colors.black,
+        actions: [
+          TextButton.icon(
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const TechnicianDivisorsScreen()),
+            ),
+            icon: const Icon(Icons.calculate_rounded, color: Colors.deepPurple),
+            label: const Text('Divisors', style: TextStyle(color: Colors.deepPurple, fontWeight: FontWeight.w600)),
+          ),
+          TextButton.icon(
+            onPressed: () => _showSitesSheet(context),
+            icon: const Icon(Icons.location_city_rounded, color: Colors.teal),
+            label: const Text('Sites', style: TextStyle(color: Colors.teal, fontWeight: FontWeight.w600)),
+          ),
+        ],
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: _showCreateAccountDialog,
@@ -1152,13 +1842,15 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                     final name = userData['name'] as String? ?? '';
                     final badgeColor = currentRole == 'boss'
                         ? Colors.deepPurple
-                        : currentRole == 'superagent'
-                            ? Colors.purple
-                            : currentRole == 'agent'
-                                ? Colors.blue
-                                : currentRole == 'homeuser'
-                                    ? Colors.orange
-                                    : Colors.green;
+                        : currentRole == 'md'
+                            ? Colors.amber.shade700
+                            : currentRole == 'superagent'
+                                ? Colors.purple
+                                : currentRole == 'agent'
+                                    ? Colors.blue
+                                    : currentRole == 'homeuser'
+                                        ? Colors.orange
+                                        : Colors.green;
                     return Card(
                       elevation: 2,
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -1171,13 +1863,15 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                               child: Icon(
                                 currentRole == 'boss'
                                     ? Icons.star
-                                    : currentRole == 'superagent'
-                                        ? Icons.supervisor_account
-                                        : currentRole == 'agent'
-                                            ? Icons.person
-                                            : currentRole == 'homeuser'
-                                                ? Icons.home
-                                                : Icons.build,
+                                    : currentRole == 'md'
+                                        ? Icons.admin_panel_settings
+                                        : currentRole == 'superagent'
+                                            ? Icons.supervisor_account
+                                            : currentRole == 'agent'
+                                                ? Icons.person
+                                                : currentRole == 'homeuser'
+                                                    ? Icons.home
+                                                    : Icons.build,
                                 color: badgeColor,
                               ),
                             ),
@@ -1215,11 +1909,13 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                                 ],
                           ),
                         ),
-                        if (currentRole == 'agent' || currentRole == 'superagent' || currentRole == 'technician')
+                        if (currentRole != 'boss' &&
+                            !(authController.isMD && currentRole == 'boss'))
                           IconButton(
                             icon: const Icon(Icons.edit, color: Colors.blue),
                             onPressed: () => _showEditUserDialog(user),
                           ),
+                        if (currentRole != 'boss')
                         DropdownButton<String>(
                               value: currentRole,
                               underline: const SizedBox(),
@@ -1234,15 +1930,12 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                                     value: 'boss', child: Text('Boss')),
                                 const DropdownMenuItem<String>(
                                     value: 'homeuser', child: Text('Home User')),
+                                const DropdownMenuItem<String>(
+                                    value: 'md', child: Text('MD')),
                               ],
                               onChanged: (String? newRole) {
                                 if (newRole != null && newRole != currentRole) {
                                   authController.updateUserRole(user.id, newRole);
-                                  AppLogger.logUserRoleUpdated(
-                                    targetUid: user.id,
-                                    newRole: newRole,
-                                    oldRole: currentRole,
-                                  );
                                 }
                               },
                             ),

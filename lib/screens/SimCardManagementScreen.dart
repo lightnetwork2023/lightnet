@@ -1,8 +1,12 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:excel/excel.dart' hide Border;
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import '../theme/app_theme.dart';
 import '../widgets/modern_components.dart';
-import '../services/app_logger.dart';
 
 class SimCardManagementScreen extends StatefulWidget {
   const SimCardManagementScreen({super.key});
@@ -14,6 +18,7 @@ class SimCardManagementScreen extends StatefulWidget {
 class _SimCardManagementScreenState extends State<SimCardManagementScreen> {
   final _searchController = TextEditingController();
   String _filterType = 'all';
+  bool _exporting = false;
 
   @override
   void dispose() {
@@ -26,6 +31,91 @@ class _SimCardManagementScreenState extends State<SimCardManagementScreen> {
         .collection('simcards')
         .orderBy('updated_at', descending: true)
         .snapshots();
+  }
+
+  List<QueryDocumentSnapshot<Map<String, dynamic>>> _filterDocs(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
+  ) {
+    final lower = _searchController.text.toLowerCase();
+    return docs.where((d) {
+      final data = d.data();
+      if (_filterType != 'all' && (data['type'] ?? '') != _filterType) return false;
+      if (lower.isEmpty) return true;
+      final msisdn = (data['msisdn'] ?? '').toString().toLowerCase();
+      final imsi = (data['imsi'] ?? '').toString().toLowerCase();
+      final customer = (data['customer_name'] ?? '').toString().toLowerCase();
+      final loc = (data['location'] ?? '').toString().toLowerCase();
+      return msisdn.contains(lower) || imsi.contains(lower) || customer.contains(lower) || loc.contains(lower);
+    }).toList();
+  }
+
+  Future<void> _exportToExcel() async {
+    if (_exporting) return;
+
+    setState(() => _exporting = true);
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('simcards')
+          .orderBy('updated_at', descending: true)
+          .get();
+      final filtered = _filterDocs(snap.docs);
+
+      if (filtered.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('No SIM cards to export')),
+          );
+        }
+        return;
+      }
+
+      // Rename first, then write — writing before rename leaves data on an orphaned sheet.
+      final excel = Excel.createExcel();
+      excel.rename('Sheet1', 'SIM Cards');
+      final sheet = excel['SIM Cards'];
+
+      sheet.appendRow([
+        TextCellValue('IMSI'),
+        TextCellValue('Phone Number'),
+      ]);
+
+      for (final doc in filtered) {
+        final data = doc.data();
+        sheet.appendRow([
+          TextCellValue((data['imsi'] ?? '').toString()),
+          TextCellValue((data['msisdn'] ?? '').toString()),
+        ]);
+      }
+
+      final bytes = excel.encode();
+      if (bytes == null) {
+        throw Exception('Failed to generate Excel file');
+      }
+
+      final dir = await getTemporaryDirectory();
+      final stamp = DateTime.now().toIso8601String().replaceAll(':', '-').split('.').first;
+      final file = File('${dir.path}/simcards_$stamp.xlsx');
+      await file.writeAsBytes(bytes);
+
+      await Share.shareXFiles(
+        [XFile(file.path)],
+        text: 'SIM Cards export (IMSI & Phone Number)',
+      );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Exported ${filtered.length} SIM card(s)')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to export Excel: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _exporting = false);
+    }
   }
 
   Future<void> _showSimForm({DocumentSnapshot<Map<String, dynamic>>? doc}) async {
@@ -138,14 +228,8 @@ class _SimCardManagementScreenState extends State<SimCardManagementScreen> {
                             };
                             if (doc == null) {
                               await FirebaseFirestore.instance.collection('simcards').add(data);
-                              AppLogger.logSimcardAdded(
-                                msisdn: msisdn,
-                                location: location.isNotEmpty ? location : null,
-                                type: type.isNotEmpty ? type : null,
-                              );
                             } else {
                               await FirebaseFirestore.instance.collection('simcards').doc(doc.id).set(data, SetOptions(merge: true));
-                              AppLogger.logSimcardUpdated(docId: doc.id, msisdn: msisdn);
                             }
                             if (mounted) Navigator.pop(context);
                           } catch (e) {
@@ -183,12 +267,7 @@ class _SimCardManagementScreenState extends State<SimCardManagementScreen> {
       ),
     );
     if (ok == true) {
-      final data = doc.data() ?? {};
       await FirebaseFirestore.instance.collection('simcards').doc(doc.id).delete();
-      AppLogger.logSimcardDeleted(
-        docId: doc.id,
-        msisdn: data['msisdn'] as String?,
-      );
     }
   }
 
@@ -274,6 +353,17 @@ class _SimCardManagementScreenState extends State<SimCardManagementScreen> {
         ),
         actions: [
           IconButton(
+            icon: _exporting
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                  )
+                : const Icon(Icons.file_download_outlined),
+            tooltip: 'Export to Excel',
+            onPressed: _exporting ? null : _exportToExcel,
+          ),
+          IconButton(
             icon: const Icon(Icons.search),
             onPressed: () async {
               final text = await showDialog<String>(
@@ -322,17 +412,7 @@ class _SimCardManagementScreenState extends State<SimCardManagementScreen> {
             return Center(child: Text('Error: ${snapshot.error}'));
           }
           final docs = snapshot.data?.docs ?? [];
-          final lower = _searchController.text.toLowerCase();
-          final filtered = docs.where((d) {
-            final data = d.data();
-            if (_filterType != 'all' && (data['type'] ?? '') != _filterType) return false;
-            if (lower.isEmpty) return true;
-            final msisdn = (data['msisdn'] ?? '').toString().toLowerCase();
-            final imsi = (data['imsi'] ?? '').toString().toLowerCase();
-            final customer = (data['customer_name'] ?? '').toString().toLowerCase();
-            final loc = (data['location'] ?? '').toString().toLowerCase();
-            return msisdn.contains(lower) || imsi.contains(lower) || customer.contains(lower) || loc.contains(lower);
-          }).toList();
+          final filtered = _filterDocs(docs);
 
           if (filtered.isEmpty) {
             return const Center(child: Text('No SIM cards found'));

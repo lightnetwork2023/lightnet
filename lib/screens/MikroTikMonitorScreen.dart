@@ -306,6 +306,156 @@ class _MikroTikMonitorScreenState extends State<MikroTikMonitorScreen> {
                         ),
                       ],
                     ),
+                    Builder(builder: (_) {
+                      final wanStats = data['wan_stats'] as Map<String, dynamic>?;
+                      if (wanStats == null) {
+                        return FutureBuilder<Map<String, dynamic>?>(
+                          future: MikroTikMonitorService.fetchRadacctStats(ipAddress),
+                          builder: (ctx, ras) {
+                            if (ras.connectionState == ConnectionState.waiting) {
+                              return Padding(
+                                padding: const EdgeInsets.only(top: 4),
+                                child: Row(children: [
+                                  SizedBox(width: 11, height: 11,
+                                      child: CircularProgressIndicator(strokeWidth: 1.5, color: Colors.grey[400])),
+                                  const SizedBox(width: 6),
+                                  Text('Loading usage…',
+                                      style: TextStyle(fontSize: 11, color: Colors.grey[500], fontStyle: FontStyle.italic)),
+                                ]),
+                              );
+                            }
+                            final r = ras.data;
+                            if (r == null) {
+                              if (status != 'online') return const SizedBox.shrink();
+                              return Padding(
+                                padding: const EdgeInsets.only(top: 4),
+                                child: Row(children: [
+                                  Icon(Icons.info_outline, size: 13, color: Colors.grey[400]),
+                                  const SizedBox(width: 4),
+                                  Text('No usage data found',
+                                      style: TextStyle(fontSize: 11, color: Colors.grey[500], fontStyle: FontStyle.italic)),
+                                ]),
+                              );
+                            }
+                            final download   = r['rx_bytes'] as int? ?? 0;
+                            final upload     = r['tx_bytes'] as int? ?? 0;
+                            final avgBps     = r['avg_bps'] as int? ?? 0;
+                            final daytimeBps = r['daytime_avg_bps'] as int? ?? 0;
+                            final recentBps  = r['recent_avg_bps'] as int? ?? 0;
+                            final sessions   = r['sessions'] as int? ?? 0;
+                            final active     = r['active_sessions'] as int? ?? 0;
+                            final hasRecent  = recentBps > 0;
+                            return Padding(
+                              padding: const EdgeInsets.only(top: 4),
+                              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                                // ── NOW row (15-min near-realtime) ─────────────────
+                                if (hasRecent) Row(children: [
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                                    decoration: BoxDecoration(
+                                      color: Colors.purple.withOpacity(0.12),
+                                      borderRadius: BorderRadius.circular(4),
+                                      border: Border.all(color: Colors.purple.withOpacity(0.45)),
+                                    ),
+                                    child: const Text('NOW', style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.purple)),
+                                  ),
+                                  const SizedBox(width: 5),
+                                  Icon(Icons.bolt_rounded, size: 13, color: Colors.purple[700]),
+                                  const SizedBox(width: 2),
+                                  Text(_formatSpeed(recentBps),
+                                      style: TextStyle(fontSize: 13, color: Colors.purple[800], fontWeight: FontWeight.w800)),
+                                  const SizedBox(width: 6),
+                                  Text('(~15 min · accounting)', style: TextStyle(fontSize: 9, color: Colors.grey[500])),
+                                ]),
+                                if (hasRecent) const SizedBox(height: 3),
+                                // ── 24h consumption ────────────────────────────────
+                                Row(children: [
+                                  const Icon(Icons.arrow_circle_down_rounded, size: 13, color: Colors.blue),
+                                  const SizedBox(width: 3),
+                                  Text(_formatBytes(download),
+                                      style: const TextStyle(fontSize: 12, color: Colors.blue, fontWeight: FontWeight.w600)),
+                                  const SizedBox(width: 6),
+                                  Text('↑ ${_formatBytes(upload)}',
+                                      style: const TextStyle(fontSize: 12, color: Colors.orange, fontWeight: FontWeight.w600)),
+                                  const SizedBox(width: 5),
+                                  Text('(24h)', style: TextStyle(fontSize: 10, color: Colors.grey[500])),
+                                ]),
+                                const SizedBox(height: 2),
+                                Row(children: [
+                                  Icon(Icons.speed_rounded, size: 12, color: Colors.green[700]),
+                                  const SizedBox(width: 3),
+                                  Text('${_formatSpeed(avgBps)} 24h avg',
+                                      style: TextStyle(fontSize: 10, color: Colors.green[700])),
+                                  if (daytimeBps > 0) ...[
+                                    const SizedBox(width: 6),
+                                    const Icon(Icons.wb_sunny_rounded, size: 10, color: Colors.deepOrange),
+                                    const SizedBox(width: 2),
+                                    Text('~${_formatSpeed(daytimeBps)} day',
+                                        style: const TextStyle(fontSize: 10, color: Colors.deepOrange)),
+                                  ],
+                                  const SizedBox(width: 8),
+                                  Flexible(child: Text(
+                                    '$sessions sess${active > 0 ? " · $active live" : ""}',
+                                    style: TextStyle(fontSize: 10, color: Colors.grey[600]),
+                                    overflow: TextOverflow.ellipsis,
+                                  )),
+                                ]),
+                              ]),
+                            );
+                          },
+                        );
+                      }
+                      return Builder(builder: (_) {
+                        final rxBps   = wanStats['rx_bps']   as int? ?? 0;
+                        final txBps   = wanStats['tx_bps']   as int? ?? 0;
+                        final rxBytes = wanStats['rx_bytes'] as int? ?? 0;
+                        final txBytes = wanStats['tx_bytes'] as int? ?? 0;
+                        final liveMbps = (rxBps + txBps) / 1000000;
+                        final liveColor = liveMbps >= 50
+                            ? Colors.red
+                            : liveMbps >= 20
+                                ? Colors.deepOrange
+                                : Colors.green[700]!;
+                        // staleness from wan_updated_at
+                        final updatedAt = data['wan_updated_at'];
+                        String staleLabel = '';
+                        if (updatedAt is Timestamp) {
+                          final diffMin = DateTime.now().difference(updatedAt.toDate()).inMinutes;
+                          if (diffMin >= 5) staleLabel = ' · ${diffMin}m ago';
+                        }
+                        return Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            Row(children: [
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                                decoration: BoxDecoration(
+                                  color: liveColor.withOpacity(0.12),
+                                  borderRadius: BorderRadius.circular(4),
+                                  border: Border.all(color: liveColor.withOpacity(0.5)),
+                                ),
+                                child: Text('SOS LIVE$staleLabel', style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: liveColor)),
+                              ),
+                              const SizedBox(width: 6),
+                              const Icon(Icons.arrow_circle_down_rounded, size: 13, color: Colors.blue),
+                              const SizedBox(width: 3),
+                              Text(_formatSpeed(rxBps),
+                                  style: const TextStyle(fontSize: 13, color: Colors.blue, fontWeight: FontWeight.w800)),
+                              const SizedBox(width: 8),
+                              const Icon(Icons.arrow_circle_up_rounded, size: 13, color: Colors.orange),
+                              const SizedBox(width: 3),
+                              Text(_formatSpeed(txBps),
+                                  style: const TextStyle(fontSize: 13, color: Colors.orange, fontWeight: FontWeight.w800)),
+                            ]),
+                            const SizedBox(height: 2),
+                            Text(
+                              '↓${_formatBytes(rxBytes)}  ↑${_formatBytes(txBytes)}  (cumulative WAN)',
+                              style: TextStyle(fontSize: 10, color: Colors.grey[500]),
+                            ),
+                          ]),
+                        );
+                      });
+                    }),
                     if (lastSeen != null) ...[
                       const SizedBox(height: 2),
                       Row(
@@ -390,12 +540,28 @@ class _MikroTikMonitorScreenState extends State<MikroTikMonitorScreen> {
     return DateFormat('MMM d, HH:mm').format(date);
   }
 
+  String _formatSpeed(int bps) {
+    if (bps >= 1000000) return '${(bps / 1000000).toStringAsFixed(1)} Mbps';
+    if (bps >= 1000) return '${(bps / 1000).toStringAsFixed(0)} Kbps';
+    return '$bps bps';
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes >= 1073741824) return '${(bytes / 1073741824).toStringAsFixed(1)} GB';
+    if (bytes >= 1048576) return '${(bytes / 1048576).toStringAsFixed(1)} MB';
+    if (bytes >= 1024) return '${(bytes / 1024).toStringAsFixed(0)} KB';
+    return '$bytes B';
+  }
+
   void _showAddDeviceDialog() {
     final nameCtrl = TextEditingController();
     final ipCtrl = TextEditingController();
     final locationCtrl = TextEditingController();
     final vpnCtrl = TextEditingController(text: 'wireguard');
     final descCtrl = TextEditingController();
+    final userCtrl = TextEditingController(text: 'admin');
+    final passCtrl = TextEditingController();
+    final wanIfaceCtrl = TextEditingController(text: 'ether1');
 
     showDialog(
       context: context,
@@ -430,6 +596,24 @@ class _MikroTikMonitorScreenState extends State<MikroTikMonitorScreen> {
                 decoration: const InputDecoration(labelText: 'Description'),
                 maxLines: 2,
               ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: userCtrl,
+                decoration: const InputDecoration(labelText: 'RouterOS Username'),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: passCtrl,
+                obscureText: true,
+                decoration: const InputDecoration(labelText: 'RouterOS Password'),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: wanIfaceCtrl,
+                decoration: const InputDecoration(
+                    labelText: 'WAN Interface',
+                    hintText: 'e.g. ether1, pppoe-out1'),
+              ),
             ],
           ),
         ),
@@ -454,6 +638,9 @@ class _MikroTikMonitorScreenState extends State<MikroTikMonitorScreen> {
                   location: locationCtrl.text.trim(),
                   vpnInterface: vpnCtrl.text.trim(),
                   description: descCtrl.text.trim(),
+                  username: userCtrl.text.trim(),
+                  password: passCtrl.text,
+                  wanInterface: wanIfaceCtrl.text.trim(),
                 );
                 if (context.mounted) {
                   Navigator.pop(context);
@@ -483,6 +670,9 @@ class _MikroTikMonitorScreenState extends State<MikroTikMonitorScreen> {
     final locationCtrl = TextEditingController(text: data['location']);
     final vpnCtrl = TextEditingController(text: data['vpnInterface'] ?? 'wireguard');
     final descCtrl = TextEditingController(text: data['description'] ?? '');
+    final userCtrl = TextEditingController(text: data['username'] ?? 'admin');
+    final passCtrl = TextEditingController(text: data['password'] ?? '');
+    final wanIfaceCtrl = TextEditingController(text: data['wanInterface'] ?? 'ether1');
 
     showDialog(
       context: context,
@@ -517,6 +707,24 @@ class _MikroTikMonitorScreenState extends State<MikroTikMonitorScreen> {
                 decoration: const InputDecoration(labelText: 'Description'),
                 maxLines: 2,
               ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: userCtrl,
+                decoration: const InputDecoration(labelText: 'RouterOS Username'),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: passCtrl,
+                obscureText: true,
+                decoration: const InputDecoration(labelText: 'RouterOS Password'),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: wanIfaceCtrl,
+                decoration: const InputDecoration(
+                    labelText: 'WAN Interface',
+                    hintText: 'e.g. ether1, pppoe-out1'),
+              ),
             ],
           ),
         ),
@@ -535,6 +743,9 @@ class _MikroTikMonitorScreenState extends State<MikroTikMonitorScreen> {
                   location: locationCtrl.text.trim(),
                   vpnInterface: vpnCtrl.text.trim(),
                   description: descCtrl.text.trim(),
+                  username: userCtrl.text.trim(),
+                  password: passCtrl.text,
+                  wanInterface: wanIfaceCtrl.text.trim(),
                 );
                 if (context.mounted) {
                   Navigator.pop(context);
@@ -615,6 +826,25 @@ class _MikroTikMonitorScreenState extends State<MikroTikMonitorScreen> {
                 _detailRow('Last Seen', _formatTimestamp(data['lastSeen'])),
               if (data['lastChecked'] != null)
                 _detailRow('Last Checked', _formatTimestamp(data['lastChecked'])),
+              _detailRow('WAN Interface', data['wanInterface'] ?? 'ether1'),
+              _detailRow('RouterOS User', data['username'] ?? 'admin'),
+              if (data['wan_stats'] != null) ...[
+                const Divider(height: 20),
+                const Text('WAN Statistics',
+                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                const SizedBox(height: 6),
+                _detailRow('Download Speed',
+                    _formatSpeed((data['wan_stats']['rx_bps'] as int?) ?? 0)),
+                _detailRow('Upload Speed',
+                    _formatSpeed((data['wan_stats']['tx_bps'] as int?) ?? 0)),
+                _detailRow('Total RX',
+                    _formatBytes((data['wan_stats']['rx_bytes'] as int?) ?? 0)),
+                _detailRow('Total TX',
+                    _formatBytes((data['wan_stats']['tx_bytes'] as int?) ?? 0)),
+                if (data['wan_updated_at'] != null)
+                  _detailRow('Stats Updated',
+                      _formatTimestamp(data['wan_updated_at'] as Timestamp)),
+              ],
             ],
           ),
         ),

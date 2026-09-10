@@ -27,7 +27,8 @@ class TechnicianCommissionPage extends StatefulWidget {
 
 class _TechnicianCommissionPageState extends State<TechnicianCommissionPage> {
   late Future<PaymentAnalytics> _analyticsFuture;
-  double _commissionDivisor = 30000.0; // Default divisor
+  double _commissionDivisor = 1.0;
+  List<String> _commissionLocations = []; // subset of locations for commission
 
   @override
   void initState() {
@@ -48,12 +49,24 @@ class _TechnicianCommissionPageState extends State<TechnicianCommissionPage> {
       final doc = await FirebaseFirestore.instance.collection('users').doc(targetUid).get();
       if (doc.exists) {
         final data = doc.data() as Map<String, dynamic>;
+        final commLocs = List<String>.from(data['commission_locations'] ?? []);
         final raw = data['commission_divisor'];
         double? parsed;
         if (raw is num) parsed = raw.toDouble();
         if (raw is String) parsed = double.tryParse(raw);
-        if (parsed != null && parsed > 0) {
-          if (mounted) setState(() => _commissionDivisor = parsed!);
+        // commission_divisor is authoritative. Only fall back to commLocs.length when unset.
+        final effectiveDivisor = (parsed != null && parsed > 0)
+            ? parsed
+            : (commLocs.isNotEmpty ? commLocs.length.toDouble() : 1.0);
+        if (mounted) {
+          setState(() {
+            _commissionLocations = commLocs;
+            _commissionDivisor   = effectiveDivisor;
+          });
+          // Reload analytics with commission-specific locations
+          if (commLocs.isNotEmpty) {
+            setState(() => _analyticsFuture = _fetchAnalyticsData(overrideLocations: commLocs));
+          }
         }
       }
     } catch (_) {
@@ -61,20 +74,25 @@ class _TechnicianCommissionPageState extends State<TechnicianCommissionPage> {
     }
   }
 
-  Future<PaymentAnalytics> _fetchAnalyticsData() async {
+  Future<PaymentAnalytics> _fetchAnalyticsData({List<String>? overrideLocations}) async {
     try {
       final auth = Get.isRegistered<AuthController>() ? Get.find<AuthController>() : null;
       String? loc = widget.location;
-      List<String>? locs = widget.locations;
+      List<String>? locs = overrideLocations ?? widget.locations;
 
       // Resolve default locations for technician self-view
       if ((loc == null || loc.isEmpty) && (locs == null || locs.isEmpty) && auth != null) {
         if (auth.userRole == 'technician') {
-          final userLocs = auth.userLocations;
-          if (userLocs.isNotEmpty) {
-            locs = userLocs;
-          } else if (auth.userLocation.isNotEmpty) {
-            loc = auth.userLocation;
+          // Use commission_locations if already loaded, else user's assigned locations
+          if (_commissionLocations.isNotEmpty) {
+            locs = _commissionLocations;
+          } else {
+            final userLocs = auth.userLocations;
+            if (userLocs.isNotEmpty) {
+              locs = userLocs;
+            } else if (auth.userLocation.isNotEmpty) {
+              loc = auth.userLocation;
+            }
           }
         }
       }
@@ -110,14 +128,16 @@ class _TechnicianCommissionPageState extends State<TechnicianCommissionPage> {
   @override
   Widget build(BuildContext context) {
     final auth = Get.isRegistered<AuthController>() ? Get.find<AuthController>() : null;
-    List<String> displayLocations = [];
-    if (widget.locations != null && widget.locations!.isNotEmpty) {
-      displayLocations = widget.locations!;
-    } else if (auth != null && auth.userRole == 'technician' && auth.userLocations.isNotEmpty) {
-      displayLocations = auth.userLocations;
-    } else if (widget.location != null && widget.location!.isNotEmpty) {
-      displayLocations = [widget.location!];
-    }
+    // Show commission_locations in header if set, otherwise fall back to widget/user locations
+    List<String> displayLocations = _commissionLocations.isNotEmpty
+        ? _commissionLocations
+        : widget.locations != null && widget.locations!.isNotEmpty
+            ? widget.locations!
+            : (auth != null && auth.userRole == 'technician' && auth.userLocations.isNotEmpty
+                ? auth.userLocations
+                : (widget.location != null && widget.location!.isNotEmpty
+                    ? [widget.location!]
+                    : []));
     return Scaffold(
       backgroundColor: AppTheme.backgroundColor,
       appBar: AppBar(
@@ -227,7 +247,7 @@ class _TechnicianCommissionPageState extends State<TechnicianCommissionPage> {
                           textAlign: TextAlign.center,
                         ),
                       ],
-                      if (displayLocations.isNotEmpty) ...[
+                      if (displayLocations.isNotEmpty) ...[  
                         const SizedBox(height: 6),
                         Text(
                           displayLocations.length > 1

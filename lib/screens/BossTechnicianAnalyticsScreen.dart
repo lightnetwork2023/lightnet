@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../widgets/modern_components.dart';
@@ -40,18 +41,50 @@ class _BossTechnicianAnalyticsScreenState extends State<BossTechnicianAnalyticsS
     try {
       final snap = await FirebaseFirestore.instance
           .collection('users')
-          .where('role', isEqualTo: 'technician')
           .get();
 
-      _allTechnicians = snap.docs.map((doc) {
+      // Diagnostic: log every unique role + any user matching 'shafi'/'shafy'
+      final Set<String> rolesSeen = {};
+      for (final d in snap.docs) {
+        final data = d.data();
+        final role = (data['role'] ?? '<null>').toString();
+        rolesSeen.add(role);
+        final name = (data['name'] ?? '').toString().toLowerCase();
+        final email = (data['email'] ?? '').toString().toLowerCase();
+        if (name.contains('shaf') || email.contains('shaf')) {
+          debugPrint('[TechAnalytics] Shaf* match: id=${d.id} '
+              'name="${data['name']}" email="${data['email']}" '
+              'role="${data['role']}" location="${data['location']}" '
+              'locations=${data['locations']}');
+        }
+      }
+      debugPrint('[TechAnalytics] Total users=${snap.docs.length} '
+          'distinctRoles=$rolesSeen');
+
+      _allTechnicians = snap.docs
+          .where((doc) {
+            final data = doc.data();
+            final role = (data['role'] ?? '').toString().trim().toLowerCase();
+            // Accept exact 'technician', or any role that contains 'tech'
+            // (covers 'Tech', 'tech support', 'tecnician' typos, etc.)
+            return role == 'technician' || role.contains('tech');
+          })
+          .map((doc) {
         final data = doc.data();
         final String location = (data['location'] ?? '').toString();
         final List<String> locations = (data['locations'] is List)
             ? List<String>.from(data['locations'])
             : <String>[];
+        final String resolvedName = () {
+          final n = (data['name'] ?? '').toString().trim();
+          if (n.isNotEmpty) return n;
+          final e = (data['email'] ?? '').toString().trim();
+          if (e.isNotEmpty) return e;
+          return 'Unnamed';
+        }();
         return {
           'id': doc.id,
-          'name': (data['name'] ?? data['email'] ?? 'Unnamed') as String,
+          'name': resolvedName,
           'email': (data['email'] ?? '') as String,
           'location': location,
           'locations': locations,

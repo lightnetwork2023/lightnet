@@ -8,7 +8,6 @@ import 'package:lightnetwork/screens/LoginScreen.dart';
 import 'package:lightnetwork/screens/AgentHomeScreen.dart';
 import 'package:lightnetwork/screens/SuperAgentHomeScreen.dart';
 import 'package:lightnetwork/screens/HomeUserScreen.dart';
-import 'package:lightnetwork/screens/TechnicianHomeScreen.dart';
 import 'controllers/location_controller.dart';
 import 'controllers/auth_controller.dart';
 import 'firebase_options.dart';
@@ -106,10 +105,8 @@ class AuthWrapper extends StatelessWidget {
           return const SuperAgentHomeScreen();
         } else if (authController.isAgent) {
           return const AgentHomeScreen();
-        } else if (authController.isTechnician) {
-          return const TechnicianHomeScreen();
         } else {
-          return const HomeScreen();
+          return const HomeScreen(); // For 'boss' or 'technician'
         }
       }
       

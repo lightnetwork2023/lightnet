@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:get/get.dart';
 import '../theme/app_theme.dart';
-import '../services/app_logger.dart';
+import '../controllers/auth_controller.dart';
 
 class ExpenseApprovalScreen extends StatefulWidget {
   @override
@@ -20,7 +21,7 @@ class _ExpenseApprovalScreenState extends State<ExpenseApprovalScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text(
-          'Expense Approval',
+          'Requests Approval',
           style: TextStyle(fontWeight: FontWeight.bold),
         ),
         flexibleSpace: Container(
@@ -125,8 +126,8 @@ class _ExpenseApprovalScreenState extends State<ExpenseApprovalScreen> {
                   const SizedBox(height: 16),
                   Text(
                     _selectedFilter == 'pending'
-                        ? 'No pending expenses'
-                        : 'No expenses found',
+                        ? 'No pending requests'
+                        : 'No requests found',
                     style: TextStyle(
                       fontSize: 18,
                       color: Colors.grey[600],
@@ -169,7 +170,7 @@ class _ExpenseApprovalScreenState extends State<ExpenseApprovalScreen> {
   Widget _buildExpenseCard(Map<String, dynamic> expense, String expenseId) {
     final status = expense['status'] ?? 'pending';
     final totalAmount = (expense['total_amount'] as num?)?.toDouble() ?? 0;
-    final submittedBy = expense['submitted_by_name'] ?? expense['submitted_by'] ?? 'Unknown';
+    final submittedBy = _resolveSubmittedBy(expense);
     final location = expense['location_name'] ?? expense['location_id'] ?? 'Unknown';
     final title = expense['title'] ?? 'Untitled';
     
@@ -358,7 +359,7 @@ class _ExpenseApprovalScreenState extends State<ExpenseApprovalScreen> {
     final description = expense['description'] ?? '';
     final location = expense['location_name'] ?? expense['location_id'] ?? 'Unknown';
     final totalAmount = (expense['total_amount'] as num?)?.toDouble() ?? 0;
-    final submittedBy = expense['submitted_by_name'] ?? expense['submitted_by'] ?? 'Unknown';
+    final submittedBy = _resolveSubmittedBy(expense);
     final notes = expense['notes'] ?? '';
     final rejectionReason = expense['rejection_reason'] ?? '';
     
@@ -384,7 +385,7 @@ class _ExpenseApprovalScreenState extends State<ExpenseApprovalScreen> {
                   const SizedBox(width: 12),
                   Expanded(
                     child: Text(
-                      'Expense Details',
+                      'Request Details',
                       style: const TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.bold,
@@ -512,6 +513,43 @@ class _ExpenseApprovalScreenState extends State<ExpenseApprovalScreen> {
                     ),
                   ),
                   
+                  // Approval Details
+                  if (status == 'approved') ...[
+                    const SizedBox(height: 20),
+                    Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: Colors.green[50],
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: Colors.green[200]!),
+                      ),
+                      child: Builder(builder: (context) {
+                        final approvedBy = expense['approved_by_name'] ?? expense['approved_by'] ?? '';
+                        final approvalNote = expense['approval_note'] ?? '';
+                        final transactionRef = expense['transaction_ref'] ?? '';
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(children: [
+                              Icon(Icons.check_circle, color: Colors.green[700], size: 20),
+                              const SizedBox(width: 8),
+                              Text('Approved', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.green[700])),
+                              if (approvedBy.isNotEmpty) ...[const SizedBox(width: 6), Text('by $approvedBy', style: TextStyle(fontSize: 12, color: Colors.green[600]))],
+                            ]),
+                            if (approvalNote.isNotEmpty) ...[const SizedBox(height: 8), Text('Note: $approvalNote', style: const TextStyle(fontSize: 13))],
+                            if (transactionRef.isNotEmpty) ...[const SizedBox(height: 6),
+                              Row(children: [
+                                Icon(Icons.receipt_rounded, size: 14, color: Colors.green[700]),
+                                const SizedBox(width: 4),
+                                Text('Ref: $transactionRef', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: Colors.green[800])),
+                              ])
+                            ],
+                          ],
+                        );
+                      }),
+                    ),
+                  ],
+
                   // Notes
                   if (notes.isNotEmpty) ...[
                     const SizedBox(height: 20),
@@ -650,43 +688,161 @@ class _ExpenseApprovalScreenState extends State<ExpenseApprovalScreen> {
     );
   }
 
-  Future<void> _approveExpense(Map<String, dynamic> expense, String expenseId) async {
+  void _approveExpense(Map<String, dynamic> expense, String expenseId) {
     final currentUser = _auth.currentUser;
     if (currentUser == null) return;
-    
-    // Check if trying to approve own expense (production mode)
+
     if (expense['submitted_by'] == currentUser.email) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('⚠️ You cannot approve your own expense'),
+          content: Text('⚠️ You cannot approve your own request'),
           backgroundColor: Colors.orange,
         ),
       );
       return;
     }
-    
-    try {
-      await _firestore.collection('expenses').doc(expenseId).update({
-        'status': 'approved',
-        'approved_by': currentUser.email,
-        'approved_by_name': currentUser.displayName ?? currentUser.email,
-        'approved_at': FieldValue.serverTimestamp(),
-        'updated_at': FieldValue.serverTimestamp(),
-      });
-      AppLogger.logExpenseApproved(
-        expenseId: expenseId,
-        amount: (expense['total_amount'] as num?)?.toDouble(),
-        submittedBy: expense['submitted_by'] as String?,
-      );
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('✅ Expense approved')),
-      );
-    } catch (e) {
-      AppLogger.logError('expense_approved', e);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('❌ Error approving expense: $e')),
-      );
-    }
+
+    final noteController = TextEditingController();
+    final transactionController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(children: [
+          Icon(Icons.check_circle, color: Colors.green[700]),
+          const SizedBox(width: 10),
+          const Text('Approve Request'),
+        ]),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: noteController,
+              decoration: const InputDecoration(
+                labelText: 'Approval Note *',
+                hintText: 'e.g., Approved, proceed immediately',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.edit_note_rounded),
+              ),
+              maxLines: 3,
+              autofocus: true,
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: transactionController,
+              decoration: const InputDecoration(
+                labelText: 'Transaction Reference (optional)',
+                hintText: 'e.g., M-Pesa TXN: ABC123',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.receipt_rounded),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton.icon(
+            onPressed: () async {
+              final note = noteController.text.trim();
+              if (note.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('⚠️ Please enter an approval note')),
+                );
+                return;
+              }
+              Navigator.pop(ctx);
+              try {
+                final authCtrl = Get.find<AuthController>();
+                final isMD = authCtrl.isMD;
+                final totalAmount = (expense['total_amount'] as num?)?.toDouble() ?? 0;
+                final location = expense['location_name'] ?? expense['location_id'] ?? '';
+                final title = expense['title'] ?? '';
+
+                if (isMD && totalAmount > 0) {
+                  final userDoc = await _firestore.collection('users').doc(currentUser.uid).get();
+                  final currentFloat = ((userDoc.data() as Map<String, dynamic>?)?['float_balance'] as num?)?.toDouble() ?? 0;
+                  if (totalAmount > currentFloat) {
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('❌ Insufficient float (TZS ${_fmtAmount(currentFloat)}). Ask Owner to top up.'),
+                          backgroundColor: Colors.red,
+                          duration: const Duration(seconds: 4),
+                        ),
+                      );
+                    }
+                    return;
+                  }
+                  final newBalance = currentFloat - totalAmount;
+                  final batch = _firestore.batch();
+                  batch.update(_firestore.collection('expenses').doc(expenseId), {
+                    'status': 'approved',
+                    'approved_by': currentUser.email,
+                    'approved_by_name': currentUser.displayName ?? currentUser.email,
+                    'approved_at': FieldValue.serverTimestamp(),
+                    'approval_note': note,
+                    'transaction_ref': transactionController.text.trim(),
+                    'updated_at': FieldValue.serverTimestamp(),
+                  });
+                  batch.update(_firestore.collection('users').doc(currentUser.uid), {
+                    'float_balance': newBalance,
+                    'updated_at': FieldValue.serverTimestamp(),
+                  });
+                  batch.set(_firestore.collection('float_transactions').doc(), {
+                    'type': 'approval_deduction',
+                    'amount': totalAmount,
+                    'user_id': currentUser.uid,
+                    'user_name': currentUser.displayName ?? currentUser.email,
+                    'performed_by': currentUser.email,
+                    'performed_by_name': currentUser.displayName ?? currentUser.email,
+                    'request_id': expenseId,
+                    'request_title': title,
+                    'location': location,
+                    'balance_after': newBalance,
+                    'timestamp': FieldValue.serverTimestamp(),
+                  });
+                  await batch.commit();
+                } else {
+                  await _firestore.collection('expenses').doc(expenseId).update({
+                    'status': 'approved',
+                    'approved_by': currentUser.email,
+                    'approved_by_name': currentUser.displayName ?? currentUser.email,
+                    'approved_at': FieldValue.serverTimestamp(),
+                    'approval_note': note,
+                    'transaction_ref': transactionController.text.trim(),
+                    'updated_at': FieldValue.serverTimestamp(),
+                  });
+                }
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('✅ Request approved'),
+                      backgroundColor: Colors.green,
+                    ),
+                  );
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('❌ Error: $e')),
+                  );
+                }
+              }
+            },
+            icon: const Icon(Icons.check_circle),
+            label: const Text('Approve'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green[700],
+              foregroundColor: Colors.white,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   void _showRejectDialog(Map<String, dynamic> expense, String expenseId) {
@@ -714,7 +870,7 @@ class _ExpenseApprovalScreenState extends State<ExpenseApprovalScreen> {
           children: [
             Icon(Icons.cancel, color: Colors.red[700]),
             const SizedBox(width: 12),
-            const Text('Reject Expense'),
+            const Text('Reject Request'),
           ],
         ),
         content: Column(
@@ -777,12 +933,11 @@ class _ExpenseApprovalScreenState extends State<ExpenseApprovalScreen> {
         'rejection_reason': reason,
         'updated_at': FieldValue.serverTimestamp(),
       });
-      AppLogger.logExpenseRejected(expenseId: expenseId, reason: reason);
+      
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('✅ Expense rejected')),
       );
     } catch (e) {
-      AppLogger.logError('expense_rejected', e);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('❌ Error rejecting expense: $e')),
       );
@@ -795,4 +950,25 @@ class _ExpenseApprovalScreenState extends State<ExpenseApprovalScreen> {
           (Match m) => '${m[1]},',
         );
   }
+
+  String _resolveSubmittedBy(Map<String, dynamic> expense) {
+    final candidates = [
+      expense['submitted_by_name'],
+      expense['submitted_by'],
+      expense['submitted_by_email'],
+      expense['created_by_name'],
+      expense['created_by'],
+      expense['requested_by_name'],
+      expense['requested_by'],
+      expense['user_name'],
+      expense['user_email'],
+    ];
+    for (final c in candidates) {
+      final v = (c ?? '').toString().trim();
+      if (v.isNotEmpty) return v;
+    }
+    return 'Unknown';
+  }
+
+  String _fmtAmount(double amount) => _formatCurrency(amount);
 }

@@ -15,6 +15,7 @@ import 'EditHomeCustomerScreen.dart';
 import 'HomeInternetDropdownsScreen.dart';
 import 'HomeInternetAnalyticsScreen.dart';
 import 'ArchivedHomeCustomersScreen.dart';
+import 'FieldDetailsScreen.dart';
 
 class HomeInternetCustomersScreen extends StatefulWidget {
   const HomeInternetCustomersScreen({super.key});
@@ -387,24 +388,58 @@ class _CustomerCardState extends State<_CustomerCard> {
                                 ),
                               ),
                             ),
-                            if (Get.find<AuthController>().isBoss) ...[
+                            if (Get.find<AuthController>().isAdminLevel) ...[
                               const SizedBox(width: 6),
-                              IconButton(
-                                tooltip: 'Edit Customer',
-                                icon: const Icon(Icons.edit_rounded, size: 20),
-                                onPressed: () async {
-                                  final changed = await Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (_) => EditHomeCustomerScreen(customerId: customer.id),
-                                    ),
-                                  );
-                                  if (changed == true && context.mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(content: Text('Customer updated')),
+                              PopupMenuButton<String>(
+                                icon: const Icon(Icons.more_vert_rounded, size: 20),
+                                tooltip: 'Options',
+                                onSelected: (val) async {
+                                  if (val == 'edit') {
+                                    final changed = await Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) => EditHomeCustomerScreen(customerId: customer.id),
+                                      ),
+                                    );
+                                    if (changed == true && context.mounted) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(content: Text('Customer updated')),
+                                      );
+                                    }
+                                  } else if (val == 'field') {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) => FieldDetailsScreen(
+                                          ownerId: customer.id,
+                                          ownerName: customer.name,
+                                          ownerRole: 'homeuser',
+                                          ownerLocation: customer.location.isNotEmpty
+                                              ? customer.location
+                                              : customer.zone,
+                                        ),
+                                      ),
                                     );
                                   }
                                 },
+                                itemBuilder: (_) => [
+                                  const PopupMenuItem(
+                                    value: 'edit',
+                                    child: ListTile(
+                                      leading: Icon(Icons.edit_rounded),
+                                      title: Text('Edit Customer'),
+                                      dense: true,
+                                    ),
+                                  ),
+                                  const PopupMenuItem(
+                                    value: 'field',
+                                    child: ListTile(
+                                      leading: Icon(Icons.assignment_ind_outlined, color: Colors.teal),
+                                      title: Text('Field Details'),
+                                      dense: true,
+                                    ),
+                                  ),
+                                ],
                               ),
                             ],
                           ],

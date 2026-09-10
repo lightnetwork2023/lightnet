@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import '../theme/app_theme.dart';
 import '../widgets/modern_components.dart';
 import 'ExpenseCreationScreen.dart';
+import 'TechnicianRequestScreen.dart';
 
 class TechnicianExpensesScreen extends StatefulWidget {
   const TechnicianExpensesScreen({Key? key}) : super(key: key);
@@ -121,7 +122,7 @@ class _TechnicianExpensesScreenState extends State<TechnicianExpensesScreen> {
     return Scaffold(
       backgroundColor: AppTheme.backgroundColor,
       appBar: AppBar(
-        title: const Text('My Expenses'),
+        title: const Text('My Requests'),
         flexibleSpace: Container(
           decoration: const BoxDecoration(
             gradient: AppGradients.primaryGradient,
@@ -146,12 +147,12 @@ class _TechnicianExpensesScreenState extends State<TechnicianExpensesScreen> {
           Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (context) => const ExpenseCreationScreen(),
+              builder: (context) => const TechnicianRequestScreen(),
             ),
           ).then((_) => _loadMyExpenses());
         },
         icon: const Icon(Icons.add),
-        label: const Text('New Expense'),
+        label: const Text('New Request'),
         backgroundColor: AppTheme.primaryColor,
       ),
       body: _isLoading
@@ -174,7 +175,7 @@ class _TechnicianExpensesScreenState extends State<TechnicianExpensesScreen> {
                                 ),
                                 const SizedBox(height: 16),
                                 Text(
-                                  'No expenses yet',
+                                  'No requests yet',
                                   style: TextStyle(
                                     fontSize: 18,
                                     color: Colors.grey[600],
@@ -183,7 +184,7 @@ class _TechnicianExpensesScreenState extends State<TechnicianExpensesScreen> {
                                 ),
                                 const SizedBox(height: 8),
                                 Text(
-                                  'Tap + to create your first expense',
+                                  'Tap + to create your first request',
                                   style: TextStyle(
                                     fontSize: 14,
                                     color: Colors.grey[500],
@@ -484,6 +485,10 @@ class _TechnicianExpensesScreenState extends State<TechnicianExpensesScreen> {
     final location = expense['location_name'] ?? expense['location_id'] ?? 'Unknown';
     final items = expense['items'] as List<dynamic>? ?? [];
     final attachments = expense['attachments'] as List<dynamic>? ?? [];
+    final approvalNote = expense['approval_note'] as String? ?? '';
+    final transactionRef = expense['transaction_ref'] as String? ?? '';
+    final approvedBy = expense['approved_by_name'] ?? expense['approved_by'] ?? '';
+    final rejectionReason = expense['rejection_reason'] as String? ?? '';
     
     final canEdit = status == 'pending';
     
@@ -640,6 +645,63 @@ class _TechnicianExpensesScreenState extends State<TechnicianExpensesScreen> {
                         ),
                       ),
                     
+                    const Divider(height: 1),
+
+                    // Approval / Rejection details
+                    if (status == 'approved') ...[                      
+                      Container(
+                        margin: const EdgeInsets.all(16),
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: Colors.green[50],
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: Colors.green[200]!),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(children: [
+                              Icon(Icons.check_circle, color: Colors.green[700], size: 18),
+                              const SizedBox(width: 6),
+                              Text('Approved', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.green[700])),
+                              if (approvedBy.isNotEmpty) ...[const SizedBox(width: 6), Expanded(child: Text('by $approvedBy', style: TextStyle(fontSize: 12, color: Colors.green[600])))],
+                            ]),
+                            if (approvalNote.isNotEmpty) ...[const SizedBox(height: 8), Text('Note: $approvalNote', style: const TextStyle(fontSize: 13))],
+                            if (transactionRef.isNotEmpty) ...[const SizedBox(height: 6),
+                              Row(children: [
+                                Icon(Icons.receipt_rounded, size: 14, color: Colors.green[700]),
+                                const SizedBox(width: 4),
+                                Expanded(child: Text('Ref: $transactionRef', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.green[800]))),
+                              ]),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ],
+                    if (status == 'rejected' && rejectionReason.isNotEmpty) ...[                      
+                      Container(
+                        margin: const EdgeInsets.all(16),
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: Colors.red[50],
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: Colors.red[200]!),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(children: [
+                              Icon(Icons.cancel, color: Colors.red[700], size: 18),
+                              const SizedBox(width: 6),
+                              Text('Rejected', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.red[700])),
+                            ]),
+                            const SizedBox(height: 8),
+                            Text('Reason: $rejectionReason', style: const TextStyle(fontSize: 13)),
+                          ],
+                        ),
+                      ),
+                    ],
+
                     const Divider(height: 1),
                     
                     // Items
@@ -812,7 +874,7 @@ class _TechnicianExpensesScreenState extends State<TechnicianExpensesScreen> {
                         Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (context) => ExpenseCreationScreen(
+                            builder: (context) => TechnicianRequestScreen(
                               expenseId: expenseId,
                               existingExpense: expense,
                             ),
@@ -820,7 +882,7 @@ class _TechnicianExpensesScreenState extends State<TechnicianExpensesScreen> {
                         ).then((_) => _loadMyExpenses());
                       },
                       icon: const Icon(Icons.edit),
-                      label: const Text('EDIT EXPENSE'),
+                      label: const Text('EDIT REQUEST'),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.blue,
                         foregroundColor: Colors.white,

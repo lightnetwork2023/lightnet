@@ -42,7 +42,7 @@ exports.createUser = onRequest(async (request, response) => {
   }
 
   try {
-    const { email, password, role, name, location, locations, home_customer_id } = request.body;
+    const { email, password, role, name, location, locations, home_customer_id, commission_divisor } = request.body;
 
     // Initialize Firebase Auth (can be done inside the function if specific to auth operations)
     const auth = getAuth();
@@ -56,10 +56,10 @@ exports.createUser = onRequest(async (request, response) => {
     }
 
     // Validate role
-    const validRoles = ['technician', 'agent', 'superagent', 'boss', 'homeuser'];
+    const validRoles = ['technician', 'agent', 'superagent', 'boss', 'homeuser', 'md'];
     if (!validRoles.includes(role)) {
       response.status(400).json({
-        error: 'Invalid role. Must be one of: technician, agent, superagent, boss, homeuser'
+        error: 'Invalid role. Must be one of: technician, agent, superagent, boss, homeuser, md'
       });
       return;
     }
@@ -126,6 +126,7 @@ exports.createUser = onRequest(async (request, response) => {
       role: role,
       name: name || '',
       createdAt: Timestamp.now(), // Use Timestamp.now() for consistency
+      password: password,
     };
 
     // Handle location data based on role
@@ -138,8 +139,21 @@ exports.createUser = onRequest(async (request, response) => {
     } else if (role === 'homeuser') {
       // For home users, store the customer ID they're linked to
       userData.home_customer_id = home_customer_id || '';
+    } else if (role === 'technician') {
+      // Technician can cover multiple locations
+      if (locations && Array.isArray(locations) && locations.length > 0) {
+        userData.locations = locations;
+      } else if (location) {
+        userData.locations = [location];
+      } else {
+        userData.locations = [];
+      }
+      // Store commission divisor (default 30000)
+      userData.commission_divisor = (typeof commission_divisor === 'number' && commission_divisor > 0)
+        ? commission_divisor
+        : 30000;
     } else {
-      // For technician and boss roles, store single location if provided
+      // For boss/md roles, store single location if provided
       userData.location = location || '';
     }
 
@@ -183,6 +197,98 @@ exports.createUser = onRequest(async (request, response) => {
     });
   }
 });
+
+// ─── Monthly SA Withdrawable Balance Update ───────────────────────────────────
+// Runs at 00:00 on 1st of every month (Africa/Dar_es_Salaam = UTC+3)
+exports.monthlySaBalanceUpdate = onSchedule(
+  { schedule: '0 21 0 1 * *', timeZone: 'Africa/Dar_es_Salaam' },
+  async (_event) => {
+    const API_BASE = 'https://lightnet.lightnetwork.pro';
+    const now = new Date();
+    // Previous month label e.g. "2025-04"
+    const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const monthStr = `${prevMonth.getFullYear()}-${String(prevMonth.getMonth() + 1).padStart(2, '0')}`;
+
+    const saSnap = await db.collection('users').where('role', '==', 'superagent').get();
+    logger.info(`Monthly SA balance update: processing ${saSnap.size} superagents for ${monthStr}`);
+
+    for (const saDoc of saSnap.docs) {
+      const sa = saDoc.data();
+      const locations = Array.isArray(sa.locations) && sa.locations.length > 0
+        ? sa.locations
+        : (sa.location ? [sa.location] : []);
+
+      if (locations.length === 0) {
+        logger.warn(`SA ${saDoc.id} (${sa.name || sa.email}) has no locations — skipping`);
+        continue;
+      }
+
+      // Commission share (default 63%)
+      let saShare = 0.63;
+      if (sa.commission && typeof sa.commission === 'object') {
+        const parsed = parseFloat(sa.commission.superagent);
+        if (!isNaN(parsed)) saShare = parsed;
+      } else if (sa.superagent_percent) {
+        const parsed = parseFloat(sa.superagent_percent);
+        if (!isNaN(parsed)) saShare = parsed;
+      }
+      saShare = Math.min(1, Math.max(0, saShare));
+
+      try {
+        // Fetch last month's revenue from the payment API
+        const locationsStr = locations.join(',');
+        const url = `${API_BASE}/fetch_agent_payments_summary?locations=${encodeURIComponent(locationsStr)}`;
+        const resp = await axios.get(url, { timeout: 30000 });
+
+        if (!resp.data || !resp.data.success || !resp.data.summary) {
+          logger.warn(`No summary data for SA ${saDoc.id} — skipping`);
+          continue;
+        }
+
+        const summary = resp.data.summary;
+        // Try multiple field names that the API might use for last-month total
+        const lastMonthTotal =
+          (summary.last_month_total) ||
+          (summary.last_month && summary.last_month.total) ||
+          0;
+
+        const saRevenue = lastMonthTotal * saShare;
+
+        // Sum monthly_deduction across all field_registrations for this SA
+        const regSnap = await db.collection('field_registrations')
+          .where('owner_id', '==', saDoc.id).get();
+        const totalDeduction = regSnap.docs.reduce((sum, d) => {
+          return sum + (parseFloat(d.data().monthly_deduction) || 0);
+        }, 0);
+
+        const netAmount = Math.max(0, saRevenue - totalDeduction);
+
+        logger.info(
+          `SA ${saDoc.id}: lastMonth=${lastMonthTotal}, saRevenue=${saRevenue}, deductions=${totalDeduction}, net=${netAmount}`
+        );
+
+        // Atomically increment withdrawable_balance and record the settlement
+        await db.collection('users').doc(saDoc.id).update({
+          withdrawable_balance: FieldValue.increment(netAmount),
+          last_monthly_settlement: {
+            month: monthStr,
+            gross_revenue: lastMonthTotal,
+            sa_revenue: saRevenue,
+            deductions: totalDeduction,
+            net_credited: netAmount,
+            processed_at: Timestamp.now(),
+          },
+        });
+
+        logger.info(`✅ SA ${saDoc.id} credited TZS ${netAmount}`);
+      } catch (e) {
+        logger.error(`❌ Failed to update SA ${saDoc.id}: ${e.message}`);
+      }
+    }
+
+    logger.info('Monthly SA balance update complete');
+  }
+);
 
 async function computeAndUpdateCustomerStatus(customerId) {
   const ref = db.collection('home_customers').doc(customerId);
@@ -953,8 +1059,13 @@ exports.resetUserPassword = onRequest(async (request, response) => {
     // Get user by email
     const userRecord = await auth.getUserByEmail(email);
 
-    // Update the user's password
+    // Update the user's password in Firebase Auth
     await auth.updateUser(userRecord.uid, {
+      password: newPassword
+    });
+
+    // Sync the new password to Firestore so the boss can view it
+    await db.collection('users').doc(userRecord.uid).update({
       password: newPassword
     });
 
@@ -979,6 +1090,133 @@ exports.resetUserPassword = onRequest(async (request, response) => {
       });
     }
   }
+});
+
+// --- Nokia Beacon Status Report Function ---
+/**
+ * Called by a RouterOS scheduler script on each MikroTik every 2 minutes.
+ * The script scans /interface bridge host for Nokia OUI (B4:63:6F / B6:63:6F)
+ * and reports which MACs are visible.
+ *
+ * Expected payload:
+ * {
+ *   "mikrotik_id": "firestore_doc_id_of_mikrotik",
+ *   "visible_macs": ["B4:63:6F:96:E0:9E", "B4:63:6F:E9:67:ED"]
+ * }
+ *
+ * RouterOS Script (add to /system scheduler, interval=2m):
+ * :local cfUrl "https://us-central1-lightnet-d2de9.cloudfunctions.net/reportNokiaBeaconStatus"
+ * :local mikrotikId "YOUR_MIKROTIK_FIRESTORE_DOC_ID"
+ * :local macs ""
+ * :local count 0
+ * :foreach h in [/interface bridge host find] do={
+ *   :local mac [/interface bridge host get $h mac-address]
+ *   :if (([:pick $mac 0 8] = "B4:63:6F") || ([:pick $mac 0 8] = "B6:63:6F")) do={
+ *     :if ($count > 0) do={ :set macs ($macs . ",") }
+ *     :set macs ($macs . "\"" . $mac . "\"")
+ *     :set count ($count + 1)
+ *   }
+ * }
+ * :local payload ("{\"mikrotik_id\":\"" . $mikrotikId . "\",\"visible_macs\":[" . $macs . "]}")
+ * /tool fetch url=$cfUrl mode=https http-method=post http-header-field="Content-Type:application/json" http-data=$payload output=none
+ */
+exports.reportNokiaBeaconStatus = onRequest(async (request, response) => {
+  response.set('Access-Control-Allow-Origin', '*');
+  response.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  response.set('Access-Control-Allow-Headers', 'Content-Type');
+
+  if (request.method === 'OPTIONS') { response.status(204).send(''); return; }
+  if (request.method !== 'POST') {
+    response.status(405).json({ error: 'Method not allowed' });
+    return;
+  }
+
+  try {
+    const { mikrotik_id, visible_macs } = request.body;
+    if (!mikrotik_id) {
+      response.status(400).json({ error: 'mikrotik_id is required' });
+      return;
+    }
+
+    const visibleSet = new Set(
+      (visible_macs || []).map(m => m.toUpperCase().trim())
+    );
+    const now = FieldValue.serverTimestamp();
+    const offlineCutoff = new Date(Date.now() - 5 * 60 * 1000); // 5 minutes
+
+    // Fetch all beacons assigned to this MikroTik
+    const snap = await db.collection('nokia_beacons')
+      .where('mikrotik_id', '==', mikrotik_id)
+      .get();
+
+    if (snap.empty) {
+      response.status(200).json({ success: true, checked: 0, message: 'No beacons registered for this MikroTik' });
+      return;
+    }
+
+    const batch = db.batch();
+    let onlineCount = 0;
+    let offlineCount = 0;
+
+    for (const doc of snap.docs) {
+      const mac = (doc.data().mac_address || '').toUpperCase().trim();
+      const isVisible = visibleSet.has(mac);
+      const update = {
+        status: isVisible ? 'online' : 'offline',
+        last_checked: now,
+      };
+      if (isVisible) {
+        update.last_seen = now;
+        onlineCount++;
+      } else {
+        offlineCount++;
+      }
+      batch.update(doc.ref, update);
+    }
+
+    await batch.commit();
+    logger.info(`Nokia beacon report: mikrotik=${mikrotik_id}, online=${onlineCount}, offline=${offlineCount}`);
+    response.status(200).json({ success: true, online: onlineCount, offline: offlineCount });
+
+  } catch (error) {
+    logger.error('Error processing Nokia beacon report:', error);
+    response.status(500).json({ error: error.message });
+  }
+});
+
+// --- Stale Nokia Beacon Checker (Scheduled every 30 minutes) ---
+exports.staleNokiaBeacons = onSchedule('every 30 minutes', async () => {
+  const staleThreshold  = new Date(Date.now() - 6  * 60 * 60 * 1000);  // 6 hours  → stale
+  const offlineThreshold = new Date(Date.now() - 24 * 60 * 60 * 1000); // 24 hours → offline
+
+  const snap = await db.collection('nokia_beacons').get();
+  if (snap.empty) return;
+
+  const batch = db.batch();
+  let changed = 0;
+
+  for (const doc of snap.docs) {
+    const data   = doc.data();
+    const status = data.status || 'unknown';
+    const lastSeen = data.last_seen?.toDate?.() || null;
+
+    if (!lastSeen) continue;
+
+    let newStatus = status;
+    if (lastSeen < offlineThreshold) {
+      newStatus = 'offline';
+    } else if (lastSeen < staleThreshold && status === 'online') {
+      newStatus = 'stale';
+    }
+
+    if (newStatus !== status) {
+      batch.update(doc.ref, { status: newStatus });
+      changed++;
+    }
+  }
+
+  await batch.commit();
+  logger.info(`staleNokiaBeacons: ${changed} beacon(s) status updated`);
 });
 
 // --- Store Payment Data Function (Cloud Function v2) ---

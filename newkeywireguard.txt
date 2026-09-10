@@ -95,7 +95,11 @@ cookie scrip clear
 
 /system scheduler add name=run-clear-mac-cookie start-time=02:00:00 interval=1d on-event=clear-mac-cookie
 
+9,14,15,16,18,19,28,29,30,31,32,33,34,39
+/ip traffic-flow set enabled=no
 
+JUMUA KEY
+snp_43c03ddcac09bfe5d446ba69c8f5cefa99515d547eb2fc06cb0fa84d3c4496c0
 
 
 
