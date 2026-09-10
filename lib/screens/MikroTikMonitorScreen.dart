@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import '../services/MikroTikMonitorService.dart';
+import '../services/firestore_cost_guards.dart';
 import '../theme/app_theme.dart';
 
 class MikroTikMonitorScreen extends StatefulWidget {
@@ -307,109 +308,25 @@ class _MikroTikMonitorScreenState extends State<MikroTikMonitorScreen> {
                       ],
                     ),
                     Builder(builder: (_) {
-                      final wanStats = data['wan_stats'] as Map<String, dynamic>?;
+                      final wanStats = FirestoreCostGuards.inlineWanStats(data);
                       if (wanStats == null) {
-                        return FutureBuilder<Map<String, dynamic>?>(
-                          future: MikroTikMonitorService.fetchRadacctStats(ipAddress),
-                          builder: (ctx, ras) {
-                            if (ras.connectionState == ConnectionState.waiting) {
-                              return Padding(
-                                padding: const EdgeInsets.only(top: 4),
-                                child: Row(children: [
-                                  SizedBox(width: 11, height: 11,
-                                      child: CircularProgressIndicator(strokeWidth: 1.5, color: Colors.grey[400])),
-                                  const SizedBox(width: 6),
-                                  Text('Loading usage…',
-                                      style: TextStyle(fontSize: 11, color: Colors.grey[500], fontStyle: FontStyle.italic)),
-                                ]),
-                              );
-                            }
-                            final r = ras.data;
-                            if (r == null) {
-                              if (status != 'online') return const SizedBox.shrink();
-                              return Padding(
-                                padding: const EdgeInsets.only(top: 4),
-                                child: Row(children: [
-                                  Icon(Icons.info_outline, size: 13, color: Colors.grey[400]),
-                                  const SizedBox(width: 4),
-                                  Text('No usage data found',
-                                      style: TextStyle(fontSize: 11, color: Colors.grey[500], fontStyle: FontStyle.italic)),
-                                ]),
-                              );
-                            }
-                            final download   = r['rx_bytes'] as int? ?? 0;
-                            final upload     = r['tx_bytes'] as int? ?? 0;
-                            final avgBps     = r['avg_bps'] as int? ?? 0;
-                            final daytimeBps = r['daytime_avg_bps'] as int? ?? 0;
-                            final recentBps  = r['recent_avg_bps'] as int? ?? 0;
-                            final sessions   = r['sessions'] as int? ?? 0;
-                            final active     = r['active_sessions'] as int? ?? 0;
-                            final hasRecent  = recentBps > 0;
-                            return Padding(
-                              padding: const EdgeInsets.only(top: 4),
-                              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                                // ── NOW row (15-min near-realtime) ─────────────────
-                                if (hasRecent) Row(children: [
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                                    decoration: BoxDecoration(
-                                      color: Colors.purple.withOpacity(0.12),
-                                      borderRadius: BorderRadius.circular(4),
-                                      border: Border.all(color: Colors.purple.withOpacity(0.45)),
-                                    ),
-                                    child: const Text('NOW', style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.purple)),
-                                  ),
-                                  const SizedBox(width: 5),
-                                  Icon(Icons.bolt_rounded, size: 13, color: Colors.purple[700]),
-                                  const SizedBox(width: 2),
-                                  Text(_formatSpeed(recentBps),
-                                      style: TextStyle(fontSize: 13, color: Colors.purple[800], fontWeight: FontWeight.w800)),
-                                  const SizedBox(width: 6),
-                                  Text('(~15 min · accounting)', style: TextStyle(fontSize: 9, color: Colors.grey[500])),
-                                ]),
-                                if (hasRecent) const SizedBox(height: 3),
-                                // ── 24h consumption ────────────────────────────────
-                                Row(children: [
-                                  const Icon(Icons.arrow_circle_down_rounded, size: 13, color: Colors.blue),
-                                  const SizedBox(width: 3),
-                                  Text(_formatBytes(download),
-                                      style: const TextStyle(fontSize: 12, color: Colors.blue, fontWeight: FontWeight.w600)),
-                                  const SizedBox(width: 6),
-                                  Text('↑ ${_formatBytes(upload)}',
-                                      style: const TextStyle(fontSize: 12, color: Colors.orange, fontWeight: FontWeight.w600)),
-                                  const SizedBox(width: 5),
-                                  Text('(24h)', style: TextStyle(fontSize: 10, color: Colors.grey[500])),
-                                ]),
-                                const SizedBox(height: 2),
-                                Row(children: [
-                                  Icon(Icons.speed_rounded, size: 12, color: Colors.green[700]),
-                                  const SizedBox(width: 3),
-                                  Text('${_formatSpeed(avgBps)} 24h avg',
-                                      style: TextStyle(fontSize: 10, color: Colors.green[700])),
-                                  if (daytimeBps > 0) ...[
-                                    const SizedBox(width: 6),
-                                    const Icon(Icons.wb_sunny_rounded, size: 10, color: Colors.deepOrange),
-                                    const SizedBox(width: 2),
-                                    Text('~${_formatSpeed(daytimeBps)} day',
-                                        style: const TextStyle(fontSize: 10, color: Colors.deepOrange)),
-                                  ],
-                                  const SizedBox(width: 8),
-                                  Flexible(child: Text(
-                                    '$sessions sess${active > 0 ? " · $active live" : ""}',
-                                    style: TextStyle(fontSize: 10, color: Colors.grey[600]),
-                                    overflow: TextOverflow.ellipsis,
-                                  )),
-                                ]),
-                              ]),
-                            );
-                          },
+                        return Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Text(
+                            'Open device for usage',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: Colors.grey[500],
+                              fontStyle: FontStyle.italic,
+                            ),
+                          ),
                         );
                       }
                       return Builder(builder: (_) {
-                        final rxBps   = wanStats['rx_bps']   as int? ?? 0;
-                        final txBps   = wanStats['tx_bps']   as int? ?? 0;
-                        final rxBytes = wanStats['rx_bytes'] as int? ?? 0;
-                        final txBytes = wanStats['tx_bytes'] as int? ?? 0;
+                        final rxBps   = _asInt(wanStats['rx_bps']);
+                        final txBps   = _asInt(wanStats['tx_bps']);
+                        final rxBytes = _asInt(wanStats['rx_bytes']);
+                        final txBytes = _asInt(wanStats['tx_bytes']);
                         final liveMbps = (rxBps + txBps) / 1000000;
                         final liveColor = liveMbps >= 50
                             ? Colors.red
@@ -538,6 +455,13 @@ class _MikroTikMonitorScreenState extends State<MikroTikMonitorScreen> {
     if (diff.inDays < 7) return '${diff.inDays}d ago';
 
     return DateFormat('MMM d, HH:mm').format(date);
+  }
+
+  int _asInt(dynamic v) {
+    if (v is int) return v;
+    if (v is num) return v.toInt();
+    if (v is String) return int.tryParse(v) ?? 0;
+    return 0;
   }
 
   String _formatSpeed(int bps) {

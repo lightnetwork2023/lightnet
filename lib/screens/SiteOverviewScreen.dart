@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import '../controllers/ApiService.dart';
 import '../services/SiteService.dart';
 import '../services/MikroTikMonitorService.dart';
+import '../services/firestore_cost_guards.dart';
 import '../theme/app_theme.dart';
 import 'SiteRegistrationScreen.dart';
 import 'FieldDetailsScreen.dart';
@@ -243,89 +244,9 @@ class _SiteOverviewScreenState extends State<SiteOverviewScreen> {
                                           ),
                                         ]),
                                         Builder(builder: (_) {
-                                          final ws = d['wan_stats'] as Map<String, dynamic>?;
+                                          final ws = FirestoreCostGuards.inlineWanStats(d);
                                           if (ws == null) {
-                                            // Fallback to radacct_history aggregation
-                                            return FutureBuilder<Map<String, dynamic>?>(
-                                              future: MikroTikMonitorService.fetchRadacctStats(ip),
-                                              builder: (ctx, ras) {
-                                                if (ras.connectionState == ConnectionState.waiting) {
-                                                  return Padding(
-                                                    padding: const EdgeInsets.only(top: 4),
-                                                    child: Row(children: [
-                                                      SizedBox(
-                                                        width: 10, height: 10,
-                                                        child: CircularProgressIndicator(strokeWidth: 1.5, color: Colors.grey[400]),
-                                                      ),
-                                                      const SizedBox(width: 6),
-                                                      Text('Loading usage…',
-                                                          style: TextStyle(fontSize: 10, color: Colors.grey[500], fontStyle: FontStyle.italic)),
-                                                    ]),
-                                                  );
-                                                }
-                                                final r = ras.data;
-                                                if (r == null) return const SizedBox.shrink();
-                                                final download    = r['rx_bytes'] as int? ?? 0;
-                                                final upload      = r['tx_bytes'] as int? ?? 0;
-                                                final avgBps      = r['avg_bps'] as int? ?? 0;
-                                                final daytimeBps  = r['daytime_avg_bps'] as int? ?? 0;
-                                                final recentBps   = r['recent_avg_bps'] as int? ?? 0;
-                                                final sessions    = r['sessions'] as int? ?? 0;
-                                                final active      = r['active_sessions'] as int? ?? 0;
-                                                final hasRecent   = recentBps > 0;
-                                                return Padding(
-                                                  padding: const EdgeInsets.only(top: 4),
-                                                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                                                    if (hasRecent) Row(children: [
-                                                      Container(
-                                                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                                                        decoration: BoxDecoration(
-                                                          color: Colors.purple.withOpacity(0.10),
-                                                          borderRadius: BorderRadius.circular(4),
-                                                          border: Border.all(color: Colors.purple.withOpacity(0.4)),
-                                                        ),
-                                                        child: const Text('NOW', style: TextStyle(fontSize: 8, fontWeight: FontWeight.bold, color: Colors.purple)),
-                                                      ),
-                                                      const SizedBox(width: 4),
-                                                      Icon(Icons.bolt_rounded, size: 11, color: Colors.purple[700]),
-                                                      Text(_siteFormatSpeed(recentBps),
-                                                          style: TextStyle(fontSize: 12, color: Colors.purple[800], fontWeight: FontWeight.w800)),
-                                                      const SizedBox(width: 4),
-                                                      Text('(~15 min)', style: TextStyle(fontSize: 8, color: Colors.grey[500])),
-                                                    ]),
-                                                    if (hasRecent) const SizedBox(height: 3),
-                                                    Row(children: [
-                                                      const Icon(Icons.arrow_circle_down_rounded, size: 11, color: Colors.blue),
-                                                      const SizedBox(width: 3),
-                                                      Text(_siteFormatBytes(download),
-                                                          style: const TextStyle(fontSize: 11, color: Colors.blue, fontWeight: FontWeight.w600)),
-                                                      const SizedBox(width: 4),
-                                                      Text('↑ ${_siteFormatBytes(upload)}',
-                                                          style: const TextStyle(fontSize: 11, color: Colors.orange, fontWeight: FontWeight.w600)),
-                                                      const SizedBox(width: 4),
-                                                      Text('(24h)', style: TextStyle(fontSize: 9, color: Colors.grey[500])),
-                                                    ]),
-                                                    const SizedBox(height: 2),
-                                                    Row(children: [
-                                                      Icon(Icons.speed_rounded, size: 11, color: Colors.green[700]),
-                                                      const SizedBox(width: 3),
-                                                      Text('${_siteFormatSpeed(avgBps)} avg',
-                                                          style: TextStyle(fontSize: 9, color: Colors.green[700])),
-                                                      const SizedBox(width: 5),
-                                                      if (daytimeBps > 0)
-                                                        Text('☀ ~${_siteFormatSpeed(daytimeBps)} day',
-                                                            style: const TextStyle(fontSize: 9, color: Colors.deepOrange)),
-                                                      const SizedBox(width: 5),
-                                                      Flexible(child: Text(
-                                                        '$sessions sess${active > 0 ? " · $active live" : ""}',
-                                                        style: TextStyle(fontSize: 9, color: Colors.grey[600]),
-                                                        overflow: TextOverflow.ellipsis,
-                                                      )),
-                                                    ]),
-                                                  ]),
-                                                );
-                                              },
-                                            );
+                                            return const SizedBox.shrink();
                                           }
                                           return Builder(builder: (_) {
                                             final rxBps = ws['rx_bps'] as int? ?? 0;

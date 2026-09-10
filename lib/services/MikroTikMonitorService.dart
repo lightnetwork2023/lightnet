@@ -1,8 +1,16 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'firestore_cost_guards.dart';
+
+class _CachedRadacct {
+  _CachedRadacct(this.data, this.at);
+  final Map<String, dynamic>? data;
+  final DateTime at;
+}
 
 class MikroTikMonitorService {
   static final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   static const String _collection = 'mikrotik_devices';
+  static final Map<String, _CachedRadacct> _radacctCache = {};
 
   static Future<void> addMikroTikDevice({
     required String name,
@@ -131,12 +139,17 @@ class MikroTikMonitorService {
   /// Returns a map: { rx_bytes, tx_bytes, sessions, source } or null if no match.
   static Future<Map<String, dynamic>?> fetchRadacctStats(String nasIp) async {
     if (nasIp.isEmpty) return null;
+    final cached = _radacctCache[nasIp];
+    if (cached != null &&
+        DateTime.now().difference(cached.at) < FirestoreCostGuards.radacctCacheTtl) {
+      return cached.data;
+    }
     try {
       // Try the primary field first.
       QuerySnapshot snap = await _firestore
           .collection('radacct_history')
           .where('NAS_IP_Address', isEqualTo: nasIp)
-          .limit(500)
+          .limit(FirestoreCostGuards.maxRadacctDocs)
           .get();
 
       String source = 'NAS_IP_Address';
@@ -146,12 +159,15 @@ class MikroTikMonitorService {
         snap = await _firestore
             .collection('radacct_history')
             .where('Mikrotik_Host_IP', isEqualTo: nasIp)
-            .limit(500)
+            .limit(FirestoreCostGuards.maxRadacctDocs)
             .get();
         source = 'Mikrotik_Host_IP';
       }
 
-      if (snap.docs.isEmpty) return null;
+      if (snap.docs.isEmpty) {
+        _radacctCache[nasIp] = _CachedRadacct(null, DateTime.now());
+        return null;
+      }
 
       // Only account for records in the last 24 hours (in-memory filter).
       final cutoff24h = DateTime.now().subtract(const Duration(hours: 24));
@@ -259,7 +275,7 @@ class MikroTikMonitorService {
           ? ((recent15Download + recent15Upload) * 8) / recentSec.toDouble()
           : 0;
 
-      return {
+      final result = {
         'rx_bytes': totalDownload,              // 24h download (NAS→client)
         'tx_bytes': totalUpload,                // 24h upload   (client→NAS)
         'avg_bps': avgBps.round(),              // 24h wall-clock average throughput
@@ -271,6 +287,8 @@ class MikroTikMonitorService {
         'source': source,
         'last_event': newest,
       };
+      _radacctCache[nasIp] = _CachedRadacct(result, DateTime.now());
+      return result;
     } catch (e) {
       // Likely a missing composite index — return null silently
       return null;

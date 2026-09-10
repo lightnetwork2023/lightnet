@@ -619,11 +619,14 @@ class HomeInternetService {
       if (zone != null && zone.isNotEmpty && data['zone'] != zone) continue;
       if (customerType != null && customerType.isNotEmpty && data['customer_type'] != customerType) continue;
 
-      // Read all payments and filter in memory by approved_at to avoid any index requirements
+      // Date-bounded query — do not download every historical payment.
       final allSnap = await _db
           .collection(customersCol)
           .doc(c.id)
           .collection('payments')
+          .where('approved_at', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
+          .where('approved_at', isLessThan: Timestamp.fromDate(end))
+          .limit(100)
           .get();
       for (final p in allSnap.docs) {
         final m = p.data();

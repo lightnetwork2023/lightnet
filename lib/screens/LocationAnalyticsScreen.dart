@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../services/firestore_cost_guards.dart';
 import '../theme/app_theme.dart';
 import '../widgets/modern_components.dart';
 import 'LocationManagementScreen.dart';
@@ -25,7 +26,9 @@ class _LocationAnalyticsScreenState extends State<LocationAnalyticsScreen> {
   bool _isLoading = true;
   List<LocationStats> _locationStats = [];
   String? _error;
-  TimePeriod _selectedPeriod = TimePeriod.thisMonth; // Default: this month
+  TimePeriod _selectedPeriod = TimePeriod.today;
+  bool _usedMetadataTotals = false;
+  bool _paymentsCapped = false;
   DateTime? _customStartDate;
   DateTime? _customEndDate;
 
@@ -42,24 +45,44 @@ class _LocationAnalyticsScreenState extends State<LocationAnalyticsScreen> {
     });
 
     try {
-      // Calculate date range based on selected period
-      final dateRange = _getDateRange();
-      
-      // Query payments within the selected period
-      Query query = _firestore.collection('payments');
-      
-      if (dateRange['start'] != null) {
-        query = query.where('created_at', isGreaterThanOrEqualTo: dateRange['start']);
-      }
-      if (dateRange['end'] != null) {
-        query = query.where('created_at', isLessThan: dateRange['end']);
+      _usedMetadataTotals = false;
+      _paymentsCapped = false;
+
+      DateTimeRangeBounds? bounds;
+      try {
+        bounds = FirestoreCostGuards.paymentQueryBounds(
+          period: _periodKey(_selectedPeriod),
+          now: DateTime.now(),
+          customStart: _customStartDate,
+          customEnd: _customEndDate,
+        );
+      } catch (e) {
+        setState(() {
+          _error = e.toString();
+          _isLoading = false;
+        });
+        return;
       }
 
-      final paymentsSnapshot = await query.get();
+      QuerySnapshot? paymentsSnapshot;
+      if (bounds == null) {
+        // Year / all-time: use location metadata (already incremented on each pay).
+        _usedMetadataTotals = true;
+      } else {
+        Query query = _firestore
+            .collection('payments')
+            .where('created_at', isGreaterThanOrEqualTo: Timestamp.fromDate(bounds.start))
+            .where('created_at', isLessThan: Timestamp.fromDate(bounds.end))
+            .limit(FirestoreCostGuards.maxPaymentDocs);
+        paymentsSnapshot = await query.get();
+        _paymentsCapped =
+            paymentsSnapshot.docs.length >= FirestoreCostGuards.maxPaymentDocs;
+      }
 
       // Group payments by location
       Map<String, LocationStatsData> locationData = {};
 
+      if (paymentsSnapshot != null) {
       for (var doc in paymentsSnapshot.docs) {
         final data = doc.data() as Map<String, dynamic>;
         final location = data['location'] as String? ?? 'Unknown';
@@ -84,9 +107,24 @@ class _LocationAnalyticsScreenState extends State<LocationAnalyticsScreen> {
           }
         }
       }
+      }
 
       // Get ALL locations from locations collection
       final locationsSnapshot = await _firestore.collection('locations').get();
+
+      if (_usedMetadataTotals) {
+        for (var doc in locationsSnapshot.docs) {
+          final nested = doc.data()['metadata'];
+          final meta = nested is Map ? Map<String, dynamic>.from(nested) : <String, dynamic>{};
+          locationData[doc.id] = LocationStatsData(
+            totalRevenue: (meta['total_revenue'] as num?)?.toDouble() ?? 0,
+            paymentCount: (meta['payment_count'] as num?)?.toInt() ?? 0,
+            lastPaymentAt: meta['last_payment_at'] is Timestamp
+                ? meta['last_payment_at'] as Timestamp
+                : null,
+          );
+        }
+      }
 
       // Build stats list - include ALL locations, even those with no payments
       List<LocationStats> stats = [];
@@ -108,7 +146,8 @@ class _LocationAnalyticsScreenState extends State<LocationAnalyticsScreen> {
         ));
       }
 
-      // Aggregate sublocation data into main locations
+      // Payment-query path only: metadata on the parent already includes children.
+      if (!_usedMetadataTotals)
       for (var mainLocation in stats.where((s) => s.type == 'main')) {
         // Find all sublocations of this main location
         final sublocations = stats.where((s) => s.parentLocation == mainLocation.locationId);
@@ -159,45 +198,21 @@ class _LocationAnalyticsScreenState extends State<LocationAnalyticsScreen> {
     }
   }
 
-  Map<String, Timestamp?> _getDateRange() {
-    final now = DateTime.now();
-    DateTime? start;
-    DateTime? end;
-
-    switch (_selectedPeriod) {
+  String _periodKey(TimePeriod period) {
+    switch (period) {
       case TimePeriod.today:
-        start = DateTime(now.year, now.month, now.day);
-        end = DateTime(now.year, now.month, now.day, 23, 59, 59);
-        break;
+        return 'today';
       case TimePeriod.last24Hours:
-        start = now.subtract(const Duration(hours: 24));
-        end = now;
-        break;
+        return 'last24Hours';
       case TimePeriod.thisMonth:
-        start = DateTime(now.year, now.month, 1);
-        end = DateTime(now.year, now.month + 1, 1);
-        break;
+        return 'thisMonth';
       case TimePeriod.lastMonth:
-        final lastMonth = DateTime(now.year, now.month - 1, 1);
-        start = lastMonth;
-        end = DateTime(now.year, now.month, 1);
-        break;
+        return 'lastMonth';
       case TimePeriod.thisYear:
-        start = DateTime(now.year, 1, 1);
-        end = DateTime(now.year + 1, 1, 1);
-        break;
+        return 'thisYear';
       case TimePeriod.custom:
-        if (_customStartDate != null && _customEndDate != null) {
-          start = _customStartDate;
-          end = _customEndDate!.add(const Duration(days: 1));
-        }
-        break;
+        return 'custom';
     }
-
-    return {
-      'start': start != null ? Timestamp.fromDate(start) : null,
-      'end': end != null ? Timestamp.fromDate(end) : null,
-    };
   }
 
   String _getPeriodLabel() {
@@ -211,7 +226,7 @@ class _LocationAnalyticsScreenState extends State<LocationAnalyticsScreen> {
       case TimePeriod.lastMonth:
         return 'Last Month';
       case TimePeriod.thisYear:
-        return 'This Year';
+        return 'All time (summary)';
       case TimePeriod.custom:
         if (_customStartDate != null && _customEndDate != null) {
           return '${_formatDate(_customStartDate!)} - ${_formatDate(_customEndDate!)}';
@@ -375,7 +390,7 @@ class _LocationAnalyticsScreenState extends State<LocationAnalyticsScreen> {
               Icons.calendar_month,
             ),
             _buildFilterOption(
-              'This Year',
+              'All time (summary)',
               TimePeriod.thisYear,
               Icons.date_range,
             ),
@@ -772,6 +787,16 @@ class _LocationAnalyticsScreenState extends State<LocationAnalyticsScreen> {
 
     return Column(
       children: [
+        if (_usedMetadataTotals || _paymentsCapped)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            child: Text(
+              _usedMetadataTotals
+                  ? 'Showing stored location totals (not a full payment download).'
+                  : 'Showing up to ${FirestoreCostGuards.maxPaymentDocs} payments in this period.',
+              style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+            ),
+          ),
         // Summary Header
         _buildSummaryHeader(),
         // Location List

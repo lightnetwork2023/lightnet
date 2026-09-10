@@ -22,7 +22,7 @@ void main() async {
   // Enable Firestore offline persistence with optimized settings
   FirebaseFirestore.instance.settings = const Settings(
     persistenceEnabled: true,
-    cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
+    cacheSizeBytes: 50 * 1024 * 1024,
   );
 
   // Initialize controllers globally
