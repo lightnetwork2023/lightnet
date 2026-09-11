@@ -56,20 +56,4 @@ void main() {
     expect(r.start, DateTime(2026, 9, 1));
     expect(r.end, DateTime(2026, 9, 8));
   });
-
-  test('inlineWanStats prefers wan_stats then Flask live_speed fields', () {
-    expect(FirestoreCostGuards.inlineWanStats({}), isNull);
-
-    final fromFlask = FirestoreCostGuards.inlineWanStats({
-      'live_speed': {'rx_bps': 1000, 'tx_bps': 2000},
-      'wan_traffic_total': {'rx_bytes': 10, 'tx_bytes': 20},
-    });
-    expect(fromFlask!['rx_bps'], 1000);
-    expect(fromFlask['tx_bytes'], 20);
-
-    final legacy = FirestoreCostGuards.inlineWanStats({
-      'wan_stats': {'rx_bps': 5},
-    });
-    expect(legacy!['rx_bps'], 5);
-  });
 }

@@ -1,0 +1,33 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Old MikroTik builds scanned this collection (hundreds of docs per router).
+    // New app does not read it. Admin SDK / Cloud Functions still can.
+    match /radacct_history/{id} {
+      allow read, write: if false;
+    }
+
+    // Top-level hotspot payments (~200k docs). Old analytics did an unbounded list.
+    // Single-doc get is fine; list must send a limit (new app uses <= 3000).
+    match /payments/{id} {
+      allow get: if isSignedIn();
+      allow list: if isSignedIn()
+        && request.query.limit is number
+        && request.query.limit > 0
+        && request.query.limit <= 3000;
+      allow create, update, delete: if isSignedIn();
+    }
+
+    // All other collections: signed-in app users only.
+    // Exclude the two collections above so this catch-all cannot override them.
+    match /{collection}/{document=**} {
+      allow read, write: if isSignedIn()
+        && collection != 'radacct_history'
+        && collection != 'payments';
+    }
+  }
+}

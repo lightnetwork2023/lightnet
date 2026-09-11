@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import '../services/MikroTikMonitorService.dart';
-import '../services/firestore_cost_guards.dart';
 import '../theme/app_theme.dart';
 
 class MikroTikMonitorScreen extends StatefulWidget {
@@ -214,7 +213,6 @@ class _MikroTikMonitorScreenState extends State<MikroTikMonitorScreen> {
     final ipAddress = data['ipAddress'] ?? '';
     final location = data['location'] ?? '';
     final lastSeen = data['lastSeen'] as Timestamp?;
-    final lastChecked = data['lastChecked'] as Timestamp?;
 
     Color statusColor;
     IconData statusIcon;
@@ -307,72 +305,6 @@ class _MikroTikMonitorScreenState extends State<MikroTikMonitorScreen> {
                         ),
                       ],
                     ),
-                    Builder(builder: (_) {
-                      final wanStats = FirestoreCostGuards.inlineWanStats(data);
-                      if (wanStats == null) {
-                        return Padding(
-                          padding: const EdgeInsets.only(top: 4),
-                          child: Text(
-                            'Open device for usage',
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: Colors.grey[500],
-                              fontStyle: FontStyle.italic,
-                            ),
-                          ),
-                        );
-                      }
-                      return Builder(builder: (_) {
-                        final rxBps   = _asInt(wanStats['rx_bps']);
-                        final txBps   = _asInt(wanStats['tx_bps']);
-                        final rxBytes = _asInt(wanStats['rx_bytes']);
-                        final txBytes = _asInt(wanStats['tx_bytes']);
-                        final liveMbps = (rxBps + txBps) / 1000000;
-                        final liveColor = liveMbps >= 50
-                            ? Colors.red
-                            : liveMbps >= 20
-                                ? Colors.deepOrange
-                                : Colors.green[700]!;
-                        // staleness from wan_updated_at
-                        final updatedAt = data['wan_updated_at'];
-                        String staleLabel = '';
-                        if (updatedAt is Timestamp) {
-                          final diffMin = DateTime.now().difference(updatedAt.toDate()).inMinutes;
-                          if (diffMin >= 5) staleLabel = ' · ${diffMin}m ago';
-                        }
-                        return Padding(
-                          padding: const EdgeInsets.only(top: 4),
-                          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                            Row(children: [
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                                decoration: BoxDecoration(
-                                  color: liveColor.withOpacity(0.12),
-                                  borderRadius: BorderRadius.circular(4),
-                                  border: Border.all(color: liveColor.withOpacity(0.5)),
-                                ),
-                                child: Text('SOS LIVE$staleLabel', style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: liveColor)),
-                              ),
-                              const SizedBox(width: 6),
-                              const Icon(Icons.arrow_circle_down_rounded, size: 13, color: Colors.blue),
-                              const SizedBox(width: 3),
-                              Text(_formatSpeed(rxBps),
-                                  style: const TextStyle(fontSize: 13, color: Colors.blue, fontWeight: FontWeight.w800)),
-                              const SizedBox(width: 8),
-                              const Icon(Icons.arrow_circle_up_rounded, size: 13, color: Colors.orange),
-                              const SizedBox(width: 3),
-                              Text(_formatSpeed(txBps),
-                                  style: const TextStyle(fontSize: 13, color: Colors.orange, fontWeight: FontWeight.w800)),
-                            ]),
-                            const SizedBox(height: 2),
-                            Text(
-                              '↓${_formatBytes(rxBytes)}  ↑${_formatBytes(txBytes)}  (cumulative WAN)',
-                              style: TextStyle(fontSize: 10, color: Colors.grey[500]),
-                            ),
-                          ]),
-                        );
-                      });
-                    }),
                     if (lastSeen != null) ...[
                       const SizedBox(height: 2),
                       Row(
@@ -455,26 +387,6 @@ class _MikroTikMonitorScreenState extends State<MikroTikMonitorScreen> {
     if (diff.inDays < 7) return '${diff.inDays}d ago';
 
     return DateFormat('MMM d, HH:mm').format(date);
-  }
-
-  int _asInt(dynamic v) {
-    if (v is int) return v;
-    if (v is num) return v.toInt();
-    if (v is String) return int.tryParse(v) ?? 0;
-    return 0;
-  }
-
-  String _formatSpeed(int bps) {
-    if (bps >= 1000000) return '${(bps / 1000000).toStringAsFixed(1)} Mbps';
-    if (bps >= 1000) return '${(bps / 1000).toStringAsFixed(0)} Kbps';
-    return '$bps bps';
-  }
-
-  String _formatBytes(int bytes) {
-    if (bytes >= 1073741824) return '${(bytes / 1073741824).toStringAsFixed(1)} GB';
-    if (bytes >= 1048576) return '${(bytes / 1048576).toStringAsFixed(1)} MB';
-    if (bytes >= 1024) return '${(bytes / 1024).toStringAsFixed(0)} KB';
-    return '$bytes B';
   }
 
   void _showAddDeviceDialog() {
@@ -752,23 +664,6 @@ class _MikroTikMonitorScreenState extends State<MikroTikMonitorScreen> {
                 _detailRow('Last Checked', _formatTimestamp(data['lastChecked'])),
               _detailRow('WAN Interface', data['wanInterface'] ?? 'ether1'),
               _detailRow('RouterOS User', data['username'] ?? 'admin'),
-              if (data['wan_stats'] != null) ...[
-                const Divider(height: 20),
-                const Text('WAN Statistics',
-                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-                const SizedBox(height: 6),
-                _detailRow('Download Speed',
-                    _formatSpeed((data['wan_stats']['rx_bps'] as int?) ?? 0)),
-                _detailRow('Upload Speed',
-                    _formatSpeed((data['wan_stats']['tx_bps'] as int?) ?? 0)),
-                _detailRow('Total RX',
-                    _formatBytes((data['wan_stats']['rx_bytes'] as int?) ?? 0)),
-                _detailRow('Total TX',
-                    _formatBytes((data['wan_stats']['tx_bytes'] as int?) ?? 0)),
-                if (data['wan_updated_at'] != null)
-                  _detailRow('Stats Updated',
-                      _formatTimestamp(data['wan_updated_at'] as Timestamp)),
-              ],
             ],
           ),
         ),

@@ -4,7 +4,6 @@ import 'package:intl/intl.dart';
 import '../controllers/ApiService.dart';
 import '../services/SiteService.dart';
 import '../services/MikroTikMonitorService.dart';
-import '../services/firestore_cost_guards.dart';
 import '../theme/app_theme.dart';
 import 'SiteRegistrationScreen.dart';
 import 'FieldDetailsScreen.dart';
@@ -243,61 +242,6 @@ class _SiteOverviewScreenState extends State<SiteOverviewScreen> {
                                             ),
                                           ),
                                         ]),
-                                        Builder(builder: (_) {
-                                          final ws = FirestoreCostGuards.inlineWanStats(d);
-                                          if (ws == null) {
-                                            return const SizedBox.shrink();
-                                          }
-                                          return Builder(builder: (_) {
-                                            final rxBps = ws['rx_bps'] as int? ?? 0;
-                                            final txBps = ws['tx_bps'] as int? ?? 0;
-                                            final rxBytes = ws['rx_bytes'] as int? ?? 0;
-                                            final txBytes = ws['tx_bytes'] as int? ?? 0;
-                                            final liveMbps = (rxBps + txBps) / 1000000;
-                                            final liveColor = liveMbps >= 50
-                                                ? Colors.red
-                                                : liveMbps >= 20
-                                                    ? Colors.deepOrange
-                                                    : Colors.green[700]!;
-                                            final updAt = d['wan_updated_at'];
-                                            String stale = '';
-                                            if (updAt is Timestamp) {
-                                              final diff = DateTime.now().difference(updAt.toDate()).inMinutes;
-                                              if (diff >= 5) stale = ' · ${diff}m ago';
-                                            }
-                                            return Padding(
-                                              padding: const EdgeInsets.only(top: 4),
-                                              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                                                Row(children: [
-                                                  Container(
-                                                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                                                    decoration: BoxDecoration(
-                                                      color: liveColor.withOpacity(0.12),
-                                                      borderRadius: BorderRadius.circular(4),
-                                                      border: Border.all(color: liveColor.withOpacity(0.4)),
-                                                    ),
-                                                    child: Text('SOS$stale', style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: liveColor)),
-                                                  ),
-                                                  const SizedBox(width: 5),
-                                                  Icon(Icons.arrow_circle_down_rounded, size: 12, color: Colors.blue),
-                                                  const SizedBox(width: 2),
-                                                  Text(_siteFormatSpeed(rxBps),
-                                                      style: const TextStyle(fontSize: 11, color: Colors.blue, fontWeight: FontWeight.w600)),
-                                                  const SizedBox(width: 6),
-                                                  const Icon(Icons.arrow_circle_up_rounded, size: 12, color: Colors.orange),
-                                                  const SizedBox(width: 2),
-                                                  Text(_siteFormatSpeed(txBps),
-                                                      style: const TextStyle(fontSize: 11, color: Colors.orange, fontWeight: FontWeight.w600)),
-                                                ]),
-                                                const SizedBox(height: 2),
-                                                Text(
-                                                  '↓${_siteFormatBytes(rxBytes)} ↑${_siteFormatBytes(txBytes)}  (cumulative)',
-                                                  style: TextStyle(fontSize: 9, color: Colors.grey[500]),
-                                                ),
-                                              ]),
-                                            );
-                                          });
-                                        }),
                                       ],
                                     ),
                                   ),
@@ -401,19 +345,6 @@ class _SiteOverviewScreenState extends State<SiteOverviewScreen> {
         );
       },
     );
-  }
-
-  String _siteFormatSpeed(int bps) {
-    if (bps >= 1000000) return '${(bps / 1000000).toStringAsFixed(1)} Mbps';
-    if (bps >= 1000) return '${(bps / 1000).toStringAsFixed(0)} Kbps';
-    return '$bps bps';
-  }
-
-  String _siteFormatBytes(int bytes) {
-    if (bytes >= 1073741824) return '${(bytes / 1073741824).toStringAsFixed(1)} GB';
-    if (bytes >= 1048576) return '${(bytes / 1048576).toStringAsFixed(1)} MB';
-    if (bytes >= 1024) return '${(bytes / 1024).toStringAsFixed(0)} KB';
-    return '$bytes B';
   }
 
   Widget _statChip({required IconData icon, required String label, required String value, required Color color}) {
@@ -991,7 +922,6 @@ class _MikroTikClientsBottomSheetState extends State<MikroTikClientsBottomSheet>
             ),
             const SizedBox(height: 10),
             Divider(height: 1, color: Colors.grey[200]),
-            _WanStatsBar(deviceData: widget.deviceData),
             Expanded(
               child: allClients.isEmpty
                   ? Center(
@@ -1164,127 +1094,6 @@ class _ClientTile extends StatelessWidget {
       const SizedBox(width: 2),
       Text(text, style: TextStyle(fontSize: 11, color: color, fontWeight: FontWeight.w500)),
     ]);
-  }
-}
-
-// ── WAN Stats Bar ─────────────────────────────────────────────────────
-
-class _WanStatsBar extends StatelessWidget {
-  final Map<String, dynamic> deviceData;
-  const _WanStatsBar({required this.deviceData});
-
-  static int _safeInt(dynamic v) {
-    if (v == null) return 0;
-    if (v is int) return v;
-    if (v is num) return v.toInt();
-    if (v is String) return int.tryParse(v) ?? double.tryParse(v)?.toInt() ?? 0;
-    return 0;
-  }
-
-  Map<String, int> _extractStats() {
-    final nested = deviceData['wan_stats'];
-    final Map src = (nested is Map) ? nested : deviceData;
-    int pick(List<String> keys) {
-      for (final k in keys) {
-        final v = _safeInt(src[k]);
-        if (v != 0) return v;
-      }
-      return 0;
-    }
-    return {
-      'rxBps': pick(['rx_bps', 'wan_rx_bps']),
-      'txBps': pick(['tx_bps', 'wan_tx_bps']),
-      'todayRx': pick(['today_rx_bytes']),
-      'todayTx': pick(['today_tx_bytes']),
-      'monthRx': pick(['month_rx_bytes']),
-      'monthTx': pick(['month_tx_bytes']),
-    };
-  }
-
-  static String _bpsLabel(int bps) {
-    if (bps <= 0) return '0 Mbps';
-    if (bps < 1000000) return '${(bps / 1000).toStringAsFixed(0)} Kbps';
-    return '${(bps / 1000000).toStringAsFixed(1)} Mbps';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final s = _extractStats();
-    final hasSpeed = s['rxBps']! > 0 || s['txBps']! > 0;
-    final hasToday = s['todayRx']! > 0 || s['todayTx']! > 0;
-    final hasMonth = s['monthRx']! > 0 || s['monthTx']! > 0;
-    if (!hasSpeed && !hasToday && !hasMonth) return const SizedBox.shrink();
-
-    return Container(
-      margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [Colors.green.shade50, Colors.blue.shade50],
-          begin: Alignment.centerLeft,
-          end: Alignment.centerRight,
-        ),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.green.shade100),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Icon(Icons.speed_rounded, size: 13, color: Colors.green),
-              const SizedBox(width: 5),
-              const Text('WAN', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.green)),
-              const Spacer(),
-              if (hasSpeed) ...[  
-                Icon(Icons.arrow_downward_rounded, size: 12, color: Colors.green[700]),
-                const SizedBox(width: 2),
-                Text(_bpsLabel(s['rxBps']!),
-                    style: TextStyle(fontSize: 12, color: Colors.green[700], fontWeight: FontWeight.w700)),
-                const SizedBox(width: 10),
-                Icon(Icons.arrow_upward_rounded, size: 12, color: Colors.orange[700]),
-                const SizedBox(width: 2),
-                Text(_bpsLabel(s['txBps']!),
-                    style: TextStyle(fontSize: 12, color: Colors.orange[700], fontWeight: FontWeight.w700)),
-              ],
-            ],
-          ),
-          if (hasToday || hasMonth) ...[  
-            const SizedBox(height: 6),
-            Divider(height: 1, color: Colors.green.shade100),
-            const SizedBox(height: 6),
-            Row(
-              children: [
-                if (hasToday) _periodBlock('Today', s['todayRx']!, s['todayTx']!),
-                if (hasToday && hasMonth) const SizedBox(width: 20),
-                if (hasMonth) _periodBlock('Month', s['monthRx']!, s['monthTx']!),
-              ],
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _periodBlock(String label, int rx, int tx) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label, style: const TextStyle(fontSize: 10, color: Colors.grey, fontWeight: FontWeight.w500)),
-        const SizedBox(height: 2),
-        Row(children: [
-          Icon(Icons.arrow_downward_rounded, size: 10, color: Colors.green[700]),
-          const SizedBox(width: 2),
-          Text(_SiteOverviewScreenState._formatBytes(rx),
-              style: TextStyle(fontSize: 11, color: Colors.green[700], fontWeight: FontWeight.w600)),
-          const SizedBox(width: 8),
-          Icon(Icons.arrow_upward_rounded, size: 10, color: Colors.orange[700]),
-          const SizedBox(width: 2),
-          Text(_SiteOverviewScreenState._formatBytes(tx),
-              style: TextStyle(fontSize: 11, color: Colors.orange[700], fontWeight: FontWeight.w600)),
-        ]),
-      ],
-    );
   }
 }
 

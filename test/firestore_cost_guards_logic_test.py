@@ -33,24 +33,6 @@ def payment_query_bounds(period, now, custom_start=None, custom_end=None):
     return start, end
 
 
-def inline_wan_stats(data):
-    nested = data.get("wan_stats")
-    if isinstance(nested, dict):
-        return dict(nested)
-    live = data.get("live_speed")
-    total = data.get("wan_traffic_total")
-    if not isinstance(live, dict) and not isinstance(total, dict):
-        return None
-    live = live if isinstance(live, dict) else {}
-    total = total if isinstance(total, dict) else {}
-    return {
-        "rx_bps": live.get("rx_bps", 0),
-        "tx_bps": live.get("tx_bps", 0),
-        "rx_bytes": total.get("rx_bytes", 0),
-        "tx_bytes": total.get("tx_bytes", 0),
-    }
-
-
 class GuardsTest(unittest.TestCase):
     now = datetime(2026, 9, 11, 12, 0, 0)
 
@@ -87,16 +69,6 @@ class GuardsTest(unittest.TestCase):
         )
         self.assertEqual(start, datetime(2026, 9, 1))
         self.assertEqual(end, datetime(2026, 9, 8))
-
-    def test_inline_wan(self):
-        self.assertIsNone(inline_wan_stats({}))
-        flask = inline_wan_stats({
-            "live_speed": {"rx_bps": 1000, "tx_bps": 2000},
-            "wan_traffic_total": {"rx_bytes": 10, "tx_bytes": 20},
-        })
-        self.assertEqual(flask["rx_bps"], 1000)
-        self.assertEqual(flask["tx_bytes"], 20)
-        self.assertEqual(inline_wan_stats({"wan_stats": {"rx_bps": 5}})["rx_bps"], 5)
 
 
 if __name__ == "__main__":
