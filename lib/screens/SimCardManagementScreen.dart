@@ -17,8 +17,15 @@ class SimCardManagementScreen extends StatefulWidget {
 
 class _SimCardManagementScreenState extends State<SimCardManagementScreen> {
   final _searchController = TextEditingController();
+  late final Stream<QuerySnapshot<Map<String, dynamic>>> _simcards;
   String _filterType = 'all';
   bool _exporting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _simcards = _simcardsStream();
+  }
 
   @override
   void dispose() {
@@ -403,7 +410,7 @@ class _SimCardManagementScreenState extends State<SimCardManagementScreen> {
         ],
       ),
       body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-        stream: _simcardsStream(),
+        stream: _simcards,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());

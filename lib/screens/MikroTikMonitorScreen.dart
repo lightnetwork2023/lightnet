@@ -14,6 +14,13 @@ class MikroTikMonitorScreen extends StatefulWidget {
 
 class _MikroTikMonitorScreenState extends State<MikroTikMonitorScreen> {
   String _filterStatus = 'all';
+  late final Stream<QuerySnapshot> _devicesStream;
+
+  @override
+  void initState() {
+    super.initState();
+    _devicesStream = MikroTikMonitorService.getMikroTikDevices();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -83,7 +90,7 @@ class _MikroTikMonitorScreenState extends State<MikroTikMonitorScreen> {
 
   Widget _buildSummaryCards() {
     return StreamBuilder<QuerySnapshot>(
-      stream: MikroTikMonitorService.getMikroTikDevices(),
+      stream: _devicesStream,
       builder: (context, snapshot) {
         if (!snapshot.hasData) {
           return const SizedBox(height: 80);
@@ -162,9 +169,7 @@ class _MikroTikMonitorScreenState extends State<MikroTikMonitorScreen> {
 
   Widget _buildDevicesList() {
     return StreamBuilder<QuerySnapshot>(
-      stream: _filterStatus == 'all'
-          ? MikroTikMonitorService.getMikroTikDevices()
-          : MikroTikMonitorService.getMikroTikDevicesByStatus(_filterStatus),
+      stream: _devicesStream,
       builder: (context, snapshot) {
         if (snapshot.hasError) {
           return Center(child: Text('Error: ${snapshot.error}'));
@@ -174,7 +179,10 @@ class _MikroTikMonitorScreenState extends State<MikroTikMonitorScreen> {
           return const Center(child: CircularProgressIndicator());
         }
 
-        final devices = snapshot.data!.docs;
+        var devices = snapshot.data!.docs;
+        if (_filterStatus != 'all') {
+          devices = devices.where((d) => d['status'] == _filterStatus).toList();
+        }
 
         if (devices.isEmpty) {
           return Center(

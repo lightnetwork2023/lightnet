@@ -75,7 +75,7 @@ class _AgentHomeScreenState extends State<AgentHomeScreen> {
   }
 
   void _triggerBeaconScan() {
-    const interval = Duration(minutes: 1);
+    const interval = Duration(minutes: 3);
     Future.delayed(const Duration(seconds: 3), () {
       if (!mounted) return;
       WifiBeaconScannerService.scanAndReport(forceEnabled: true);

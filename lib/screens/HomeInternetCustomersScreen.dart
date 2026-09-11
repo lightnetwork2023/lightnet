@@ -26,7 +26,14 @@ class HomeInternetCustomersScreen extends StatefulWidget {
 
 class _HomeInternetCustomersScreenState extends State<HomeInternetCustomersScreen> {
   final TextEditingController _searchController = TextEditingController();
+  late final Stream<List<HomeCustomer>> _customersStream;
   String _searchQuery = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _customersStream = HomeInternetService.streamCustomers();
+  }
 
   @override
   void dispose() {
@@ -138,35 +145,9 @@ class _HomeInternetCustomersScreenState extends State<HomeInternetCustomersScree
           ),
           
           // Results count
-          if (_searchQuery.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Row(
-                children: [
-                  Icon(Icons.search_rounded, size: 16, color: AppTheme.textSecondary),
-                  const SizedBox(width: 8),
-                  StreamBuilder<List<HomeCustomer>>(
-                    stream: HomeInternetService.streamCustomers(),
-                    builder: (context, snapshot) {
-                      final customers = snapshot.data ?? [];
-                      final filtered = _filterCustomers(customers);
-                      return Text(
-                        'Found ${filtered.length} customer${filtered.length != 1 ? 's' : ''}',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: AppTheme.textSecondary,
-                        ),
-                      );
-                    },
-                  ),
-                ],
-              ),
-            ),
-          const SizedBox(height: 8),
-          
-          // Customer List
           Expanded(
             child: StreamBuilder<List<HomeCustomer>>(
-        stream: HomeInternetService.streamCustomers(),
+        stream: _customersStream,
         builder: (context, snapshot) {
           // Show cached data immediately, no loading spinner
           if (snapshot.hasError) {

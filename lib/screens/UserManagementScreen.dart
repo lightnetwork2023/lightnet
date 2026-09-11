@@ -31,6 +31,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
   List<String> _selectedLocations = [];
   List<String> _technicianSelectedLocations = [];
   String _searchQuery = '';
+  late final Stream<QuerySnapshot> _usersStream;
   bool _isLoading = false;
   List<Map<String, dynamic>> _availableAmountOptions = [];
   String _selectedQuantity = '';
@@ -38,6 +39,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
   @override
   void initState() {
     super.initState();
+    _usersStream = FirebaseFirestore.instance.collection('users').snapshots();
     if (locationController.locations.isEmpty) {
       locationController.loadLocations();
     }
@@ -1812,7 +1814,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
           ),
           Expanded(
             child: StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance.collection('users').snapshots(),
+              stream: _usersStream,
               builder: (context, snapshot) {
                 if (snapshot.hasError) {
                   return Center(child: Text('Error: ${snapshot.error}'));

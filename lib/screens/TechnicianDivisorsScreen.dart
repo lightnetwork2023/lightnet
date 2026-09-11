@@ -14,6 +14,16 @@ class _TechnicianDivisorsScreenState extends State<TechnicianDivisorsScreen> {
   final TextEditingController _searchCtrl = TextEditingController();
   String _query = '';
   String _filter = 'all'; // all | flagged | unset
+  late final Stream<QuerySnapshot> _techStream;
+
+  @override
+  void initState() {
+    super.initState();
+    _techStream = FirebaseFirestore.instance
+        .collection('users')
+        .where('role', isEqualTo: 'technician')
+        .snapshots();
+  }
 
   static const double _defaultDivisor = 30000.0;
 
@@ -76,10 +86,7 @@ class _TechnicianDivisorsScreenState extends State<TechnicianDivisorsScreen> {
           ),
           Expanded(
             child: StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance
-                  .collection('users')
-                  .where('role', isEqualTo: 'technician')
-                  .snapshots(),
+              stream: _techStream,
               builder: (context, snap) {
                 if (snap.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator());

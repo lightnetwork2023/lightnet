@@ -83,7 +83,8 @@ class _ExpenseAnalyticsScreenState extends State<ExpenseAnalyticsScreen> {
       // Query expenses
       Query query = _firestore.collection('expenses')
           .where('submitted_at', isGreaterThanOrEqualTo: Timestamp.fromDate(startDate))
-          .where('submitted_at', isLessThanOrEqualTo: Timestamp.fromDate(endDate));
+          .where('submitted_at', isLessThanOrEqualTo: Timestamp.fromDate(endDate))
+          .limit(500);
       
       final snapshot = await query.get();
       
@@ -1082,7 +1083,8 @@ class _ExpenseAnalyticsScreenState extends State<ExpenseAnalyticsScreen> {
     // Use a single query that doesn't require composite index
     final query = _firestore
         .collection('expenses')
-        .where('status', isEqualTo: 'pending');
+        .where('status', isEqualTo: 'pending')
+        .limit(100);
     
     return StreamBuilder<QuerySnapshot>(
       stream: query.snapshots(),

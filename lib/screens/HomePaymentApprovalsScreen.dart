@@ -19,6 +19,28 @@ class HomePaymentApprovalsScreen extends StatefulWidget {
 
 class _HomePaymentApprovalsScreenState extends State<HomePaymentApprovalsScreen> {
   final _auth = Get.find<AuthController>();
+  final Map<String, String> _customerNames = {};
+  final Set<String> _nameLookups = {};
+
+  void _prefetchNames(Iterable<String> ids) {
+    for (final id in ids) {
+      if (id.isEmpty || _customerNames.containsKey(id) || _nameLookups.contains(id)) {
+        continue;
+      }
+      _nameLookups.add(id);
+      HomeInternetService.getCustomer(id).then((customer) {
+        if (!mounted) return;
+        setState(() {
+          _customerNames[id] = customer?.name ?? 'Customer $id';
+        });
+      }).catchError((_) {
+        if (!mounted) return;
+        setState(() {
+          _customerNames[id] = 'Customer $id';
+        });
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -62,23 +84,24 @@ class _HomePaymentApprovalsScreenState extends State<HomePaymentApprovalsScreen>
           if (docs.isEmpty) {
             return const _EmptyApprovals();
           }
+          final pending = docs.map((d) {
+            final pr = PaymentRecord.fromMap(d.data(), d.id);
+            return pr;
+          }).toList();
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _prefetchNames(pending.map((p) => p.customerId));
+          });
           return ListView.separated(
             itemCount: docs.length,
             separatorBuilder: (_, __) => const Divider(height: 1),
             itemBuilder: (context, index) {
-              final d = docs[index];
-              final m = d.data();
-              final pr = PaymentRecord.fromMap(m, d.id);
+              final pr = pending[index];
               final amount = 'TZS ${fmtAmt.format(pr.amountPaid)}';
               final created = fmtDate.format(pr.createdAt);
               final attachmentsCount = pr.attachments.length;
+              final customerName = _customerNames[pr.customerId] ?? 'Customer ${pr.customerId}';
 
-              return FutureBuilder<String>(
-                future: _getCustomerName(pr.customerId),
-                builder: (context, snapshot) {
-                  final customerName = snapshot.data ?? 'Loading...';
-                  
-                  return Card(
+              return Card(
                     margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                     elevation: 2,
@@ -176,8 +199,6 @@ class _HomePaymentApprovalsScreenState extends State<HomePaymentApprovalsScreen>
                       ),
                     ),
                   );
-                },
-              );
             },
           );
         },
@@ -250,14 +271,6 @@ class _HomePaymentApprovalsScreenState extends State<HomePaymentApprovalsScreen>
     );
   }
 
-  Future<String> _getCustomerName(String customerId) async {
-    try {
-      final customer = await HomeInternetService.getCustomer(customerId);
-      return customer?.name ?? 'Customer $customerId';
-    } catch (e) {
-      return 'Customer $customerId';
-    }
-  }
 }
 
 class _EmptyApprovals extends StatelessWidget {

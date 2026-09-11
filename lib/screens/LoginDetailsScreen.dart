@@ -26,7 +26,7 @@ class _LoginDetailsScreenState extends State<LoginDetailsScreen> {
   void initState() {
     super.initState();
     _loadAll();
-    _autoRefreshTimer = Timer.periodic(const Duration(seconds: 30), (_) => _loadAll(silent: true));
+    _autoRefreshTimer = Timer.periodic(const Duration(seconds: 90), (_) => _loadAll(silent: true));
   }
 
   @override
@@ -38,16 +38,24 @@ class _LoginDetailsScreenState extends State<LoginDetailsScreen> {
   Future<void> _loadAll({bool silent = false}) async {
     if (!silent) setState(() { _loading = true; _error = null; });
     try {
-      ApiService.clearCacheKey('active_sessions');
-      final results = await Future.wait([
+      if (!silent) {
+        ApiService.clearCacheKey('active_macs');
+      }
+      final results = await Future.wait<Object?>([
         ApiService.fetchActiveSessions(),
-        FirebaseFirestore.instance.collection('nokia_beacons').get(),
+        if (!silent || _beacons.isEmpty)
+          FirebaseFirestore.instance.collection('nokia_beacons').limit(200).get()
+        else
+          Future<Object?>.value(null),
       ]);
       final sessions = (results[0] as List).cast<Map<String, dynamic>>();
-      final beaconSnap = results[1] as QuerySnapshot<Map<String, dynamic>>;
-      final beacons = beaconSnap.docs
-          .map((d) => {'_id': d.id, ...d.data()})
-          .toList();
+      List<Map<String, dynamic>> beacons = _beacons;
+      final beaconSnap = results[1];
+      if (beaconSnap is QuerySnapshot<Map<String, dynamic>>) {
+        beacons = beaconSnap.docs
+            .map((d) => {'_id': d.id, ...d.data()})
+            .toList();
+      }
 
       if (mounted) {
         setState(() {

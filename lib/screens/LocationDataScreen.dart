@@ -104,6 +104,7 @@ class _LocationDataScreenState extends State<LocationDataScreen> {
       final snap = await FirebaseFirestore.instance
           .collection('sold_vouchers')
           .where('location', isEqualTo: location)
+          .limit(500)
           .get();
       if (mounted) {
         setState(() {

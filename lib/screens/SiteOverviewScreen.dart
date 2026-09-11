@@ -16,6 +16,7 @@ class SiteOverviewScreen extends StatefulWidget {
 }
 
 class _SiteOverviewScreenState extends State<SiteOverviewScreen> {
+  late final Stream<DocumentSnapshot<Map<String, dynamic>>> _siteStream;
   int _voucherCount = 0;
   int _paymentCount = 0;
   List<Map<String, dynamic>> _allVouchers = [];
@@ -24,6 +25,12 @@ class _SiteOverviewScreenState extends State<SiteOverviewScreen> {
   bool _mikrotikExpanded = false;
   bool _agentsExpanded = false;
   bool _customersExpanded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _siteStream = SiteService.streamSite(widget.siteId);
+  }
 
   Future<void> _loadStats(String mainLoc) async {
     if (_statsLoadedFor == mainLoc || mainLoc.isEmpty) return;
@@ -53,7 +60,7 @@ class _SiteOverviewScreenState extends State<SiteOverviewScreen> {
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-      stream: SiteService.streamSite(widget.siteId),
+      stream: _siteStream,
       builder: (context, snap) {
         if (snap.connectionState == ConnectionState.waiting) {
           return const Scaffold(body: Center(child: CircularProgressIndicator()));
@@ -1142,10 +1149,7 @@ class _HomeCustomersListState extends State<_HomeCustomersList> {
           _loading = false;
         });
       }
-      // Load consumption data per customer (non-blocking)
-      for (final c in _customers) {
-        _loadConsumption(c['id'] as String);
-      }
+      // Usage is loaded per card on tap to avoid N+1 Firestore reads.
     } catch (_) {
       if (mounted) setState(() => _loading = false);
     }
@@ -1226,6 +1230,7 @@ class _HomeCustomersListState extends State<_HomeCustomersList> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               ListTile(
+                onTap: () => _loadConsumption(custId),
                 leading: CircleAvatar(
                   backgroundColor: cd != null
                       ? (isOnline ? Colors.green.withOpacity(0.1) : Colors.grey.withOpacity(0.1))

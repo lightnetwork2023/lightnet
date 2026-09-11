@@ -14,7 +14,17 @@ class TechnicianAgentListScreen extends StatefulWidget {
 class _TechnicianAgentListScreenState
     extends State<TechnicianAgentListScreen> {
   final _searchCtrl = TextEditingController();
+  late final Stream<QuerySnapshot<Map<String, dynamic>>> _agentsStream;
   String _search = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _agentsStream = FirebaseFirestore.instance
+        .collection('users')
+        .where('role', whereIn: ['agent', 'superagent'])
+        .snapshots();
+  }
 
   @override
   void dispose() {
@@ -51,10 +61,7 @@ class _TechnicianAgentListScreenState
           ),
           Expanded(
             child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-              stream: FirebaseFirestore.instance
-                  .collection('users')
-                  .where('role', whereIn: ['agent', 'superagent'])
-                  .snapshots(),
+              stream: _agentsStream,
               builder: (context, snap) {
                 if (snap.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator());

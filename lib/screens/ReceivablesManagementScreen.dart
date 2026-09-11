@@ -14,6 +14,13 @@ class ReceivablesManagementScreen extends StatefulWidget {
 
 class _ReceivablesManagementScreenState extends State<ReceivablesManagementScreen> {
   String _filterStatus = 'all';
+  late final Stream<QuerySnapshot> _receivablesStream;
+
+  @override
+  void initState() {
+    super.initState();
+    _receivablesStream = DebtService.receivables.orderBy('createdAt', descending: true).snapshots();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -52,7 +59,7 @@ class _ReceivablesManagementScreenState extends State<ReceivablesManagementScree
 
   Widget _buildSummaryCard() {
     return StreamBuilder<QuerySnapshot>(
-      stream: DebtService.receivables.snapshots(),
+      stream: _receivablesStream,
       builder: (context, snapshot) {
         if (!snapshot.hasData) {
           return const SizedBox.shrink();
@@ -108,7 +115,7 @@ class _ReceivablesManagementScreenState extends State<ReceivablesManagementScree
 
   Widget _buildDebtsList() {
     return StreamBuilder<QuerySnapshot>(
-      stream: DebtService.receivables.orderBy('createdAt', descending: true).snapshots(),
+      stream: _receivablesStream,
       builder: (context, snapshot) {
         if (snapshot.hasError) {
           return Center(child: Text('Error: ${snapshot.error}'));

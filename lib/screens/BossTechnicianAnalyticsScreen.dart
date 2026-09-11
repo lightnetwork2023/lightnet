@@ -41,6 +41,7 @@ class _BossTechnicianAnalyticsScreenState extends State<BossTechnicianAnalyticsS
     try {
       final snap = await FirebaseFirestore.instance
           .collection('users')
+          .where('role', isEqualTo: 'technician')
           .get();
 
       // Diagnostic: log every unique role + any user matching 'shafi'/'shafy'

@@ -1,4 +1,5 @@
 // screens/payments_screen.dart
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../controllers/ApiService.dart';
@@ -20,6 +21,7 @@ class _PaymentsScreenState extends State<PaymentsScreen> {
   bool _loading = false;
   bool _searching = false;
   String _searchText = '';
+  Timer? _searchDebounce;
 
   void _fetchPayments() async {
     setState(() => _loading = true);
@@ -75,6 +77,12 @@ class _PaymentsScreenState extends State<PaymentsScreen> {
   }
 
   @override
+  void dispose() {
+    _searchDebounce?.cancel();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppTheme.backgroundColor,
@@ -113,7 +121,18 @@ class _PaymentsScreenState extends State<PaymentsScreen> {
               setState(() {
                 _searchText = value;
               });
-              _performSearch(value);
+              _searchDebounce?.cancel();
+              final digits = value.replaceAll(RegExp(r'\D'), '');
+              if (value.isEmpty) {
+                _performSearch('');
+                return;
+              }
+              if (digits.length < 9) {
+                return;
+              }
+              _searchDebounce = Timer(const Duration(milliseconds: 400), () {
+                _performSearch(value);
+              });
             },
           ),
           

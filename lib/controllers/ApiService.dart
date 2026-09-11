@@ -110,16 +110,38 @@ class ApiService {
   }
 
   static Future<List<dynamic>> fetchActiveSessions() async {
-    const cacheKey = 'active_sessions';
+    return fetchActiveMacs();
+  }
+
+  static Future<Map<String, dynamic>> fetchDashboardStats() async {
+    const cacheKey = 'dashboard_stats';
+    final cachedData = _getCachedData<Map<String, dynamic>>(cacheKey);
+    if (cachedData != null) {
+      return cachedData;
+    }
+    final response = await http.get(Uri.parse('$baseUrl/dashboard_stats'));
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    if (data['success'] != true) {
+      throw Exception(data['error'] ?? 'dashboard_stats failed');
+    }
+    _cacheData(cacheKey, data);
+    return data;
+  }
+
+  static Future<List<dynamic>> fetchVoucherLocationCounts() async {
+    const cacheKey = 'vouchers_by_location';
     final cachedData = _getCachedData<List<dynamic>>(cacheKey);
     if (cachedData != null) {
       return cachedData;
     }
-
-    final response = await http.get(Uri.parse('$baseUrl/active_sessions'));
-    final sessions = jsonDecode(response.body)['active_sessions'];
-    _cacheData(cacheKey, sessions);
-    return sessions;
+    final response = await http.get(Uri.parse('$baseUrl/vouchers_by_location'));
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    if (data['success'] != true) {
+      throw Exception(data['error'] ?? 'vouchers_by_location failed');
+    }
+    final rows = (data['locations'] as List?) ?? [];
+    _cacheData(cacheKey, rows);
+    return rows;
   }
 
   static Future<List<dynamic>> fetchValidUsers(String location) async {
@@ -135,22 +157,23 @@ class ApiService {
     return users;
   }
 
-  static Future<List<dynamic>> fetchVouchers() async {
-    // Legacy: fetch all vouchers (may be slow for large datasets)
-    // Use fetchVouchersByName for filtered vouchers
-  
-    const cacheKey = 'vouchers';
+  static Future<List<dynamic>> fetchVouchers({String? location, int limit = 200}) async {
+    final cacheKey = 'vouchers_${location ?? 'all'}_$limit';
     final cachedData = _getCachedData<List<dynamic>>(cacheKey);
     if (cachedData != null) {
       return cachedData;
     }
 
     try {
-      final response = await http.get(Uri.parse('$baseUrl/vouchers'));
+      final uri = Uri.parse('$baseUrl/vouchers').replace(queryParameters: {
+        'limit': '$limit',
+        if (location != null && location.isNotEmpty) 'location': location,
+      });
+      final response = await http.get(uri);
       if (response.statusCode == 404) {
         return [];
       }
-      final vouchers = jsonDecode(response.body)['vouchers'];
+      final vouchers = jsonDecode(response.body)['vouchers'] ?? [];
       _cacheData(cacheKey, vouchers);
       return vouchers;
     } catch (e) {
@@ -216,13 +239,20 @@ class ApiService {
   }
 
   static Future<List<dynamic>> fetchVouchersByName() async {
+    const cacheKey = 'vouchers_by_name';
+    final cachedData = _getCachedData<List<dynamic>>(cacheKey);
+    if (cachedData != null) {
+      return cachedData;
+    }
     final response = await http.get(Uri.parse('$baseUrl/get_vouchers_by_name'));
     if (response.statusCode == 404) {
       return [];
     }
     final data = jsonDecode(response.body);
     if (data is Map<String, dynamic> && data.containsKey('vouchers')) {
-      return data['vouchers'];
+      final vouchers = data['vouchers'] as List;
+      _cacheData(cacheKey, vouchers);
+      return vouchers;
     }
     throw Exception('Unexpected response from server');
   }
@@ -285,14 +315,17 @@ class ApiService {
   }
 
   static Future<List<dynamic>> searchPayments(String phone) async {
+    final digits = phone.replaceAll(RegExp(r'\D'), '');
+    if (digits.length < 9) {
+      return [];
+    }
     try {
       final response = await http.get(Uri.parse('$baseUrl/search_payments?phone=${Uri.encodeComponent(phone)}'));
-      if (response.statusCode == 404) {
+      if (response.statusCode == 404 || response.statusCode == 400) {
         return [];
       }
       final data = jsonDecode(response.body);
-      final payments = data['payments'];
-      return payments;
+      return (data['payments'] as List?) ?? [];
     } catch (e) {
       throw Exception('Failed to search payments: $e');
     }
@@ -828,6 +861,11 @@ class ApiService {
   }
 
   static Future<Map<String, dynamic>> fetchSuperAgentPayments(List<String> locations) async {
+    final cacheKey = 'sa_payments_${locations.join(',').hashCode}';
+    final cachedData = _getCachedData<Map<String, dynamic>>(cacheKey);
+    if (cachedData != null) {
+      return cachedData;
+    }
     final locationsParam = locations.map((loc) => 'locations=${Uri.encodeComponent(loc)}').join('&');
     final response = await http.get(
       Uri.parse('$baseUrl/fetch_superagent_payments?$locationsParam'),
@@ -835,7 +873,9 @@ class ApiService {
     );
 
     if (response.statusCode == 200) {
-      return json.decode(response.body);
+      final data = json.decode(response.body) as Map<String, dynamic>;
+      _cacheData(cacheKey, data);
+      return data;
     } else {
       throw Exception('Failed to fetch superagent payments: ${response.statusCode}');
     }
@@ -845,6 +885,13 @@ class ApiService {
     required String locations,
     String? searchTerm,
   }) async {
+    final cacheKey = 'sa_vouchers_${locations.hashCode}_${searchTerm ?? ''}';
+    if (searchTerm == null || searchTerm.isEmpty) {
+      final cachedData = _getCachedData<Map<String, dynamic>>(cacheKey);
+      if (cachedData != null) {
+        return cachedData;
+      }
+    }
     final uri = Uri.parse('$baseUrl/fetch_superagent_recent_vouchers').replace(
       queryParameters: {
         'locations': locations,
@@ -858,7 +905,11 @@ class ApiService {
     );
 
     if (response.statusCode == 200) {
-      return json.decode(response.body);
+      final data = json.decode(response.body) as Map<String, dynamic>;
+      if (searchTerm == null || searchTerm.isEmpty) {
+        _cacheData(cacheKey, data);
+      }
+      return data;
     } else {
       throw Exception('Failed to fetch superagent recent vouchers: ${response.statusCode}');
     }

@@ -16,6 +16,7 @@ class _VouchersByLocationScreenState extends State<VouchersByLocationScreen> {
   final LocationController locationController = Get.find();
   final AuthController authController = Get.find<AuthController>();
   final Map<String, List<dynamic>> vouchersByLocation = {};
+  final Map<String, int> voucherCounts = {};
   final Map<String, int> recentLoginCounts = {};
   final Map<String, DateTime?> latestCreationTimes = {};
   bool _loading = true;
@@ -96,42 +97,38 @@ class _VouchersByLocationScreenState extends State<VouchersByLocationScreen> {
     }
   }
 
+  Future<void> _loadLocationVouchers(String location) async {
+    final vouchers = await ApiService.fetchVouchers(location: location, limit: 200);
+    if (!mounted) return;
+    setState(() {
+      vouchersByLocation[location] = vouchers;
+    });
+  }
+
   Future<void> _loadVouchers() async {
     try {
-      final vouchers = await ApiService.fetchVouchers();
-      final now = DateTime.now();
-      final last24Hours = now.subtract(const Duration(hours: 24));
-      
+      final rows = await ApiService.fetchVoucherLocationCounts();
       final tempVouchersByLocation = <String, List<dynamic>>{};
       final tempRecentLoginCounts = <String, int>{};
       final tempLatestCreationTimes = <String, DateTime?>{};
 
-      for (final voucher in vouchers) {
-        final location = voucher['location']?.toString() ?? 'Unknown';
+      for (final row in rows) {
+        final location = row['location']?.toString() ?? 'Unknown';
         final matchedLocation = locationController.locations.firstWhere(
           (loc) => _normalizeLocationName(loc) == _normalizeLocationName(location),
           orElse: () => location,
         );
-
-        if (!tempVouchersByLocation.containsKey(matchedLocation)) {
-          tempVouchersByLocation[matchedLocation] = [];
-          tempRecentLoginCounts[matchedLocation] = 0;
-          tempLatestCreationTimes[matchedLocation] = null;
-        }
-        tempVouchersByLocation[matchedLocation]!.add(voucher);
-
-        final loginTime = _parseDateTime(voucher['first_login_time']?.toString());
-        if (loginTime != null && loginTime.isAfter(last24Hours)) {
-          tempRecentLoginCounts[matchedLocation] = (tempRecentLoginCounts[matchedLocation] ?? 0) + 1;
-        }
-
-        final creationTime = _parseDateTime(voucher['created_at']?.toString());
-        if (creationTime != null) {
-          if (tempLatestCreationTimes[matchedLocation] == null || 
-              creationTime.isAfter(tempLatestCreationTimes[matchedLocation]!)) {
-            tempLatestCreationTimes[matchedLocation] = creationTime;
-          }
-        }
+        tempVouchersByLocation.putIfAbsent(matchedLocation, () => []);
+        tempRecentLoginCounts[matchedLocation] =
+            int.tryParse(row['recent_logins']?.toString() ?? '') ??
+                (row['recent_logins'] as num?)?.toInt() ??
+                0;
+        tempLatestCreationTimes[matchedLocation] =
+            _parseDateTime(row['latest_created']?.toString());
+        voucherCounts[matchedLocation] =
+            int.tryParse(row['voucher_count']?.toString() ?? '') ??
+                (row['voucher_count'] as num?)?.toInt() ??
+                0;
       }
 
       setState(() {
@@ -195,6 +192,7 @@ class _VouchersByLocationScreenState extends State<VouchersByLocationScreen> {
                     itemBuilder: (context, index) {
                       final location = locationController.locations[index];
                       final vouchers = vouchersByLocation[location] ?? [];
+                      final voucherCount = voucherCounts[location] ?? vouchers.length;
                       final recentCount = recentLoginCounts[location] ?? 0;
                       final latestCreationTime = latestCreationTimes[location];
 
@@ -238,10 +236,15 @@ class _VouchersByLocationScreenState extends State<VouchersByLocationScreen> {
                               ),
                             ],
                           ),
-                          subtitle: Text("${vouchers.length} vouchers"),
+                          subtitle: Text("$voucherCount vouchers"),
                           trailing: authController.isBoss ? IconButton(
                             icon: const Icon(Icons.arrow_forward),
-                            onPressed: () {
+                            onPressed: () async {
+                              if ((vouchersByLocation[location] ?? []).isEmpty) {
+                                await _loadLocationVouchers(location);
+                              }
+                              if (!mounted) return;
+                              final loaded = vouchersByLocation[location] ?? [];
                               showModalBottomSheet(
                                 context: context,
                                 isScrollControlled: true,
@@ -260,9 +263,9 @@ class _VouchersByLocationScreenState extends State<VouchersByLocationScreen> {
                                         Expanded(
                                           child: ListView.builder(
                                             controller: scrollController,
-                                            itemCount: vouchers.length,
+                                            itemCount: loaded.length,
                                             itemBuilder: (context, index) {
-                                              final voucher = vouchers[index];
+                                              final voucher = loaded[index];
                                               final isRecent = _isRecentLogin(voucher['first_login_time']?.toString());
 
                                               return Card(

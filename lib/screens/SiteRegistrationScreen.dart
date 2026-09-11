@@ -48,9 +48,7 @@ class _SiteRegistrationScreenState extends State<SiteRegistrationScreen> {
   void initState() {
     super.initState();
     if (_locationController.locations.isEmpty) _locationController.loadLocations();
-    _loadAgents();
-    _loadHomeCustomers();
-    _loadMikrotikDevices();
+    // Pickers load their lists on first open.
     final d = widget.existingData;
     if (d != null) {
       _nameCtrl.text = d['name'] as String? ?? '';
@@ -184,6 +182,9 @@ class _SiteRegistrationScreenState extends State<SiteRegistrationScreen> {
   }
 
   void _showAddEquipmentSheet() {
+    if (!_mikrotikLoaded) {
+      _loadMikrotikDevices();
+    }
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -308,6 +309,9 @@ class _SiteRegistrationScreenState extends State<SiteRegistrationScreen> {
   }
 
   void _showAgentPicker() {
+    if (!_agentsLoaded) {
+      _loadAgents();
+    }
     String search = '';
     showModalBottomSheet(
       context: context,
@@ -370,6 +374,9 @@ class _SiteRegistrationScreenState extends State<SiteRegistrationScreen> {
   }
 
   void _showCustomerPicker() {
+    if (!_homeCustomersLoaded) {
+      _loadHomeCustomers();
+    }
     String search = '';
     showModalBottomSheet(
       context: context,

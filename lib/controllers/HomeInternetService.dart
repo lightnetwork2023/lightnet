@@ -309,6 +309,7 @@ class HomeInternetService {
   static Stream<List<PaymentRecord>> streamPayments(String customerId) {
     return _paymentsCol(customerId)
         .orderBy('created_at', descending: true)
+        .limit(50)
         .snapshots()
         .map((snap) => snap.docs
             .map((d) => PaymentRecord.fromMap(d.data(), d.id))
@@ -324,46 +325,6 @@ class HomeInternetService {
         .map((snap) => snap.docs
             .map((d) => PaymentRecord.fromMap(d.data(), d.id))
             .toList());
-  }
-
-  /// Stream all pending payments across all customers (boss-only)
-  static Stream<List<Map<String, dynamic>>> streamAllPendingPayments() async* {
-    if (!_auth.isBoss) {
-      yield* Stream.error(Exception('Only boss can view all pending payments'));
-      return;
-    }
-    
-    // Get all customers first
-    final customersSnap = await _db.collection(customersCol).get();
-    
-    // Combine streams from all customers
-    final streams = customersSnap.docs.map((customerDoc) {
-      return _paymentsCol(customerDoc.id)
-          .where('status', isEqualTo: PaymentStatus.pendingApproval.name)
-          .snapshots()
-          .map((snap) => snap.docs.map((d) {
-                final data = d.data();
-                data['payment_id'] = d.id;
-                data['customer_id'] = customerDoc.id;
-                return data;
-              }).toList());
-    }).toList();
-
-    // Merge all streams
-    await for (final _ in Stream.periodic(const Duration(seconds: 1))) {
-      final allPayments = <Map<String, dynamic>>[];
-      for (final stream in streams) {
-        await for (final payments in stream.take(1)) {
-          allPayments.addAll(payments);
-        }
-      }
-      allPayments.sort((a, b) {
-        final aTime = _fromTs(a['created_at']) ?? DateTime(1970);
-        final bTime = _fromTs(b['created_at']) ?? DateTime(1970);
-        return bTime.compareTo(aTime);
-      });
-      yield allPayments;
-    }
   }
 
   // ------------------------------

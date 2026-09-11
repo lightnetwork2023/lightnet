@@ -3,7 +3,6 @@ import 'package:intl/intl.dart';
 import 'package:lightnetwork/screens/payments.dart';
 import 'package:lightnetwork/screens/PaymentAnalyticsPage.dart';
 import 'package:get/get.dart';
-import '../controllers/location_controller.dart';
 import '../controllers/ApiService.dart';
 import '../controllers/auth_controller.dart';
 import 'UserManagementScreen.dart';
@@ -38,7 +37,7 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final AuthController _authController = Get.find<AuthController>();
   int activeSessionsCount = 0;
   int recentLoginsCount = 0;
@@ -67,13 +66,9 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    _loadActiveMacs();
-    _loadOfflineDevices();
-    _loadActiveSessions();
-    _loadRecentLogins();
-    _loadRecentPayments();
-    // Cache users in background without blocking UI
-    _cacheAllValidUsers().catchError((e) => debugPrint('Background caching error: $e'));
+    WidgetsBinding.instance.addObserver(this);
+    _loadDashboardStats();
+    _loadOfflineDeviceCount();
     _startMikroTikOfflineWatch();
     _triggerBeaconScan();
     _checkInternetPaymentsDue();
@@ -81,9 +76,23 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _mikrotikSub?.cancel();
     _wifiScanTimer?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      if (_wifiScanTimer == null || !_wifiScanTimer!.isActive) {
+        _triggerBeaconScan();
+      }
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive) {
+      _wifiScanTimer?.cancel();
+      _wifiScanTimer = null;
+    }
   }
 
   void _triggerBeaconScan() {
@@ -104,7 +113,7 @@ class _HomeScreenState extends State<HomeScreen> {
         // Immediate scan with permission request, then every 30 seconds
         WifiBeaconScannerService.scanAndReport(
             forceEnabled: true, askPermissions: true);
-        _wifiScanTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+        _wifiScanTimer = Timer.periodic(const Duration(minutes: 3), (_) {
           if (mounted) WifiBeaconScannerService.scanAndReport(forceEnabled: true);
         });
       } else {
@@ -615,111 +624,52 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Future<void> _loadActiveMacs() async {
-    try {
-      final data = await ApiService.fetchActiveMacs();
-      setState(() => activeMacs = data);
-    } catch (e) {
-      setState(() => activeMacs = []);
-    }
+  Map<String, int> _asIntMap(dynamic raw) {
+    if (raw is! Map) return {};
+    return raw.map((key, value) => MapEntry(
+          key.toString(),
+          value is int ? value : int.tryParse(value.toString()) ?? 0,
+        ));
   }
 
-  Future<void> _loadOfflineDevices() async {
-    final snapshot = await FirebaseFirestore.instance.collection('devices').get();
-    final all = snapshot.docs.map((doc) => {
-      'id': doc.id,
-      ...doc.data(),
-    }).toList();
-    final offline = all.where((d) => d['status'] == 'offline').toList();
-    setState(() {
-      offlineDevicesCount = offline.length;
-      allDevices = all;
-    });
-  }
-
-  Future<void> _loadActiveSessions() async {
+  Future<void> _loadDashboardStats() async {
     try {
-      final data = await ApiService.fetchActiveSessions();
-      setState(() => activeSessionsCount = data.length);
-    } catch (e) {
-      debugPrint('Error loading active sessions: $e');
-      setState(() => activeSessionsCount = 0);
-    }
-  }
-
-  Future<void> _loadRecentLogins() async {
-    try {
-      final recentVouchers = await ApiService.fetchRecentVouchers();
-      final todayVouchers = await ApiService.fetchVouchersToday();
-
+      final data = await ApiService.fetchDashboardStats();
+      if (!mounted) return;
       setState(() {
-        todayLoginsCount = todayVouchers.length;
-        last24hLoginsCount = recentVouchers.length;
+        activeSessionsCount = data['active_sessions'] as int? ?? 0;
+        todayLoginsCount = data['today_logins'] as int? ?? 0;
+        last24hLoginsCount = data['last_24h_logins'] as int? ?? 0;
+        todayPaymentsCount = data['today_payments'] as int? ?? 0;
+        last24hPaymentsCount = data['last_24h_payments'] as int? ?? 0;
+        todayPaymentsByLocation = _asIntMap(data['today_payments_by_location']);
+        recentPaymentsByLocation = _asIntMap(data['last_24h_payments_by_location']);
       });
     } catch (e) {
-      debugPrint('Error loading logins: $e');
-      setState(() {
-        todayLoginsCount = 0;
-        last24hLoginsCount = 0;
-      });
+      debugPrint('Error loading dashboard stats: $e');
     }
   }
 
-  Future<void> _loadRecentPayments() async {
+  Future<void> _loadOfflineDeviceCount() async {
     try {
-      final recentPayments = await ApiService.fetchRecentPayments();
-      final todayPayments = await ApiService.fetchPaymentsToday();
-
-      Map<String, int> tempTodayPaymentsByLocation = {};
-      Map<String, int> tempLast24hPaymentsByLocation = {};
-
-      // Process today's payments by location
-      for (var payment in todayPayments) {
-        final location = payment['location']?.toString() ?? 'Unknown';
-        tempTodayPaymentsByLocation[location] = (tempTodayPaymentsByLocation[location] ?? 0) + 1;
-      }
-
-      // Process last 24h payments by location
-      for (var payment in recentPayments) {
-        final location = payment['location']?.toString() ?? 'Unknown';
-        tempLast24hPaymentsByLocation[location] = (tempLast24hPaymentsByLocation[location] ?? 0) + 1;
-      }
-
-      setState(() {
-        todayPaymentsCount = todayPayments.length;
-        last24hPaymentsCount = recentPayments.length;
-        todayPaymentsByLocation = tempTodayPaymentsByLocation;
-        recentPaymentsByLocation = tempLast24hPaymentsByLocation;
-      });
+      final snap = await FirebaseFirestore.instance
+          .collection('devices')
+          .where('status', isEqualTo: 'offline')
+          .count()
+          .get();
+      if (!mounted) return;
+      setState(() => offlineDevicesCount = snap.count ?? 0);
     } catch (e) {
-      debugPrint('Error loading payments: $e');
-      setState(() {
-        todayPaymentsCount = 0;
-        last24hPaymentsCount = 0;
-        todayPaymentsByLocation = {};
-        recentPaymentsByLocation = {};
-      });
+      debugPrint('Error counting offline devices: $e');
     }
-  }
-
-  Future<void> _cacheAllValidUsers() async {
-    final locationController = Get.find<LocationController>();
-    // Ensure locations are loaded
-    if (locationController.locations.isEmpty) {
-      await locationController.loadLocations();
-    }
-    await ApiService.fetchAllValidUsers(locationController.locations);
   }
 
   Future<void> _refreshData() async {
-    ApiService.clearCache(); // Clear cache before refresh
+    ApiService.clearCache();
     try {
       await Future.wait([
-        _loadActiveMacs(),
-        _loadOfflineDevices(),
-        _loadActiveSessions(),
-        _loadRecentLogins(),
-        _loadRecentPayments(),
+        _loadDashboardStats(),
+        _loadOfflineDeviceCount(),
       ]);
     } catch (e) {
       debugPrint('Error refreshing data: $e');
