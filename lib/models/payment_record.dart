@@ -56,10 +56,18 @@ class PaymentRecord {
     this.customerType,
   });
 
-  factory PaymentRecord.fromMap(Map<String, dynamic> map, String id) {
+  factory PaymentRecord.fromMap(Map<String, dynamic> map, String id, {String? path}) {
+    var customerId = (map['customer_id'] ?? '').toString();
+    if (customerId.isEmpty && path != null) {
+      final segs = path.split('/');
+      final i = segs.indexOf('home_customers');
+      if (i >= 0 && i + 1 < segs.length) {
+        customerId = segs[i + 1];
+      }
+    }
     return PaymentRecord(
       id: id,
-      customerId: map['customer_id'] ?? '',
+      customerId: customerId,
       amountPaid: (map['amount_paid'] is num)
           ? (map['amount_paid'] as num).toDouble()
           : double.tryParse('${map['amount_paid']}') ?? 0.0,

@@ -21,6 +21,33 @@ class _HomePaymentApprovalsScreenState extends State<HomePaymentApprovalsScreen>
   final _auth = Get.find<AuthController>();
   final Map<String, String> _customerNames = {};
   final Set<String> _nameLookups = {};
+  bool _useCustomerFallback = false;
+  bool _fallbackLoading = false;
+  List<QueryDocumentSnapshot<Map<String, dynamic>>> _fallbackDocs = [];
+
+  Future<void> _loadFallback() async {
+    if (_fallbackLoading) return;
+    setState(() {
+      _fallbackLoading = true;
+      _useCustomerFallback = true;
+    });
+    try {
+      final docs = await HomeInternetService.fetchPendingApprovalsFromCustomers();
+      if (!mounted) return;
+      setState(() {
+        _fallbackDocs = docs;
+        _fallbackLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _fallbackLoading = false);
+    }
+  }
+
+  bool _isPermissionDenied(Object? error) {
+    final text = error?.toString().toLowerCase() ?? '';
+    return text.contains('permission-denied') || text.contains('permission_denied');
+  }
 
   void _prefetchNames(Iterable<String> ids) {
     for (final id in ids) {
@@ -67,25 +94,33 @@ class _HomePaymentApprovalsScreenState extends State<HomePaymentApprovalsScreen>
         ),
       ),
       body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-        stream: FirebaseFirestore.instance
-            .collectionGroup('payments')
-            .where('status', isEqualTo: PaymentStatus.pendingApproval.name)
-            .orderBy('created_at', descending: true)
-            .limit(100)
-            .snapshots(),
+        stream: HomeInternetService.streamPendingApprovalGroup(),
         builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
+          if (_useCustomerFallback) {
+            if (_fallbackLoading) {
+              return const Center(child: CircularProgressIndicator());
+            }
+          } else if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
-          }
-          if (snapshot.hasError) {
+          } else if (snapshot.hasError) {
+            if (_isPermissionDenied(snapshot.error)) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted && !_useCustomerFallback) {
+                  _loadFallback();
+                }
+              });
+              return const Center(child: CircularProgressIndicator());
+            }
             return Center(child: Text('Error: ${snapshot.error}'));
           }
-          final docs = snapshot.data?.docs ?? [];
+          final docs = _useCustomerFallback
+              ? _fallbackDocs
+              : (snapshot.data?.docs ?? []);
           if (docs.isEmpty) {
             return const _EmptyApprovals();
           }
           final pending = docs.map((d) {
-            final pr = PaymentRecord.fromMap(d.data(), d.id);
+            final pr = PaymentRecord.fromMap(d.data(), d.id, path: d.reference.path);
             return pr;
           }).toList();
           WidgetsBinding.instance.addPostFrameCallback((_) {

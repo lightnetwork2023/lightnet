@@ -317,6 +317,41 @@ class HomeInternetService {
   }
 
   /// Stream pending approval payments in real-time
+  static Stream<QuerySnapshot<Map<String, dynamic>>> streamPendingApprovalGroup() {
+    return _db
+        .collectionGroup('payments')
+        .where('status', isEqualTo: PaymentStatus.pendingApproval.name)
+        .orderBy('created_at', descending: true)
+        .limit(100)
+        .snapshots();
+  }
+
+  /// Works when collectionGroup('payments') is blocked by top-level-only rules.
+  static Future<List<QueryDocumentSnapshot<Map<String, dynamic>>>>
+      fetchPendingApprovalsFromCustomers() async {
+    final customers = await _db.collection(customersCol).limit(300).get();
+    final out = <QueryDocumentSnapshot<Map<String, dynamic>>>[];
+    for (final customer in customers.docs) {
+      final pays = await _paymentsCol(customer.id)
+          .where('status', isEqualTo: PaymentStatus.pendingApproval.name)
+          .limit(20)
+          .get();
+      out.addAll(pays.docs);
+    }
+    DateTime? createdAt(QueryDocumentSnapshot<Map<String, dynamic>> doc) {
+      final raw = doc.data()['created_at'];
+      if (raw is Timestamp) return raw.toDate();
+      return null;
+    }
+    out.sort((a, b) {
+      final at = createdAt(a) ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final bt = createdAt(b) ?? DateTime.fromMillisecondsSinceEpoch(0);
+      return bt.compareTo(at);
+    });
+    if (out.length <= 100) return out;
+    return out.sublist(0, 100);
+  }
+
   static Stream<List<PaymentRecord>> streamPendingPayments(String customerId) {
     return _paymentsCol(customerId)
         .where('status', isEqualTo: PaymentStatus.pendingApproval.name)

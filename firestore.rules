@@ -11,9 +11,10 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // Top-level hotspot payments (~200k docs). Old analytics did an unbounded list.
-    // Single-doc get is fine; list must send a limit (new app uses <= 3000).
-    match /payments/{id} {
+    // Top-level hotspot payments AND nested home_customers/{id}/payments.
+    // collectionGroup('payments') (Home Payment Approvals) needs this recursive path.
+    // List still requires a limit so old unbounded scans stay blocked.
+    match /{path=**}/payments/{id} {
       allow get: if isSignedIn();
       allow list: if isSignedIn()
         && request.query.limit is number
