@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:lightnetwork/services/app_db.dart';
 import 'package:get/get.dart';
 import 'package:intl/intl.dart';
 import '../controllers/auth_controller.dart';
@@ -569,7 +569,7 @@ class _NokiaBeaconScreenState extends State<NokiaBeaconScreen> {
 # Add to /system scheduler  |  Name: nokia-beacon-check
 # Interval: 00:02:00        |  Policy: read,write,test,sniff
 
-:local cfUrl "https://us-central1-lightnet-d2de9.cloudfunctions.net/reportNokiaBeaconStatus"
+:local cfUrl "https://lightnet.lightnetwork.pro/api/nokia/beacon-status"
 :local mikrotikId "YOUR_MIKROTIK_FIRESTORE_DOC_ID"
 :local macs ""
 :local count 0

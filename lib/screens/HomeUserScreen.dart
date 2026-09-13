@@ -1,13 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:intl/intl.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-
 import 'package:lightnetwork/controllers/HomeInternetService.dart';
 import 'package:lightnetwork/controllers/auth_controller.dart';
 import 'package:lightnetwork/models/home_customer.dart';
 import 'package:lightnetwork/models/payment_record.dart';
+import 'package:lightnetwork/screens/HomeCustomerPeriodsScreen.dart';
 import 'package:lightnetwork/screens/HomeUserPaymentScreen.dart';
+import 'package:lightnetwork/widgets/hi_account_statement.dart';
 import '../theme/app_theme.dart';
 
 class HomeUserScreen extends StatefulWidget {
@@ -23,6 +23,7 @@ class _HomeUserScreenState extends State<HomeUserScreen> {
   HomeCustomer? _customer;
   Map<String, dynamic>? _status;
   List<PaymentRecord> _payments = [];
+  List<PeriodPaymentStatus> _invoices = [];
 
   @override
   void initState() {
@@ -47,24 +48,18 @@ class _HomeUserScreenState extends State<HomeUserScreen> {
       }
       print('✅ Customer loaded: ${customer.name}');
 
-      Map<String, dynamic>? status;
-      if (customer.status != null) {
-        final s = Map<String, dynamic>.from(customer.status!);
-        final nd = s['next_due_date'];
-        if (nd is Timestamp) s['next_due_date'] = nd.toDate();
-        final lp = s['last_paid_at'];
-        if (lp is Timestamp) s['last_paid_at'] = lp.toDate();
-        status = s;
-        print('✅ Using server-computed status');
-      } else {
-        print('⏳ Waiting for server-computed status');
-        status = null;
-      }
+      Map<String, dynamic> status = HomeInternetService.normalizeStatement(
+        await HomeInternetService.computeCustomerStatus(customerId),
+      );
+      final invoices = await HomeInternetService.fetchInvoices(customerId);
+      final payments = await HomeInternetService.fetchPayments(customerId, limit: 12);
 
       if (!mounted) return;
       setState(() {
         _customer = customer;
         _status = status;
+        _invoices = invoices.reversed.take(6).toList();
+        _payments = payments;
       });
       print('✅ Data loaded successfully');
     } catch (e, stackTrace) {
@@ -121,9 +116,19 @@ class _HomeUserScreenState extends State<HomeUserScreen> {
                         const SizedBox(height: 16),
                         _buildPlanCard(),
                         const SizedBox(height: 16),
-                        _buildStatusCard(),
+                        if (_status != null)
+                          HiAccountStatement(
+                            statement: _status!,
+                            accountName: 'Account ${_customer!.id}',
+                            onPayNow: _openPayment,
+                          )
+                        else
+                          _buildStatusCard(),
                         const SizedBox(height: 16),
-                        _buildMakePaymentButton(),
+                        if (_status == null || HomeInternetService.asMoney(_status!['pay_now']) <= 0)
+                          _buildMakePaymentButton(),
+                        const SizedBox(height: 16),
+                        _buildInvoicePreview(),
                         const SizedBox(height: 16),
                         _buildPaymentHistory(),
                       ],
@@ -133,21 +138,23 @@ class _HomeUserScreenState extends State<HomeUserScreen> {
     );
   }
 
+  Future<void> _openPayment() async {
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const HomeUserPaymentScreen(),
+      ),
+    );
+    if (result == true) {
+      _loadData();
+    }
+  }
+
   Widget _buildMakePaymentButton() {
     return SizedBox(
       width: double.infinity,
       child: ElevatedButton.icon(
-        onPressed: () async {
-          final result = await Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => const HomeUserPaymentScreen(),
-            ),
-          );
-          if (result == true) {
-            _loadData(); // Refresh data after payment
-          }
-        },
+        onPressed: _openPayment,
         icon: const Icon(Icons.payment_rounded),
         label: const Text('Make Payment'),
         style: ElevatedButton.styleFrom(
@@ -369,7 +376,90 @@ class _HomeUserScreenState extends State<HomeUserScreen> {
     );
   }
 
+  Widget _buildInvoicePreview() {
+    final dateFmt = DateFormat('d MMM yyyy');
+    return Card(
+      elevation: 1,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.receipt_long_rounded, color: AppTheme.primaryColor, size: 20),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    'Recent invoices',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                ),
+                TextButton(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => HomeCustomerPeriodsScreen(
+                          customerId: _customer!.id,
+                          customerName: _customer!.name,
+                        ),
+                      ),
+                    );
+                  },
+                  child: const Text('View statement'),
+                ),
+              ],
+            ),
+            const Divider(height: 20),
+            if (_invoices.isEmpty)
+              const Text(
+                'No invoices have been issued yet.',
+                style: TextStyle(color: AppTheme.textSecondary, fontSize: 13),
+              )
+            else
+              ..._invoices.map((inv) {
+                final color = inv.state == PeriodPayState.paid
+                    ? AppTheme.successColor
+                    : (inv.state == PeriodPayState.partial ? AppTheme.warningColor : AppTheme.errorColor);
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: Row(
+                    children: [
+                      Icon(Icons.description_outlined, size: 18, color: color),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              inv.invoiceNo ?? dateFmt.format(inv.start),
+                              style: const TextStyle(fontWeight: FontWeight.w600),
+                            ),
+                            Text(
+                              '${dateFmt.format(inv.start)} – ${dateFmt.format(inv.end)}',
+                              style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Text(
+                        HiMoney.format(inv.balance > 0 ? inv.balance : inv.requiredAmount),
+                        style: TextStyle(fontWeight: FontWeight.w700, color: color),
+                      ),
+                    ],
+                  ),
+                );
+              }),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildPaymentHistory() {
+    final dateFmt = DateFormat('d MMM yyyy');
     return Card(
       elevation: 1,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -383,21 +473,52 @@ class _HomeUserScreenState extends State<HomeUserScreen> {
                 Icon(Icons.history_rounded, color: AppTheme.primaryColor, size: 20),
                 SizedBox(width: 8),
                 Text(
-                  'Payment History',
+                  'Payment receipts',
                   style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                 ),
               ],
             ),
             const Divider(height: 24),
-            const Text(
-              'View your payment history and billing periods in the app.',
-              style: TextStyle(color: AppTheme.textSecondary, fontSize: 13),
-            ),
-            const SizedBox(height: 12),
-            const Text(
-              'Contact support for detailed payment records.',
-              style: TextStyle(color: AppTheme.textSecondary, fontSize: 13),
-            ),
+            if (_payments.isEmpty)
+              const Text(
+                'No payments recorded yet.',
+                style: TextStyle(color: AppTheme.textSecondary, fontSize: 13),
+              )
+            else
+              ..._payments.take(8).map((p) {
+                final when = p.approvedAt ?? p.createdAt;
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: Row(
+                    children: [
+                      Icon(
+                        p.status == PaymentStatus.approved
+                            ? Icons.check_circle_rounded
+                            : (p.status == PaymentStatus.rejected
+                                ? Icons.cancel_rounded
+                                : Icons.hourglass_bottom_rounded),
+                        size: 18,
+                        color: p.status == PaymentStatus.approved
+                            ? AppTheme.successColor
+                            : (p.status == PaymentStatus.rejected
+                                ? AppTheme.errorColor
+                                : AppTheme.warningColor),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          '${p.paymentType ?? 'Payment'} · ${dateFmt.format(when)}',
+                          style: const TextStyle(fontSize: 13),
+                        ),
+                      ),
+                      Text(
+                        HiMoney.format(p.amountPaid, currency: p.currency),
+                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                    ],
+                  ),
+                );
+              }),
           ],
         ),
       ),

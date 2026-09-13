@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 
 import 'package:lightnetwork/controllers/HomeInternetService.dart';
 import 'package:lightnetwork/models/home_customer.dart';
+import 'package:lightnetwork/widgets/hi_account_statement.dart';
 import '../theme/app_theme.dart';
 
 class HomeCustomerPeriodsScreen extends StatefulWidget {
@@ -19,6 +19,7 @@ class _HomeCustomerPeriodsScreenState extends State<HomeCustomerPeriodsScreen> {
   final _dateFmt = DateFormat('yyyy-MM-dd');
   List<PeriodPaymentStatus> _periods = [];
   HomeCustomer? _customer;
+  Map<String, dynamic>? _statement;
   bool _loading = true;
   String _filter = 'all'; // all, paid, partial, unpaid
 
@@ -32,32 +33,15 @@ class _HomeCustomerPeriodsScreenState extends State<HomeCustomerPeriodsScreen> {
     setState(() => _loading = true);
     try {
       final customer = await HomeInternetService.getCustomer(widget.customerId);
-      List<PeriodPaymentStatus> periods = [];
-      if (customer?.status != null && customer!.status!['periods'] != null) {
-        final periodsList = customer.status!['periods'] as List;
-        periods = periodsList.map((p) {
-          final start = (p['start'] as Timestamp).toDate();
-          final end = (p['end'] as Timestamp).toDate();
-          final due = (p['due'] as Timestamp).toDate();
-          final required = (p['required_amount'] as num).toDouble();
-          final paid = (p['paid_amount'] as num).toDouble();
-          final stateStr = p['state'] as String;
-          final state = stateStr == 'paid' ? PeriodPayState.paid : 
-                       (stateStr == 'partial' ? PeriodPayState.partial : PeriodPayState.unpaid);
-          return PeriodPaymentStatus(
-            start: start,
-            end: end,
-            due: due,
-            requiredAmount: required,
-            paidAmount: paid,
-            state: state,
-          );
-        }).toList();
-      }
+      final statement = HomeInternetService.normalizeStatement(
+        await HomeInternetService.computeCustomerStatus(widget.customerId),
+      );
+      final periods = await HomeInternetService.listPeriodStatuses(widget.customerId);
       if (!mounted) return;
       setState(() {
         _customer = customer;
-        _periods = periods;
+        _statement = statement;
+        _periods = periods.reversed.toList();
       });
     } catch (e) {
       if (!mounted) return;
@@ -69,7 +53,7 @@ class _HomeCustomerPeriodsScreenState extends State<HomeCustomerPeriodsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final title = 'Billing Periods${widget.customerName != null ? ' • ${widget.customerName}' : ''}';
+    final title = 'Account statement${widget.customerName != null ? ' • ${widget.customerName}' : ''}';
 
     return Scaffold(
       appBar: AppBar(
@@ -98,45 +82,35 @@ class _HomeCustomerPeriodsScreenState extends State<HomeCustomerPeriodsScreen> {
     final paidCount = _periods.where((p) => p.state == PeriodPayState.paid).length;
     final partialCount = _periods.where((p) => p.state == PeriodPayState.partial).length;
     final unpaidCount = _periods.where((p) => p.state == PeriodPayState.unpaid).length;
-    final totalPaid = _periods.fold<double>(0, (sum, p) => sum + p.paidAmount);
-    final totalRequired = _periods.fold<double>(0, (sum, p) => sum + p.requiredAmount);
-    final outstanding = (totalRequired - totalPaid);
 
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          // Summary
-          Card(
-            elevation: 2,
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Plan Amount: TZS ${NumberFormat('#,##0').format(plan)}'),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 12,
-                    runSpacing: 8,
-                    children: [
-                      _chipStat('Due', _periods.length, AppTheme.textSecondary),
-                      _chipStat('Paid', paidCount, AppTheme.successColor),
-                      _chipStat('Partial', partialCount, AppTheme.warningColor),
-                      _chipStat('Unpaid', unpaidCount, AppTheme.errorColor),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Text('Outstanding: TZS ${NumberFormat('#,##0').format(outstanding)}',
-                    style: TextStyle(
-                      color: outstanding > 0 ? AppTheme.errorColor : AppTheme.successColor,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
+          if (_statement != null)
+            HiAccountStatement(
+              statement: _statement!,
+              accountName: 'Account ${_customer!.id} · Plan ${HiMoney.format(plan, currency: _customer!.currency)}',
+            )
+          else
+            Card(
+              elevation: 2,
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Text('Plan ${HiMoney.format(plan, currency: _customer!.currency)}'),
               ),
             ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            children: [
+              _chipStat('Invoices', _periods.length, AppTheme.textSecondary),
+              _chipStat('Paid', paidCount, AppTheme.successColor),
+              _chipStat('Partial', partialCount, AppTheme.warningColor),
+              _chipStat('Open', unpaidCount, AppTheme.errorColor),
+            ],
           ),
           const SizedBox(height: 12),
 
@@ -225,9 +199,18 @@ class _HomeCustomerPeriodsScreenState extends State<HomeCustomerPeriodsScreen> {
                 Icon(icon, color: color),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: Text(
-                    '${_dateFmt.format(p.start)}  -  ${_dateFmt.format(p.end)}',
-                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        p.invoiceNo ?? 'Invoice ${_dateFmt.format(p.start)}',
+                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                      Text(
+                        '${_dateFmt.format(p.start)}  –  ${_dateFmt.format(p.end)}',
+                        style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+                      ),
+                    ],
                   ),
                 ),
                 Container(
@@ -237,7 +220,7 @@ class _HomeCustomerPeriodsScreenState extends State<HomeCustomerPeriodsScreen> {
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Text(
-                    p.state.name.toUpperCase(),
+                    (p.state == PeriodPayState.unpaid ? 'OPEN' : p.state.name.toUpperCase()),
                     style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w600),
                   ),
                 ),
@@ -259,7 +242,10 @@ class _HomeCustomerPeriodsScreenState extends State<HomeCustomerPeriodsScreen> {
               ],
             ),
             const SizedBox(height: 6),
-            Text('Due: ${_dateFmt.format(p.due)}', style: const TextStyle(color: AppTheme.textSecondary)),
+            Text(
+              'Due ${_dateFmt.format(p.due)}  ·  Balance ${HiMoney.format(p.balance > 0 ? p.balance : (p.requiredAmount - p.paidAmount))}',
+              style: const TextStyle(color: AppTheme.textSecondary),
+            ),
           ],
         ),
       ),

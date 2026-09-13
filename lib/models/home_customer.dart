@@ -1,4 +1,4 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:lightnetwork/utils/flex_date.dart';
 
 enum PaymentScheduleType { weekly, monthly }
 
@@ -24,6 +24,7 @@ class HomeCustomer {
   final DateTime? updatedAt;
   final bool active;
   final Map<String, dynamic>? status;
+  final String? loginEmail;
 
   HomeCustomer({
     required this.id,
@@ -47,6 +48,7 @@ class HomeCustomer {
     this.updatedAt,
     this.active = true,
     this.status,
+    this.loginEmail,
   });
 
   factory HomeCustomer.fromMap(Map<String, dynamic> map, String id) {
@@ -67,17 +69,22 @@ class HomeCustomer {
       schedule: (map['schedule'] == 'weekly')
           ? PaymentScheduleType.weekly
           : PaymentScheduleType.monthly,
-      startDate: _fromTs(map['start_date']) ?? DateTime.now(),
-      billingDayOfMonth: map['billing_day_of_month'],
-      billingWeekday: map['billing_weekday'],
+      startDate: parseFlexDate(map['start_date']) ?? DateTime.now(),
+      billingDayOfMonth: map['billing_day_of_month'] is int
+          ? map['billing_day_of_month']
+          : int.tryParse('${map['billing_day_of_month'] ?? ''}'),
+      billingWeekday: map['billing_weekday'] is int
+          ? map['billing_weekday']
+          : int.tryParse('${map['billing_weekday'] ?? ''}'),
       address: map['address'],
       notes: map['notes'],
       createdByUid: map['created_by_uid'] ?? '',
       createdByName: map['created_by_name'] ?? '',
-      createdAt: _fromTs(map['created_at']) ?? DateTime.now(),
-      updatedAt: _fromTs(map['updated_at']),
-      active: map['active'] ?? true,
+      createdAt: parseFlexDate(map['created_at']) ?? DateTime.now(),
+      updatedAt: parseFlexDate(map['updated_at']),
+      active: map['active'] == true || map['active'] == 1 || map['active'] == 'true',
       status: (map['status'] is Map) ? Map<String, dynamic>.from(map['status']) : null,
+      loginEmail: map['login_email']?.toString(),
     );
   }
 
@@ -92,23 +99,17 @@ class HomeCustomer {
       'plan_amount': planAmount,
       'currency': currency,
       'schedule': schedule.name,
-      'start_date': Timestamp.fromDate(startDate),
+      'start_date': startDate.toIso8601String(),
       if (billingDayOfMonth != null) 'billing_day_of_month': billingDayOfMonth,
       if (billingWeekday != null) 'billing_weekday': billingWeekday,
       if (address != null) 'address': address,
       if (notes != null) 'notes': notes,
       'created_by_uid': createdByUid,
       'created_by_name': createdByName,
-      'created_at': Timestamp.fromDate(createdAt),
-      if (updatedAt != null) 'updated_at': Timestamp.fromDate(updatedAt!),
+      'created_at': createdAt.toIso8601String(),
+      if (updatedAt != null) 'updated_at': updatedAt!.toIso8601String(),
       'active': active,
     };
   }
 
-  static DateTime? _fromTs(dynamic v) {
-    if (v == null) return null;
-    if (v is Timestamp) return v.toDate();
-    if (v is DateTime) return v;
-    return null;
-  }
 }

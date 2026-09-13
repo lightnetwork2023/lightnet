@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:lightnetwork/services/app_db.dart';
 import '../controllers/ApiService.dart';
 import '../controllers/location_controller.dart';
 

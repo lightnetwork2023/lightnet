@@ -1,4 +1,4 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:lightnetwork/utils/flex_date.dart';
 
 class PlanSnapshot {
   final double amount;
@@ -15,7 +15,7 @@ class PlanSnapshot {
     final amt = (map['amount'] is num)
         ? (map['amount'] as num).toDouble()
         : double.tryParse('${map['amount']}') ?? 0.0;
-    final eff = _fromTs(map['effective_from']) ?? DateTime(1970);
+    final eff = parseFlexDate(map['effective_from']) ?? DateTime(1970);
     return PlanSnapshot(
       amount: amt,
       currency: map['currency'] ?? 'TZS',
@@ -27,14 +27,8 @@ class PlanSnapshot {
     return {
       'amount': amount,
       'currency': currency,
-      'effective_from': Timestamp.fromDate(effectiveFrom),
+      'effective_from': effectiveFrom.toIso8601String(),
     };
   }
 
-  static DateTime? _fromTs(dynamic v) {
-    if (v == null) return null;
-    if (v is Timestamp) return v.toDate();
-    if (v is DateTime) return v;
-    return null;
-  }
 }

@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:lightnetwork/services/app_db.dart';
 import '../services/firestore_cost_guards.dart';
 import '../theme/app_theme.dart';
 import '../widgets/modern_components.dart';

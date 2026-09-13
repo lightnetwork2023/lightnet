@@ -1,4 +1,4 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:lightnetwork/services/app_db.dart';
 
 class FieldRegistrationService {
   static final _db = FirebaseFirestore.instance;

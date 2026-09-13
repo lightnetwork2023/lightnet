@@ -1,9 +1,12 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    function isSignedIn() {
-      return request.auth != null;
+    // App data lives on the LightNet MySQL/Flask API. Only Firebase Auth remains.
+    match /{document=**} {
+      allow read, write: if false;
     }
+  }
+}
 
     // Old MikroTik builds scanned this collection (hundreds of docs per router).
     // New app does not read it. Admin SDK / Cloud Functions still can.
@@ -11,10 +14,21 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // Top-level hotspot payments AND nested home_customers/{id}/payments.
-    // collectionGroup('payments') (Home Payment Approvals) needs this recursive path.
+    // Home internet billing now lives on the LightNet MySQL/Flask API.
+    // Block client access so old APKs cannot split writes with the new server.
+    match /home_customers/{document=**} {
+      allow read, write: if false;
+    }
+    match /archived_home_customers/{document=**} {
+      allow read, write: if false;
+    }
+    match /home_internet_config/{document=**} {
+      allow read, write: if false;
+    }
+
+    // Top-level hotspot payments only. Home-customer payments are blocked above.
     // List still requires a limit so old unbounded scans stay blocked.
-    match /{path=**}/payments/{id} {
+    match /payments/{id} {
       allow get: if isSignedIn();
       allow list: if isSignedIn()
         && request.query.limit is number
@@ -24,11 +38,13 @@ service cloud.firestore {
     }
 
     // All other collections: signed-in app users only.
-    // Exclude the two collections above so this catch-all cannot override them.
     match /{collection}/{document=**} {
       allow read, write: if isSignedIn()
         && collection != 'radacct_history'
-        && collection != 'payments';
+        && collection != 'payments'
+        && collection != 'home_customers'
+        && collection != 'archived_home_customers'
+        && collection != 'home_internet_config';
     }
   }
 }

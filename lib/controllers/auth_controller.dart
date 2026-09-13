@@ -1,4 +1,4 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:lightnetwork/services/app_db.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:get/get.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -370,41 +370,19 @@ class AuthController extends GetxController {
     }
 
     try {
-      print('AuthController: Calling Cloud Function to create user...');
-      // Call the Cloud Function to create user
-      final response = await http.post(
-        Uri.parse('https://us-central1-lightnet-d2de9.cloudfunctions.net/createUser'),
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode({
-          'email': email,
-          'password': password,
-          'role': role,
-          'name': name,
-          'location': location,
-          'locations': locations,
-          'home_customer_id': homeCustomerId,
-          if (commissionDivisor != null) 'commission_divisor': commissionDivisor,
-        }),
-      );
-
-      print('AuthController: Cloud Function response status: ${response.statusCode}');
-      print('AuthController: Cloud Function response body: ${response.body}');
-
-      final responseData = jsonDecode(response.body);
-
-      if (response.statusCode == 200) {
-        print('AuthController: User created successfully via Cloud Function');
-        // User created successfully via Cloud Function
-        // Return null to indicate success without UserCredential
-        return null;
-      } else {
-        // Handle Cloud Function errors
-        final errorMessage = responseData['error'] ?? 'Failed to create user';
-        print('AuthController: Cloud Function error: $errorMessage');
-        throw errorMessage;
-      }
+      print('AuthController: Creating user on LightNet server...');
+      await AppAuthApi.createUser({
+        'email': email,
+        'password': password,
+        'role': role,
+        'name': name,
+        'location': location,
+        'locations': locations,
+        'home_customer_id': homeCustomerId,
+        if (commissionDivisor != null) 'commission_divisor': commissionDivisor,
+      });
+      print('AuthController: User created successfully');
+      return null;
     } on FirebaseAuthException catch (e) {
       print('AuthController: FirebaseAuthException: ${e.code} - ${e.message}');
       if (e.code == 'weak-password') {
@@ -450,18 +428,10 @@ class AuthController extends GetxController {
       throw 'Provide uid or email to delete user.';
     }
     try {
-      final resp = await http.post(
-        Uri.parse('https://us-central1-lightnet-d2de9.cloudfunctions.net/deleteAppUser'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          if (uid != null && uid.isNotEmpty) 'uid': uid,
-          if (email != null && email.isNotEmpty) 'email': email,
-        }),
+      await AppAuthApi.deleteUser(
+        uid: (uid != null && uid.isNotEmpty) ? uid : null,
+        email: (email != null && email.isNotEmpty) ? email : null,
       );
-      if (resp.statusCode != 200) {
-        final data = jsonDecode(resp.body);
-        throw data['error'] ?? 'Delete failed with status ${resp.statusCode}';
-      }
     } catch (e) {
       rethrow;
     }
@@ -471,14 +441,8 @@ class AuthController extends GetxController {
   Future<bool> callResetUserPassword({required String email, required String newPassword}) async {
     if (!isBoss) throw 'Only boss can change user passwords.';
     try {
-      final resp = await http.post(
-        Uri.parse('https://us-central1-lightnet-d2de9.cloudfunctions.net/resetUserPassword'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'email': email, 'newPassword': newPassword}),
-      );
-      if (resp.statusCode == 200) return true;
-      final data = jsonDecode(resp.body);
-      throw data['error'] ?? 'Failed to change password';
+      await AppAuthApi.resetPassword(email: email, newPassword: newPassword);
+      return true;
     } catch (e) {
       rethrow;
     }

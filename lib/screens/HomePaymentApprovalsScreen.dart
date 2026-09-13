@@ -1,4 +1,3 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:intl/intl.dart';
@@ -21,34 +20,6 @@ class _HomePaymentApprovalsScreenState extends State<HomePaymentApprovalsScreen>
   final _auth = Get.find<AuthController>();
   final Map<String, String> _customerNames = {};
   final Set<String> _nameLookups = {};
-  bool _useCustomerFallback = false;
-  bool _fallbackLoading = false;
-  List<QueryDocumentSnapshot<Map<String, dynamic>>> _fallbackDocs = [];
-
-  Future<void> _loadFallback() async {
-    if (_fallbackLoading) return;
-    setState(() {
-      _fallbackLoading = true;
-      _useCustomerFallback = true;
-    });
-    try {
-      final docs = await HomeInternetService.fetchPendingApprovalsFromCustomers();
-      if (!mounted) return;
-      setState(() {
-        _fallbackDocs = docs;
-        _fallbackLoading = false;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _fallbackLoading = false);
-    }
-  }
-
-  bool _isPermissionDenied(Object? error) {
-    final text = error?.toString().toLowerCase() ?? '';
-    return text.contains('permission-denied') || text.contains('permission_denied');
-  }
-
   void _prefetchNames(Iterable<String> ids) {
     for (final id in ids) {
       if (id.isEmpty || _customerNames.containsKey(id) || _nameLookups.contains(id)) {
@@ -93,41 +64,24 @@ class _HomePaymentApprovalsScreenState extends State<HomePaymentApprovalsScreen>
           decoration: const BoxDecoration(gradient: AppGradients.primaryGradient),
         ),
       ),
-      body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      body: StreamBuilder<List<PaymentRecord>>(
         stream: HomeInternetService.streamPendingApprovalGroup(),
         builder: (context, snapshot) {
-          if (_useCustomerFallback) {
-            if (_fallbackLoading) {
-              return const Center(child: CircularProgressIndicator());
-            }
-          } else if (snapshot.connectionState == ConnectionState.waiting) {
+          if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
             return const Center(child: CircularProgressIndicator());
-          } else if (snapshot.hasError) {
-            if (_isPermissionDenied(snapshot.error)) {
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                if (mounted && !_useCustomerFallback) {
-                  _loadFallback();
-                }
-              });
-              return const Center(child: CircularProgressIndicator());
-            }
+          }
+          if (snapshot.hasError) {
             return Center(child: Text('Error: ${snapshot.error}'));
           }
-          final docs = _useCustomerFallback
-              ? _fallbackDocs
-              : (snapshot.data?.docs ?? []);
-          if (docs.isEmpty) {
+          final pending = snapshot.data ?? [];
+          if (pending.isEmpty) {
             return const _EmptyApprovals();
           }
-          final pending = docs.map((d) {
-            final pr = PaymentRecord.fromMap(d.data(), d.id, path: d.reference.path);
-            return pr;
-          }).toList();
           WidgetsBinding.instance.addPostFrameCallback((_) {
             _prefetchNames(pending.map((p) => p.customerId));
           });
           return ListView.separated(
-            itemCount: docs.length,
+            itemCount: pending.length,
             separatorBuilder: (_, __) => const Divider(height: 1),
             itemBuilder: (context, index) {
               final pr = pending[index];

@@ -1,5 +1,5 @@
 import 'package:get/get.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:lightnetwork/services/app_db.dart';
 
 class LocationController extends GetxController {
   final RxList<String> locations = <String>[].obs;

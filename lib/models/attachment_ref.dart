@@ -1,4 +1,4 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:lightnetwork/utils/flex_date.dart';
 
 class AttachmentRef {
   final String url;
@@ -32,7 +32,7 @@ class AttachmentRef {
       storagePath: map['storage_path'] ?? '',
       uploaderUid: map['uploader_uid'] ?? '',
       uploaderName: map['uploader_name'] ?? '',
-      uploadedAt: _fromTs(map['uploaded_at']) ?? DateTime.now(),
+      uploadedAt: parseFlexDate(map['uploaded_at']) ?? DateTime.now(),
     );
   }
 
@@ -45,14 +45,8 @@ class AttachmentRef {
       'storage_path': storagePath,
       'uploader_uid': uploaderUid,
       'uploader_name': uploaderName,
-      'uploaded_at': Timestamp.fromDate(uploadedAt),
+      'uploaded_at': uploadedAt.toIso8601String(),
     };
   }
 
-  static DateTime? _fromTs(dynamic v) {
-    if (v == null) return null;
-    if (v is Timestamp) return v.toDate();
-    if (v is DateTime) return v;
-    return null;
-  }
 }

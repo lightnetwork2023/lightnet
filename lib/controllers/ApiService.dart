@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:lightnetwork/services/app_db.dart';
 
 // Cache entry class to store data with timestamp
 class _CacheEntry {
@@ -634,11 +634,12 @@ class ApiService {
     int? days,
   }) async {
     try {
+      final uri = Uri.parse('$baseUrl/make-paymentagent');
       print('🔄 Starting payment request...');
-      print('📍 URL: https://processpayment-3vxbatgzgq-uc.a.run.app');
+      print('📍 URL: $uri');
       print('📱 Provider: $provider, Phone: $phone, Amount: $amount');
       print('📍 Location: $location, Quantity: $quantity, Duration: $durationSeconds');
-      
+
       final requestBody = {
         'provider': provider,
         'phone': phone,
@@ -646,21 +647,10 @@ class ApiService {
         'quantity': quantity,
         'durationSeconds': durationSeconds,
         'location': location,
-        if (days != null) 'days': days,
+        'days': days ?? (durationSeconds / 86400).round(),
       };
-      
-      print('📤 Request body: ${jsonEncode(requestBody)}');
-      
-      // Preflight: DNS check for visibility
-      try {
-        final lookup = await InternetAddress.lookup('processpayment-3vxbatgzgq-uc.a.run.app', type: InternetAddressType.any);
-        print('🔎 DNS lookup results: ${lookup.map((a) => '${a.address}/${a.type}').join(', ')}');
-      } catch (e) {
-        print('⚠️ DNS lookup failed but proceeding to request: $e');
-      }
 
-      // Single robust attempt with extended timeout
-      final uri = Uri.parse('https://processpayment-3vxbatgzgq-uc.a.run.app');
+      print('📤 Request body: ${jsonEncode(requestBody)}');
       http.Response response;
       try {
         response = await http.post(
@@ -692,15 +682,18 @@ class ApiService {
       print('📥 Response body: ${response.body}');
       
       if (response.statusCode == 200) {
-        final result = jsonDecode(response.body);
+        final result = Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+        result['message'] ??= result['error'];
         print('✅ Payment request successful: $result');
         return result;
       } else {
         print('❌ Payment request failed with status: ${response.statusCode}');
         print('❌ Error response: ${response.body}');
+        final err = 'HTTP ${response.statusCode}: ${response.body}';
         return {
           'success': false,
-          'error': 'HTTP ${response.statusCode}: ${response.body}',
+          'error': err,
+          'message': err,
           'status_code': response.statusCode,
         };
       }

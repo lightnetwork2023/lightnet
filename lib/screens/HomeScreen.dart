@@ -6,7 +6,7 @@ import 'package:get/get.dart';
 import '../controllers/ApiService.dart';
 import '../controllers/auth_controller.dart';
 import 'UserManagementScreen.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:lightnetwork/services/app_db.dart';
 import 'NetworkDevicesScreen.dart';
 import 'ActiveMacsScreen.dart';
 import 'OfflineDevicesScreen.dart';

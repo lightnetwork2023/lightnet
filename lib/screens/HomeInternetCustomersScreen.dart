@@ -16,6 +16,7 @@ import 'HomeInternetDropdownsScreen.dart';
 import 'HomeInternetAnalyticsScreen.dart';
 import 'ArchivedHomeCustomersScreen.dart';
 import 'FieldDetailsScreen.dart';
+import 'package:lightnetwork/widgets/hi_account_statement.dart';
 
 class HomeInternetCustomersScreen extends StatefulWidget {
   const HomeInternetCustomersScreen({super.key});
@@ -257,10 +258,18 @@ class _CustomerCardState extends State<_CustomerCard> {
   @override
   void initState() {
     super.initState();
+    _status = widget.customer.status ?? widget.initialStatus;
+    if (_status != null) {
+      _status = HomeInternetService.normalizeStatement(_status!);
+    }
+    _loadStatus();
+  }
+
+  @override
+  void didUpdateWidget(covariant _CustomerCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
     if (widget.customer.status != null) {
-      _status = widget.customer.status;
-    } else if (widget.initialStatus != null) {
-      _status = widget.initialStatus;
+      _status = HomeInternetService.normalizeStatement(widget.customer.status!);
     }
   }
 
@@ -270,7 +279,7 @@ class _CustomerCardState extends State<_CustomerCard> {
       final status = await HomeInternetService.computeCustomerStatus(widget.customer.id);
       if (mounted) {
         setState(() {
-          _status = status;
+          _status = HomeInternetService.normalizeStatement(status);
           _loadingStatus = false;
         });
       }
@@ -287,11 +296,12 @@ class _CustomerCardState extends State<_CustomerCard> {
     final fmt = NumberFormat('#,##0');
     
     final overdue = _status?['overdue'] == true;
-    final outstandingRaw = _status?['outstanding_amount'];
-    final outstanding = (outstandingRaw is num)
-        ? outstandingRaw.toDouble()
-        : double.tryParse('$outstandingRaw') ?? 0.0;
-    final currency = _status?['currency'] ?? customer.currency;
+    final currency = '${_status?['currency'] ?? customer.currency}';
+    final thisMonth = HomeInternetService.asMoney(_status?['this_month_bill']);
+    final arrears = HomeInternetService.asMoney(_status?['arrears']);
+    final credit = HomeInternetService.asMoney(_status?['credit']);
+    final payNow = HomeInternetService.asMoney(_status?['pay_now'] ?? _status?['outstanding_amount']);
+    final outstanding = HomeInternetService.asMoney(_status?['outstanding_amount']);
 
     final borderColor = overdue
         ? AppTheme.errorColor.withOpacity(0.35)
@@ -301,8 +311,12 @@ class _CustomerCardState extends State<_CustomerCard> {
         : Colors.white;
     final badgeColor = overdue
         ? AppTheme.errorColor
-        : AppTheme.successColor;
-    final badgeText = overdue ? 'OVERDUE' : 'ON TIME';
+        : (payNow > 0
+            ? AppTheme.warningColor
+            : (credit > 0 || outstanding < 0 ? AppTheme.infoColor : AppTheme.successColor));
+    final badgeText = overdue
+        ? 'OVERDUE'
+        : (payNow > 0 ? 'DUE' : (credit > 0 || outstanding < 0 ? 'CREDIT' : 'SETTLED'));
 
     return Card(
       elevation: 2,
@@ -473,16 +487,23 @@ class _CustomerCardState extends State<_CustomerCard> {
                   _chip(Icons.speed_rounded, '${customer.speedMbps} Mbps'),
                   _chip(Icons.receipt_long_rounded, 'Plan: ${fmt.format(customer.planAmount)} $currency'),
                   if (_status == null)
-                    _chip(Icons.query_stats_rounded, 'Status: computing...')
+                    _chip(Icons.query_stats_rounded, _loadingStatus ? 'Updating statement...' : 'Statement: loading...')
                   else ...[
+                    _chip(Icons.calendar_today_rounded, 'This month: ${HiMoney.format(thisMonth, currency: currency)}'),
                     _chip(
-                      outstanding > 0 ? Icons.warning_rounded : Icons.check_circle_rounded,
-                      outstanding > 0
-                          ? 'Outstanding: ${fmt.format(outstanding)} $currency'
-                          : (outstanding < 0
-                              ? 'Credit: ${fmt.format(outstanding.abs())} $currency'
-                              : 'Outstanding: 0 $currency'),
-                      color: outstanding > 0 ? AppTheme.errorColor : AppTheme.successColor,
+                      Icons.history_rounded,
+                      'Arrears: ${HiMoney.format(arrears, currency: currency)}',
+                      color: arrears > 0 ? AppTheme.errorColor : AppTheme.textSecondary,
+                    ),
+                    _chip(
+                      Icons.account_balance_wallet_outlined,
+                      'Credit: ${HiMoney.format(credit, currency: currency)}',
+                      color: credit > 0 ? AppTheme.infoColor : AppTheme.textSecondary,
+                    ),
+                    _chip(
+                      payNow > 0 ? Icons.payments_rounded : Icons.check_circle_rounded,
+                      'Pay now: ${HiMoney.format(payNow, currency: currency)}',
+                      color: payNow > 0 ? (overdue ? AppTheme.errorColor : AppTheme.warningColor) : AppTheme.successColor,
                     ),
                   ],
                 ],
@@ -502,7 +523,7 @@ class _CustomerCardState extends State<_CustomerCard> {
                         ),
                       ),
                       icon: const Icon(Icons.calendar_month_rounded),
-                      label: const Text('Billing Periods'),
+                      label: const Text('Statement'),
                     ),
                   ),
                   const SizedBox(width: 10),

@@ -4,7 +4,7 @@ import 'package:get/get.dart';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:lightnetwork/services/app_db.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import '../controllers/ApiService.dart';
 import '../controllers/location_controller.dart';

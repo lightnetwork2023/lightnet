@@ -1,197 +1,133 @@
-import 'dart:math';
-import 'dart:typed_data';
+import 'dart:async';
+import 'dart:convert';
 
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:get/get.dart';
+import 'package:http/http.dart' as http;
 
+import 'package:lightnetwork/controllers/ApiService.dart';
 import 'package:lightnetwork/controllers/auth_controller.dart';
-import 'package:lightnetwork/models/home_customer.dart';
-import 'package:lightnetwork/models/payment_record.dart';
 import 'package:lightnetwork/models/attachment_ref.dart';
 import 'package:lightnetwork/models/attachment_upload.dart';
+import 'package:lightnetwork/models/home_customer.dart';
+import 'package:lightnetwork/models/payment_record.dart';
 import 'package:lightnetwork/models/plan_snapshot.dart';
+import 'package:lightnetwork/utils/flex_date.dart';
 
 class HomeInternetService {
-  static final _db = FirebaseFirestore.instance;
   static final _storage = FirebaseStorage.instance;
   static final _auth = Get.find<AuthController>();
+  static const String _base = '${ApiService.baseUrl}/api/hi';
 
-  // Collections & Docs
-  static const String customersCol = 'home_customers';
-  static const String configCol = 'home_internet_config';
-  static const String enumsDoc = 'enums';
-  static const String archivedCustomersCol = 'archived_home_customers';
-
-  // ------------------------------
-  // Dropdown sources (zones, customer types)
-  // ------------------------------
-  static Future<List<String>> fetchZones() async {
-    final doc = await _db.collection(configCol).doc(enumsDoc).get();
-    final data = doc.data() ?? {};
-    final zones = (data['zones'] as List?)?.map((e) => '$e').toList();
-    return zones == null || zones.isEmpty
-        ? <String>[]
-        : zones;
+  static Future<Map<String, String>> _headers() async {
+    final token = await FirebaseAuth.instance.currentUser?.getIdToken();
+    return {
+      'Content-Type': 'application/json',
+      if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
+    };
   }
 
-  /// Boss-only: Archive a customer and related subcollections under archived_home_customers.
-  /// Copies customer doc, payments, and plan_snapshots to archive, then removes originals.
-  /// Attachments in Firebase Storage are NOT deleted; pointers remain valid.
+  static Future<Map<String, dynamic>> _decode(http.Response res) async {
+    final raw = res.body.isEmpty ? <String, dynamic>{} : jsonDecode(res.body);
+    if (raw is! Map) {
+      throw Exception('Unexpected server response');
+    }
+    final map = Map<String, dynamic>.from(raw);
+    if (res.statusCode >= 400) {
+      throw Exception(map['error']?.toString() ?? 'Request failed (${res.statusCode})');
+    }
+    return map;
+  }
+
+  static Future<Map<String, dynamic>> _get(String path) async {
+    final res = await http.get(Uri.parse('$_base$path'), headers: await _headers());
+    return _decode(res);
+  }
+
+  static Future<Map<String, dynamic>> _send(String method, String path, [Map<String, dynamic>? body]) async {
+    final uri = Uri.parse('$_base$path');
+    final headers = await _headers();
+    final encoded = body == null ? null : jsonEncode(body);
+    late http.Response res;
+    switch (method) {
+      case 'POST':
+        res = await http.post(uri, headers: headers, body: encoded);
+        break;
+      case 'PUT':
+        res = await http.put(uri, headers: headers, body: encoded);
+        break;
+      case 'PATCH':
+        res = await http.patch(uri, headers: headers, body: encoded);
+        break;
+      case 'DELETE':
+        res = await http.delete(uri, headers: headers);
+        break;
+      default:
+        throw Exception('Unsupported method $method');
+    }
+    return _decode(res);
+  }
+
+  static Stream<T> _poll<T>(Future<T> Function() load, {Duration every = const Duration(seconds: 12)}) async* {
+    while (true) {
+      yield await load();
+      await Future<void>.delayed(every);
+    }
+  }
+
+  static HomeCustomer _customer(Map<String, dynamic> map) {
+    return HomeCustomer.fromMap(map, '${map['id'] ?? ''}');
+  }
+
+  static PaymentRecord _payment(Map<String, dynamic> map) {
+    return PaymentRecord.fromMap(map, '${map['id'] ?? ''}');
+  }
+
+  static Future<List<String>> fetchZones() async {
+    final data = await _get('/config');
+    return (data['zones'] as List?)?.map((e) => '$e').toList() ?? <String>[];
+  }
+
+  static Future<List<String>> fetchCustomerTypes() async {
+    final data = await _get('/config');
+    return (data['customer_types'] as List?)?.map((e) => '$e').toList() ?? <String>[];
+  }
+
+  static Future<void> setDropdownOptions({
+    required List<String> zones,
+    required List<String> customerTypes,
+  }) async {
+    await _send('PUT', '/config', {
+      'zones': zones,
+      'customer_types': customerTypes,
+    });
+  }
+
   static Future<void> archiveCustomer({required String id}) async {
     if (!_auth.isBoss) {
       throw Exception('Only boss can archive customer');
     }
-    final custRef = _db.collection(customersCol).doc(id);
-    final snap = await custRef.get();
-    if (!snap.exists) {
-      throw Exception('Customer not found');
-    }
-
-    // Do not allow archiving if there are pending approvals
-    final pending = await custRef
-        .collection('payments')
-        .where('status', isEqualTo: PaymentStatus.pendingApproval.name)
-        .limit(1)
-        .get();
-    if (pending.docs.isNotEmpty) {
-      throw Exception('Cannot archive: customer has pending approval payments');
-    }
-
-    // 1) Copy customer doc to archive
-    final data = Map<String, dynamic>.from(snap.data()!);
-    data['archived_at'] = FieldValue.serverTimestamp();
-    data['archived_by_uid'] = _auth.user?.uid;
-    data['archived_by_name'] = _auth.userName;
-    final archRef = _db.collection(archivedCustomersCol).doc(id);
-    await archRef.set(data);
-
-    // 2) Copy payments to archive
-    while (true) {
-      final paySnap = await custRef.collection('payments').limit(300).get();
-      if (paySnap.docs.isEmpty) break;
-      final batch = _db.batch();
-      for (final d in paySnap.docs) {
-        final m = d.data();
-        m['archived_at'] = FieldValue.serverTimestamp();
-        batch.set(archRef.collection('payments').doc(d.id), m, SetOptions(merge: false));
-      }
-      await batch.commit();
-
-      // After copy, delete originals for this page
-      final delBatch = _db.batch();
-      for (final d in paySnap.docs) {
-        delBatch.delete(d.reference);
-      }
-      await delBatch.commit();
-    }
-
-    // 3) Copy plan snapshots to archive
-    while (true) {
-      final snaps = await custRef.collection('plan_snapshots').limit(300).get();
-      if (snaps.docs.isEmpty) break;
-      final batch = _db.batch();
-      for (final d in snaps.docs) {
-        final m = d.data();
-        m['archived_at'] = FieldValue.serverTimestamp();
-        batch.set(archRef.collection('plan_snapshots').doc(d.id), m, SetOptions(merge: false));
-      }
-      await batch.commit();
-
-      final delBatch = _db.batch();
-      for (final d in snaps.docs) {
-        delBatch.delete(d.reference);
-      }
-      await delBatch.commit();
-    }
-
-    // 4) Delete customer doc from primary
-    await custRef.delete();
+    await _send('POST', '/customers/$id/archive');
   }
 
-  /// Boss-only: Restore an archived customer back to active collection.
-  /// Copies customer doc, payments, and plan_snapshots from archive back to home_customers, then removes from archive.
   static Future<void> restoreCustomer({required String id}) async {
     if (!_auth.isBoss) {
       throw Exception('Only boss can restore customer');
     }
-    final archRef = _db.collection(archivedCustomersCol).doc(id);
-    final snap = await archRef.get();
-    if (!snap.exists) {
-      throw Exception('Archived customer not found');
-    }
-
-    // Check if customer already exists in active collection
-    final existingActive = await _db.collection(customersCol).doc(id).get();
-    if (existingActive.exists) {
-      throw Exception('Customer already exists in active collection');
-    }
-
-    // 1) Copy customer doc back to active
-    final data = Map<String, dynamic>.from(snap.data()!);
-    data.remove('archived_at');
-    data.remove('archived_by_uid');
-    data.remove('archived_by_name');
-    data['restored_at'] = FieldValue.serverTimestamp();
-    data['restored_by_uid'] = _auth.user?.uid;
-    data['restored_by_name'] = _auth.userName;
-    final custRef = _db.collection(customersCol).doc(id);
-    await custRef.set(data);
-
-    // 2) Copy payments back to active
-    while (true) {
-      final paySnap = await archRef.collection('payments').limit(300).get();
-      if (paySnap.docs.isEmpty) break;
-      final batch = _db.batch();
-      for (final d in paySnap.docs) {
-        final m = Map<String, dynamic>.from(d.data());
-        m.remove('archived_at');
-        batch.set(custRef.collection('payments').doc(d.id), m, SetOptions(merge: false));
-      }
-      await batch.commit();
-
-      // After copy, delete from archive
-      final delBatch = _db.batch();
-      for (final d in paySnap.docs) {
-        delBatch.delete(d.reference);
-      }
-      await delBatch.commit();
-    }
-
-    // 3) Copy plan snapshots back to active
-    while (true) {
-      final snaps = await archRef.collection('plan_snapshots').limit(300).get();
-      if (snaps.docs.isEmpty) break;
-      final batch = _db.batch();
-      for (final d in snaps.docs) {
-        final m = Map<String, dynamic>.from(d.data());
-        m.remove('archived_at');
-        batch.set(custRef.collection('plan_snapshots').doc(d.id), m, SetOptions(merge: false));
-      }
-      await batch.commit();
-
-      final delBatch = _db.batch();
-      for (final d in snaps.docs) {
-        delBatch.delete(d.reference);
-      }
-      await delBatch.commit();
-    }
-
-    // 4) Delete customer doc from archive
-    await archRef.delete();
+    await _send('POST', '/customers/$id/restore');
   }
 
-  /// Fetch archived customers (boss-only)
   static Future<List<HomeCustomer>> fetchArchivedCustomers() async {
     if (!_auth.isBoss) {
       throw Exception('Only boss can view archived customers');
     }
-    final snap = await _db.collection(archivedCustomersCol).orderBy('archived_at', descending: true).get();
-    return snap.docs.map((d) => HomeCustomer.fromMap(d.data(), d.id)).toList();
+    final data = await _get('/customers?archived=1');
+    return (data['customers'] as List? ?? [])
+        .map((e) => _customer(Map<String, dynamic>.from(e)))
+        .toList();
   }
 
-  /// Boss-only: Create a home user account linked to a customer ID
-  /// This creates a Firebase Auth user with role 'homeuser' and links it to the customer
   static Future<void> createHomeUserAccount({
     required String customerId,
     required String email,
@@ -200,15 +136,10 @@ class HomeInternetService {
     if (!_auth.isBoss) {
       throw Exception('Only boss can create home user accounts');
     }
-
-    // Verify customer exists
     final customer = await getCustomer(customerId);
     if (customer == null) {
       throw Exception('Customer not found');
     }
-
-    // Create user account via AuthController with home_customer_id
-    // The Cloud Function will store the customer ID immediately
     await _auth.createNewAccount(
       email,
       password,
@@ -216,167 +147,84 @@ class HomeInternetService {
       name: customer.name,
       location: null,
       locations: null,
-      homeCustomerId: customerId, // Pass customer ID to Cloud Function
+      homeCustomerId: customerId,
     );
+    await _send('POST', '/customers/$customerId/login-email', {'email': email});
   }
 
-  /// Check if a home user account exists for a given customer ID
-  /// Returns the user's email if found, null otherwise
   static Future<String?> getHomeUserEmail(String customerId) async {
     try {
-      final usersSnap = await _db
-          .collection('users')
-          .where('home_customer_id', isEqualTo: customerId)
-          .limit(1)
-          .get();
-      
-      if (usersSnap.docs.isEmpty) return null;
-      
-      final userData = usersSnap.docs.first.data();
-      return userData['email'] as String?;
+      final customer = await getCustomer(customerId);
+      final email = customer?.loginEmail;
+      if (email != null && email.isNotEmpty) return email;
+      return null;
     } catch (e) {
       print('Error fetching home user email: $e');
       return null;
     }
   }
 
-  static Future<List<String>> fetchCustomerTypes() async {
-    final doc = await _db.collection(configCol).doc(enumsDoc).get();
-    final data = doc.data() ?? {};
-    final types = (data['customer_types'] as List?)?.map((e) => '$e').toList();
-    return types == null || types.isEmpty
-        ? <String>[]
-        : types;
-  }
-
-  static Future<void> setDropdownOptions({
-    required List<String> zones,
-    required List<String> customerTypes,
-  }) async {
-    await _db.collection(configCol).doc(enumsDoc).set({
-      'zones': zones,
-      'customer_types': customerTypes,
-      'updated_at': FieldValue.serverTimestamp(),
-      'updated_by_uid': _auth.user?.uid,
-      'updated_by_name': _auth.userName,
-    }, SetOptions(merge: true));
-  }
-
-  // ------------------------------
-  // Real-time Stream Methods (Offline-First)
-  // ------------------------------
-  
-  /// Stream all active customers in real-time
-  /// Data is served from cache first, then synced in background
   static Stream<List<HomeCustomer>> streamCustomers() {
-    return _db
-        .collection(customersCol)
-        .orderBy('status.sort_key', descending: true)
-        .orderBy('created_at', descending: true)
-        .snapshots()
-        .map((snap) => snap.docs
-            .map((d) => HomeCustomer.fromMap(d.data(), d.id))
-            .toList());
+    return _poll(() async {
+      final data = await _get('/customers');
+      return (data['customers'] as List? ?? [])
+          .map((e) => _customer(Map<String, dynamic>.from(e)))
+          .toList();
+    });
   }
 
-  /// Stream a single customer in real-time
   static Stream<HomeCustomer?> streamCustomer(String id) {
-    return _db
-        .collection(customersCol)
-        .doc(id)
-        .snapshots()
-        .map((snap) {
-          if (!snap.exists) return null;
-          return HomeCustomer.fromMap(snap.data()!, snap.id);
-        });
+    return _poll(() => getCustomer(id));
   }
 
-  /// Stream archived customers in real-time (boss-only)
   static Stream<List<HomeCustomer>> streamArchivedCustomers() {
     if (!_auth.isBoss) {
       return Stream.error(Exception('Only boss can view archived customers'));
     }
-    return _db
-        .collection(archivedCustomersCol)
-        .orderBy('archived_at', descending: true)
-        .snapshots()
-        .map((snap) => snap.docs
-            .map((d) => HomeCustomer.fromMap(d.data(), d.id))
-            .toList());
+    return _poll(fetchArchivedCustomers);
   }
 
-  /// Stream payments for a customer in real-time
+  static Future<List<PaymentRecord>> fetchPayments(String customerId, {int limit = 50, String? status}) async {
+    final q = StringBuffer('/customers/$customerId/payments?limit=$limit');
+    if (status != null && status.isNotEmpty) {
+      q.write('&status=$status');
+    }
+    final data = await _get(q.toString());
+    return (data['payments'] as List? ?? [])
+        .map((e) => _payment(Map<String, dynamic>.from(e)))
+        .toList();
+  }
+
   static Stream<List<PaymentRecord>> streamPayments(String customerId) {
-    return _paymentsCol(customerId)
-        .orderBy('created_at', descending: true)
-        .limit(50)
-        .snapshots()
-        .map((snap) => snap.docs
-            .map((d) => PaymentRecord.fromMap(d.data(), d.id))
-            .toList());
+    return _poll(() => fetchPayments(customerId));
   }
 
-  /// Stream pending approval payments in real-time
-  static Stream<QuerySnapshot<Map<String, dynamic>>> streamPendingApprovalGroup() {
-    return _db
-        .collectionGroup('payments')
-        .where('status', isEqualTo: PaymentStatus.pendingApproval.name)
-        .orderBy('created_at', descending: true)
-        .limit(100)
-        .snapshots();
+  static Future<List<PaymentRecord>> fetchPendingApprovals() async {
+    final data = await _get('/pending');
+    return (data['payments'] as List? ?? [])
+        .map((e) => _payment(Map<String, dynamic>.from(e)))
+        .toList();
   }
 
-  /// Works when collectionGroup('payments') is blocked by top-level-only rules.
-  static Future<List<QueryDocumentSnapshot<Map<String, dynamic>>>>
-      fetchPendingApprovalsFromCustomers() async {
-    final customers = await _db.collection(customersCol).limit(300).get();
-    final out = <QueryDocumentSnapshot<Map<String, dynamic>>>[];
-    for (final customer in customers.docs) {
-      final pays = await _paymentsCol(customer.id)
-          .where('status', isEqualTo: PaymentStatus.pendingApproval.name)
-          .limit(20)
-          .get();
-      out.addAll(pays.docs);
-    }
-    DateTime? createdAt(QueryDocumentSnapshot<Map<String, dynamic>> doc) {
-      final raw = doc.data()['created_at'];
-      if (raw is Timestamp) return raw.toDate();
-      return null;
-    }
-    out.sort((a, b) {
-      final at = createdAt(a) ?? DateTime.fromMillisecondsSinceEpoch(0);
-      final bt = createdAt(b) ?? DateTime.fromMillisecondsSinceEpoch(0);
-      return bt.compareTo(at);
-    });
-    if (out.length <= 100) return out;
-    return out.sublist(0, 100);
+  static Stream<List<PaymentRecord>> streamPendingApprovalGroup() {
+    return _poll(fetchPendingApprovals);
+  }
+
+  static Future<List<PaymentRecord>> fetchPendingApprovalsFromCustomers() {
+    return fetchPendingApprovals();
   }
 
   static Stream<List<PaymentRecord>> streamPendingPayments(String customerId) {
-    return _paymentsCol(customerId)
-        .where('status', isEqualTo: PaymentStatus.pendingApproval.name)
-        .orderBy('created_at', descending: true)
-        .snapshots()
-        .map((snap) => snap.docs
-            .map((d) => PaymentRecord.fromMap(d.data(), d.id))
-            .toList());
-  }
-
-  // ------------------------------
-  // Customer Management
-  // ------------------------------
-  static String _random5Digit() {
-    final n = Random.secure().nextInt(100000); // 0..99999
-    return n.toString().padLeft(5, '0');
+    return _poll(() => fetchPayments(customerId, status: PaymentStatus.pendingApproval.name));
   }
 
   static Future<String> generateCustomerId({int maxAttempts = 50}) async {
-    for (int i = 0; i < maxAttempts; i++) {
-      final id = _random5Digit();
-      final exists = await _db.collection(customersCol).doc(id).get();
-      if (!exists.exists) return id;
+    final data = await _get('/new-id');
+    final id = '${data['id'] ?? ''}';
+    if (id.isEmpty) {
+      throw Exception('Failed to generate unique 5-digit customer ID after $maxAttempts attempts');
     }
-    throw Exception('Failed to generate unique 5-digit customer ID after $maxAttempts attempts');
+    return id;
   }
 
   static Future<HomeCustomer> createCustomer({
@@ -395,69 +243,53 @@ class HomeInternetService {
     String? address,
     String? notes,
   }) async {
-    final id = await generateCustomerId();
-    final now = DateTime.now();
-    final createdByUid = _auth.user?.uid ?? '';
-    final createdByName = _auth.userName;
-
-    final customer = HomeCustomer(
-      id: id,
-      name: name,
-      phone: phone,
-      location: location,
-      zone: zone,
-      speedMbps: speedMbps,
-      customerType: customerType,
-      planAmount: planAmount,
-      currency: currency,
-      schedule: schedule,
-      startDate: startDate,
-      billingDayOfMonth: billingDayOfMonth,
-      billingWeekday: billingWeekday,
-      address: address,
-      notes: notes,
-      createdByUid: createdByUid,
-      createdByName: createdByName,
-      createdAt: now,
-      updatedAt: null,
-      active: true,
-    );
-
-    await _db.collection(customersCol).doc(id).set(customer.toMap());
-    // record initial plan snapshot so historical periods stick to their price
-    final initialPlan = PlanSnapshot(
-      amount: planAmount,
-      currency: currency,
-      effectiveFrom: startDate,
-    );
-    await _plansCol(id).add(initialPlan.toMap());
-    return customer;
+    final data = await _send('POST', '/customers', {
+      'name': name,
+      'phone': phone,
+      'location': location,
+      'zone': zone,
+      'speed_mbps': speedMbps,
+      'customer_type': customerType,
+      'plan_amount': planAmount,
+      'currency': currency,
+      'schedule': schedule.name,
+      'start_date': startDate.toIso8601String(),
+      if (billingDayOfMonth != null) 'billing_day_of_month': billingDayOfMonth,
+      if (billingWeekday != null) 'billing_weekday': billingWeekday,
+      if (address != null) 'address': address,
+      if (notes != null) 'notes': notes,
+    });
+    return _customer(Map<String, dynamic>.from(data['customer'] as Map));
   }
 
   static Future<HomeCustomer?> getCustomer(String id) async {
-    final snap = await _db.collection(customersCol).doc(id).get();
-    if (!snap.exists) return null;
-    return HomeCustomer.fromMap(snap.data()!, snap.id);
+    try {
+      final data = await _get('/customers/$id');
+      final raw = data['customer'];
+      if (raw is! Map) return null;
+      return _customer(Map<String, dynamic>.from(raw));
+    } catch (e) {
+      final text = e.toString().toLowerCase();
+      if (text.contains('not found')) return null;
+      rethrow;
+    }
   }
 
-  /// Boss-only: backfill initial plan snapshots for existing customers
-  /// Returns the number of customers for which a snapshot was created
   static Future<int> backfillPlanSnapshots() async {
     if (!_auth.isBoss) {
       throw Exception('Only boss can backfill plan snapshots');
     }
-    final customersSnap = await _db.collection(customersCol).get();
+    final data = await _get('/customers');
     int created = 0;
-    for (final doc in customersSnap.docs) {
-      final c = HomeCustomer.fromMap(doc.data(), doc.id);
-      final plans = await _plansCol(c.id).limit(1).get();
-      if (plans.docs.isEmpty) {
-        final snap = PlanSnapshot(
-          amount: c.planAmount,
-          currency: c.currency,
-          effectiveFrom: c.startDate,
-        );
-        await _plansCol(c.id).add(snap.toMap());
+    for (final raw in data['customers'] as List? ?? []) {
+      final c = _customer(Map<String, dynamic>.from(raw));
+      final plans = await _fetchPlans(c.id);
+      if (plans.isEmpty) {
+        await _send('POST', '/customers/${c.id}/plans', {
+          'amount': c.planAmount,
+          'currency': c.currency,
+          'effective_from': c.startDate.toIso8601String(),
+        });
         created++;
       }
     }
@@ -484,168 +316,70 @@ class HomeInternetService {
     if (!_auth.isBoss) {
       throw Exception('Only boss can update customer');
     }
-    final existing = await getCustomer(id);
-    final Map<String, dynamic> updates = {
-      'updated_at': FieldValue.serverTimestamp(),
-      'updated_by_uid': _auth.user?.uid,
-      'updated_by_name': _auth.userName,
-    };
-    void setIf<T>(String key, T? v) { if (v != null) updates[key] = v; }
-    setIf<String>('name', name);
-    setIf<String>('phone', phone);
-    setIf<String>('location', location);
-    setIf<String>('zone', zone);
-    setIf<int>('speed_mbps', speedMbps);
-    setIf<String>('customer_type', customerType);
-    setIf<double>('plan_amount', planAmount);
-    setIf<String>('currency', currency);
-    if (schedule != null) updates['schedule'] = schedule.name;
-    setIf<int>('billing_day_of_month', billingDayOfMonth);
-    setIf<int>('billing_weekday', billingWeekday);
-    setIf<String>('address', address);
-    setIf<String>('notes', notes);
-    setIf<bool>('active', active);
-
-    await _db.collection(customersCol).doc(id).set(updates, SetOptions(merge: true));
-
-    // If plan amount or currency changed, append a new snapshot effective now
-    if (existing != null) {
-      final newAmount = planAmount ?? existing.planAmount;
-      final newCurrency = currency ?? existing.currency;
-      final changed = (newAmount != existing.planAmount) || (newCurrency != existing.currency);
-      if (changed) {
-        final snap = PlanSnapshot(
-          amount: newAmount,
-          currency: newCurrency,
-          effectiveFrom: DateTime.now(),
-        );
-        await _plansCol(id).add(snap.toMap());
-      }
+    final updates = <String, dynamic>{};
+    void setIf(String key, dynamic v) {
+      if (v != null) updates[key] = v;
     }
+    setIf('name', name);
+    setIf('phone', phone);
+    setIf('location', location);
+    setIf('zone', zone);
+    setIf('speed_mbps', speedMbps);
+    setIf('customer_type', customerType);
+    setIf('plan_amount', planAmount);
+    setIf('currency', currency);
+    if (schedule != null) updates['schedule'] = schedule.name;
+    setIf('billing_day_of_month', billingDayOfMonth);
+    setIf('billing_weekday', billingWeekday);
+    setIf('address', address);
+    setIf('notes', notes);
+    setIf('active', active);
+    await _send('PATCH', '/customers/$id', updates);
   }
 
-  /// Boss-only: Permanently delete a customer and all related data.
-  /// This will delete:
-  /// - all payment documents under `home_customers/{id}/payments` and their storage attachments
-  /// - all plan snapshots under `home_customers/{id}/plan_snapshots`
-  /// - the customer document itself
   static Future<void> deleteCustomer({required String id}) async {
     if (!_auth.isBoss) {
       throw Exception('Only boss can delete customer');
     }
-
-    // 1) Delete payments and attachments
-    while (true) {
-      final paySnap = await _paymentsCol(id).limit(300).get();
-      if (paySnap.docs.isEmpty) break;
-      final batch = _db.batch();
-      for (final d in paySnap.docs) {
-        final data = d.data();
-        // delete storage attachments if present
-        final atts = (data['attachments'] as List?) ?? const [];
-        for (final a in atts) {
+    try {
+      final payments = await fetchPayments(id, limit: 300);
+      for (final pr in payments) {
+        for (final a in pr.attachments) {
+          if (a.storagePath.isEmpty) continue;
           try {
-            final m = (a is Map) ? a : null;
-            final path = m?['storage_path'] as String?;
-            if (path != null && path.isNotEmpty) {
-              await _storage.ref().child(path).delete();
-            }
-          } catch (_) {
-            // ignore individual storage delete errors
-          }
+            await _storage.ref().child(a.storagePath).delete();
+          } catch (_) {}
         }
-        batch.delete(d.reference);
       }
-      await batch.commit();
-    }
-
-    // 2) Delete plan snapshots
-    while (true) {
-      final snaps = await _plansCol(id).limit(300).get();
-      if (snaps.docs.isEmpty) break;
-      final batch = _db.batch();
-      for (final d in snaps.docs) {
-        batch.delete(d.reference);
-      }
-      await batch.commit();
-    }
-
-    // 3) Delete the customer document
-    await _db.collection(customersCol).doc(id).delete();
+    } catch (_) {}
+    await _send('DELETE', '/customers/$id');
   }
 
-  // ------------------------------
-  // Payments
-  // ------------------------------
-  static CollectionReference<Map<String, dynamic>> _paymentsCol(String customerId) =>
-      _db.collection(customersCol).doc(customerId).collection('payments');
-
-  static CollectionReference<Map<String, dynamic>> _plansCol(String customerId) =>
-      _db.collection(customersCol).doc(customerId).collection('plan_snapshots');
-
-  // ------------------------------
-  // Analytics helpers
-  // ------------------------------
-  static DateTime _monthStart(DateTime d) => DateTime(d.year, d.month, 1);
-  static DateTime _nextMonthStart(DateTime d) => DateTime(d.year, d.month + 1, 1);
-
-  /// Returns { total_amount: double, count: int }
-  /// Counts approved payments in [start, end) time window by approved_at.
-  /// Optional client-side filters by zone and customerType.
   static Future<Map<String, dynamic>> fetchPaymentsTotal({
     required DateTime start,
     required DateTime end,
     String? zone,
     String? customerType,
   }) async {
-    // Aggregate per-customer to avoid composite index requirements entirely
-    // Build customers query using at most one where to avoid composite index
-    Query<Map<String, dynamic>> cq = _db.collection(customersCol);
-    if (zone != null && zone.isNotEmpty && (customerType == null || customerType.isEmpty)) {
-      cq = cq.where('zone', isEqualTo: zone);
-    } else if (customerType != null && customerType.isNotEmpty && (zone == null || zone.isEmpty)) {
-      cq = cq.where('customer_type', isEqualTo: customerType);
+    final q = StringBuffer(
+      '/analytics/payments?start=${Uri.encodeQueryComponent(start.toIso8601String())}'
+      '&end=${Uri.encodeQueryComponent(end.toIso8601String())}',
+    );
+    if (zone != null && zone.isNotEmpty) {
+      q.write('&zone=${Uri.encodeQueryComponent(zone)}');
     }
-
-    final custSnap = await cq.get();
-    double total = 0.0;
-    int count = 0;
-    for (final c in custSnap.docs) {
-      final data = c.data();
-      if (zone != null && zone.isNotEmpty && data['zone'] != zone) continue;
-      if (customerType != null && customerType.isNotEmpty && data['customer_type'] != customerType) continue;
-
-      // Date-bounded query — do not download every historical payment.
-      final allSnap = await _db
-          .collection(customersCol)
-          .doc(c.id)
-          .collection('payments')
-          .where('approved_at', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
-          .where('approved_at', isLessThan: Timestamp.fromDate(end))
-          .limit(100)
-          .get();
-      for (final p in allSnap.docs) {
-        final m = p.data();
-        if (m['status'] != PaymentStatus.approved.name) continue;
-        final ts = m['approved_at'];
-        DateTime? at;
-        if (ts is Timestamp) {
-          at = ts.toDate();
-        } else if (ts is DateTime) {
-          at = ts;
-        }
-        if (at == null) continue;
-        if (at.isBefore(start) || !at.isBefore(end)) continue;
-        final amt = (m['amount_paid'] is num) ? (m['amount_paid'] as num).toDouble() : 0.0;
-        total += amt;
-        count++;
-      }
+    if (customerType != null && customerType.isNotEmpty) {
+      q.write('&customer_type=${Uri.encodeQueryComponent(customerType)}');
     }
+    final data = await _get(q.toString());
     return {
-      'total_amount': total,
-      'count': count,
+      'total_amount': (data['total_amount'] is num)
+          ? (data['total_amount'] as num).toDouble()
+          : 0.0,
+      'count': data['count'] ?? 0,
     };
   }
+
   static Future<AttachmentRef> _uploadAttachment({
     required String customerId,
     required String paymentId,
@@ -656,7 +390,6 @@ class HomeInternetService {
     final meta = SettableMetadata(contentType: file.contentType);
     final task = await ref.putData(file.bytes, meta);
     final url = await task.ref.getDownloadURL();
-
     return AttachmentRef(
       url: url,
       name: file.name,
@@ -682,51 +415,34 @@ class HomeInternetService {
     if (customer == null) {
       throw Exception('Customer not found');
     }
-
-    // Determine current due period based on schedule
     final now = DateTime.now();
     final period = _currentDuePeriod(customer, now);
-
-    final payDoc = _paymentsCol(customerId).doc();
-    final createdByUid = _auth.user?.uid ?? '';
-    final createdByName = _auth.userName;
-
-    // Upload attachments first
-    final List<AttachmentRef> uploaded = [];
+    final paymentId = DateTime.now().microsecondsSinceEpoch.toRadixString(16);
+    final uploaded = <AttachmentRef>[];
     for (final a in attachments) {
       uploaded.add(await _uploadAttachment(
         customerId: customerId,
-        paymentId: payDoc.id,
+        paymentId: paymentId,
         file: a,
       ));
     }
-
-    final record = PaymentRecord(
-      id: payDoc.id,
-      customerId: customerId,
-      amountPaid: amountPaid,
-      currency: currency,
-      attachments: uploaded,
-      status: PaymentStatus.pendingApproval,
-      createdByUid: createdByUid,
-      createdByName: createdByName,
-      createdAt: now,
-      approvedByUid: null,
-      approvedByName: null,
-      approvedAt: null,
-      schedule: customer.schedule,
-      periodStart: period.start,
-      periodEnd: period.end,
-      dueDate: period.due,
-      reference: reference,
-      notes: notes,
-      paymentType: paymentType,
-      customerZone: customer.zone,
-      customerType: customer.customerType,
-    );
-
-    await payDoc.set(record.toMap());
-    return record;
+    final data = await _send('POST', '/customers/$customerId/payments', {
+      'id': paymentId,
+      'amount_paid': amountPaid,
+      'currency': currency,
+      'attachments': uploaded.map((a) => a.toMap()).toList(),
+      'status': PaymentStatus.pendingApproval.name,
+      'schedule': customer.schedule.name,
+      'period_start': period.start.toIso8601String(),
+      'period_end': period.end.toIso8601String(),
+      'due_date': period.due.toIso8601String(),
+      if (reference != null) 'reference': reference,
+      if (notes != null) 'notes': notes,
+      if (paymentType != null) 'payment_type': paymentType,
+      'customer_zone': customer.zone,
+      'customer_type': customer.customerType,
+    });
+    return _payment(Map<String, dynamic>.from(data['payment'] as Map));
   }
 
   static Future<void> approvePayment({
@@ -736,25 +452,7 @@ class HomeInternetService {
     if (!_auth.isBoss) {
       throw Exception('Only boss can approve payments');
     }
-    final payRef = _paymentsCol(customerId).doc(paymentId);
-    final snap = await payRef.get();
-    if (!snap.exists) {
-      throw Exception('Payment not found');
-    }
-    final data = snap.data()!;
-    final createdByUid = data['created_by_uid'] as String? ?? '';
-    final approverUid = _auth.user?.uid ?? '';
-
-    if (createdByUid.isNotEmpty && createdByUid == approverUid) {
-      throw Exception('You cannot approve your own entry');
-    }
-
-    await payRef.update({
-      'status': PaymentStatus.approved.name,
-      'approved_by_uid': approverUid,
-      'approved_by_name': _auth.userName,
-      'approved_at': FieldValue.serverTimestamp(),
-    });
+    await _send('POST', '/customers/$customerId/payments/$paymentId/approve');
   }
 
   static Future<void> rejectPayment({
@@ -765,93 +463,106 @@ class HomeInternetService {
     if (!_auth.isBoss) {
       throw Exception('Only boss can reject payments');
     }
-    final payRef = _paymentsCol(customerId).doc(paymentId);
-    final snap = await payRef.get();
-    if (!snap.exists) {
-      throw Exception('Payment not found');
-    }
-    final data = snap.data()!;
-    final createdByUid = data['created_by_uid'] as String? ?? '';
-    final approverUid = _auth.user?.uid ?? '';
-
-    if (createdByUid.isNotEmpty && createdByUid == approverUid) {
-      throw Exception('You cannot reject your own entry');
-    }
-
-    await payRef.update({
-      'status': PaymentStatus.rejected.name,
-      'approved_by_uid': approverUid,
-      'approved_by_name': _auth.userName,
-      'approved_at': FieldValue.serverTimestamp(),
-      if (reason != null) 'notes': 'Rejected: $reason',
+    await _send('POST', '/customers/$customerId/payments/$paymentId/reject', {
+      if (reason != null) 'reason': reason,
     });
   }
 
-  // ------------------------------
-  // Status computation
-  // ------------------------------
-  static Future<Map<String, dynamic>> computeCustomerStatus(String customerId) async {
-    final customer = await getCustomer(customerId);
-    if (customer == null) throw Exception('Customer not found');
-
-    final now = DateTime.now();
-    final periodsDue = _periodsDueUpToNow(customer, now);
-
-    // Sum of approved payments
-    final approved = await _paymentsCol(customerId)
-        .where('status', isEqualTo: PaymentStatus.approved.name)
-        .get();
-    double totalPaid = 0.0;
-    DateTime? lastPaidAt;
-    for (final d in approved.docs) {
-      final m = d.data();
-      final amt = (m['amount_paid'] is num) ? (m['amount_paid'] as num).toDouble() : 0.0;
-      totalPaid += amt;
-      final paidAt = _fromTs(m['approved_at']) ?? _fromTs(m['created_at']);
-      if (paidAt != null) {
-        if (lastPaidAt == null || paidAt.isAfter(lastPaidAt!)) lastPaidAt = paidAt;
-      }
-    }
-
-    // Use dynamic required amounts from period statuses (respects plan snapshots)
-    final periodStatuses = await listPeriodStatuses(customerId, upTo: now);
-    final double totalDueAmount = periodStatuses.fold(0.0, (s, p) => s + p.requiredAmount);
-    final outstanding = (totalDueAmount - totalPaid);
-    final latestPeriod = _currentDuePeriod(customer, now);
-    final isOverdue = outstanding > 0 && now.isAfter(latestPeriod.due);
-
-    return {
-      'periods_due': periodsDue,
-      'total_due_amount': totalDueAmount,
-      'total_paid_amount': totalPaid,
-      'outstanding_amount': outstanding,
-      'overdue': isOverdue,
-      'next_due_date': latestPeriod.due,
-      'last_paid_at': lastPaidAt,
-      'currency': customer.currency,
-    };
+  static Future<List<PlanSnapshot>> _fetchPlans(String customerId) async {
+    final data = await _get('/customers/$customerId/plans');
+    return (data['plans'] as List? ?? [])
+        .map((e) => PlanSnapshot.fromMap(Map<String, dynamic>.from(e)))
+        .toList();
   }
 
-  /// Returns the list of period payment statuses (paid/partial/unpaid) up to [upTo] (default: now)
-  /// Each period requires [planAmount] at the time of computation (current plan amount).
-  /// Payments are allocated FIFO to the earliest unpaid periods.
+  static double asMoney(dynamic v) {
+    if (v is num) return v.toDouble();
+    return double.tryParse('$v') ?? 0.0;
+  }
+
+  static Map<String, dynamic> normalizeStatement(Map<String, dynamic> raw) {
+    final status = Map<String, dynamic>.from(raw);
+    for (final key in const ['next_due_date', 'last_paid_at', 'as_of']) {
+      final parsed = parseFlexDate(status[key]);
+      if (parsed != null) status[key] = parsed;
+    }
+    for (final key in const [
+      'this_month_bill',
+      'this_month_paid',
+      'this_month_balance',
+      'arrears',
+      'credit',
+      'pay_now',
+      'outstanding_amount',
+      'total_due_amount',
+      'total_paid_amount',
+    ]) {
+      if (status.containsKey(key)) status[key] = asMoney(status[key]);
+    }
+    if (status['aging'] is Map) {
+      final aging = Map<String, dynamic>.from(status['aging'] as Map);
+      for (final key in aging.keys.toList()) {
+        aging[key] = asMoney(aging[key]);
+      }
+      status['aging'] = aging;
+    }
+    return status;
+  }
+
+  static PeriodPaymentStatus periodFromMap(Map<String, dynamic> map) {
+    final stateName = '${map['state'] ?? map['status'] ?? 'unpaid'}'.toLowerCase();
+    final state = stateName == 'paid'
+        ? PeriodPayState.paid
+        : (stateName == 'partial' ? PeriodPayState.partial : PeriodPayState.unpaid);
+    final start = parseFlexDate(map['start'] ?? map['period_start']) ?? DateTime.now();
+    final end = parseFlexDate(map['end'] ?? map['period_end']) ?? start;
+    final due = parseFlexDate(map['due'] ?? map['due_date']) ?? start;
+    final required = asMoney(map['required_amount'] ?? map['amount']);
+    final paid = asMoney(map['paid_amount'] ?? map['amount_paid']);
+    return PeriodPaymentStatus(
+      start: start,
+      end: end,
+      due: due,
+      requiredAmount: required,
+      paidAmount: paid,
+      state: state,
+      invoiceNo: map['invoice_no']?.toString(),
+      balance: asMoney(map['balance'] ?? (required - paid)),
+    );
+  }
+
+  static Future<Map<String, dynamic>> computeCustomerStatus(String customerId) async {
+    final data = await _get('/customers/$customerId/status');
+    return normalizeStatement(data);
+  }
+
+  static Future<List<PeriodPaymentStatus>> fetchInvoices(String customerId) async {
+    final data = await _get('/customers/$customerId/invoices');
+    final rows = (data['invoices'] as List?) ?? (data['periods'] as List?) ?? const [];
+    return rows
+        .map((e) => periodFromMap(Map<String, dynamic>.from(e as Map)))
+        .toList();
+  }
+
   static Future<List<PeriodPaymentStatus>> listPeriodStatuses(
     String customerId, {
     DateTime? upTo,
   }) async {
+    try {
+      return await fetchInvoices(customerId);
+    } catch (_) {
+      // Fall through to the historical client formula if the invoice API is unavailable.
+    }
     final customer = await getCustomer(customerId);
     if (customer == null) throw Exception('Customer not found');
     final now = upTo ?? DateTime.now();
 
-    // Determine first due date and number of periods up to now (inclusive)
     final int periodsDue = _periodsDueUpToNow(customer, now);
     if (periodsDue <= 0) return <PeriodPaymentStatus>[];
 
-    // Build the list of periods
     final List<_Period> periods = [];
     if (customer.schedule == PaymentScheduleType.weekly) {
-      // Compute firstDue (same logic as _weekPeriod/_weeksBetween)
-      final int anchorWeekday = customer.billingWeekday ?? customer.startDate.weekday; // 1..7
+      final int anchorWeekday = customer.billingWeekday ?? customer.startDate.weekday;
       DateTime firstDue = customer.startDate;
       final int diff = (anchorWeekday - firstDue.weekday);
       if (diff > 0) {
@@ -862,11 +573,9 @@ class HomeInternetService {
       for (int i = 0; i < periodsDue; i++) {
         final start = firstDue.add(Duration(days: 7 * i));
         final end = start.add(const Duration(days: 7)).subtract(const Duration(seconds: 1));
-        final due = start;
-        periods.add(_Period(start: start, end: end, due: due));
+        periods.add(_Period(start: start, end: end, due: start));
       }
     } else {
-      // monthly
       final int anchorDay = (customer.billingDayOfMonth ?? customer.startDate.day).clamp(1, 28);
       DateTime firstDue = DateTime(
         customer.startDate.year,
@@ -903,19 +612,12 @@ class HomeInternetService {
         );
         final end = DateTime(start.year, start.month + 1, anchorDay)
             .subtract(const Duration(seconds: 1));
-        final due = start;
-        periods.add(_Period(start: start, end: end, due: due));
+        periods.add(_Period(start: start, end: end, due: start));
       }
     }
 
-    // Gather plan snapshots for dynamic pricing
-    final snapsQuery = await _plansCol(customerId)
-        .orderBy('effective_from', descending: false)
-        .get();
-    final List<PlanSnapshot> snapshots = snapsQuery.docs
-        .map((d) => PlanSnapshot.fromMap(d.data()))
-        .toList();
-    double _requiredFor(DateTime date) {
+    final snapshots = await _fetchPlans(customerId);
+    double requiredFor(DateTime date) {
       if (snapshots.isEmpty) return customer.planAmount;
       PlanSnapshot current = snapshots.first;
       for (final s in snapshots) {
@@ -928,74 +630,52 @@ class HomeInternetService {
       return current.amount;
     }
 
-    // Gather approved payments and total amount
-    final approvedSnap = await _paymentsCol(customerId)
-        .where('status', isEqualTo: PaymentStatus.approved.name)
-        .get();
-    final List<Map<String, dynamic>> approved = approvedSnap.docs
-        .map((d) => d.data())
-        .toList();
-    // Sort by approval time (fallback to created_at)
+    final approved = await fetchPayments(customerId, limit: 500, status: PaymentStatus.approved.name);
     approved.sort((a, b) {
-      final atA = _fromTs(a['approved_at']) ?? _fromTs(a['created_at']) ?? DateTime(1970);
-      final atB = _fromTs(b['approved_at']) ?? _fromTs(b['created_at']) ?? DateTime(1970);
+      final atA = a.approvedAt ?? a.createdAt;
+      final atB = b.approvedAt ?? b.createdAt;
       return atA.compareTo(atB);
     });
-    double totalPaid = 0.0;
-    for (final m in approved) {
-      final amt = (m['amount_paid'] is num) ? (m['amount_paid'] as num).toDouble() : 0.0;
-      totalPaid += amt;
-    }
+    double remaining = approved.fold(0.0, (s, p) => s + p.amountPaid);
 
-    // Allocate payments FIFO to periods
-    double remaining = totalPaid;
-    final List<PeriodPaymentStatus> results = [];
+    final results = <PeriodPaymentStatus>[];
     for (final p in periods) {
-      final double requiredPerPeriod = _requiredFor(p.start);
-      final double allocated = remaining >= requiredPerPeriod
+      final requiredPerPeriod = requiredFor(p.start);
+      final allocated = remaining >= requiredPerPeriod
           ? requiredPerPeriod
           : (remaining > 0 ? remaining : 0.0);
-      remaining = (remaining - allocated);
+      remaining = remaining - allocated;
       final status = allocated >= requiredPerPeriod
           ? PeriodPayState.paid
           : (allocated > 0 ? PeriodPayState.partial : PeriodPayState.unpaid);
-      results.add(
-        PeriodPaymentStatus(
-          start: p.start,
-          end: p.end,
-          due: p.due,
-          requiredAmount: requiredPerPeriod,
-          paidAmount: allocated,
-          state: status,
-        ),
-      );
+      results.add(PeriodPaymentStatus(
+        start: p.start,
+        end: p.end,
+        due: p.due,
+        requiredAmount: requiredPerPeriod,
+        paidAmount: allocated,
+        state: status,
+      ));
     }
-
     return results;
   }
 
-  // ------------------------------
-  // Period helpers
-  // ------------------------------
   static _Period _currentDuePeriod(HomeCustomer c, DateTime now) {
     if (c.schedule == PaymentScheduleType.weekly) {
       return _weekPeriod(c, now);
-    } else {
-      return _monthPeriod(c, now);
     }
+    return _monthPeriod(c, now);
   }
 
   static int _periodsDueUpToNow(HomeCustomer c, DateTime now) {
     if (c.schedule == PaymentScheduleType.weekly) {
       return _weeksDueUpTo(c, now);
-    } else {
-      return _monthsDueUpTo(c, now);
     }
+    return _monthsDueUpTo(c, now);
   }
 
   static _Period _weekPeriod(HomeCustomer c, DateTime ref) {
-    final int anchorWeekday = c.billingWeekday ?? c.startDate.weekday; // 1..7
-    // First due: first anchor weekday AFTER startDate
+    final int anchorWeekday = c.billingWeekday ?? c.startDate.weekday;
     DateTime firstDue = c.startDate;
     final int diff = (anchorWeekday - firstDue.weekday);
     if (diff > 0) {
@@ -1005,35 +685,14 @@ class HomeInternetService {
     } else {
       firstDue = firstDue.add(const Duration(days: 7));
     }
-    
-    // If ref is before firstDue, we're still in the first period
     if (ref.isBefore(firstDue)) {
       final end = firstDue.subtract(const Duration(seconds: 1));
       return _Period(start: c.startDate, end: end, due: firstDue);
     }
-    
-    // Number of weeks from firstDue to ref
-    int weeks = ((ref.difference(firstDue).inDays) ~/ 7) + 1; // inclusive
+    int weeks = ((ref.difference(firstDue).inDays) ~/ 7) + 1;
     final start = firstDue.add(Duration(days: 7 * (weeks - 1)));
     final end = start.add(const Duration(days: 7)).subtract(const Duration(seconds: 1));
-    final due = start; // due at start of period
-    return _Period(start: start, end: end, due: due);
-  }
-
-  static int _weeksBetween(HomeCustomer c, DateTime ref) {
-    final int anchorWeekday = c.billingWeekday ?? c.startDate.weekday; // 1..7
-    DateTime firstDue = c.startDate;
-    final int diff = (anchorWeekday - firstDue.weekday);
-    if (diff > 0) {
-      firstDue = firstDue.add(Duration(days: diff));
-    } else if (diff < 0) {
-      firstDue = firstDue.add(Duration(days: (7 + diff)));
-    } else {
-      firstDue = firstDue.add(const Duration(days: 7));
-    }
-    if (ref.isBefore(firstDue)) return 0;
-    final weeks = ((ref.difference(firstDue).inDays) ~/ 7) + 1; // inclusive count
-    return weeks;
+    return _Period(start: start, end: end, due: start);
   }
 
   static int _weeksDueUpTo(HomeCustomer c, DateTime ref) {
@@ -1056,58 +715,48 @@ class HomeInternetService {
 
   static _Period _monthPeriod(HomeCustomer c, DateTime ref) {
     final int anchorDay = (c.billingDayOfMonth ?? c.startDate.day).clamp(1, 28);
-    // First due is anchor day in the month AFTER startDate
-    DateTime firstDue = DateTime(c.startDate.year, c.startDate.month, anchorDay,
-        c.startDate.hour, c.startDate.minute, c.startDate.second, c.startDate.millisecond, c.startDate.microsecond);
+    DateTime firstDue = DateTime(
+      c.startDate.year,
+      c.startDate.month,
+      anchorDay,
+      c.startDate.hour,
+      c.startDate.minute,
+      c.startDate.second,
+      c.startDate.millisecond,
+      c.startDate.microsecond,
+    );
     if (!firstDue.isAfter(c.startDate)) {
       firstDue = DateTime(firstDue.year, firstDue.month + 1, anchorDay, firstDue.hour, firstDue.minute, firstDue.second, firstDue.millisecond, firstDue.microsecond);
     }
-    
-    // If ref is before firstDue, we're still in the first period
     if (ref.isBefore(firstDue)) {
       final end = firstDue.subtract(const Duration(seconds: 1));
       return _Period(start: c.startDate, end: end, due: firstDue);
     }
-    
-    // Number of months from firstDue to ref
-    int months = (ref.year - firstDue.year) * 12 + (ref.month - firstDue.month) + 1; // inclusive
+    int months = (ref.year - firstDue.year) * 12 + (ref.month - firstDue.month) + 1;
     final start = DateTime(firstDue.year, firstDue.month + (months - 1), anchorDay, firstDue.hour, firstDue.minute, firstDue.second, firstDue.millisecond, firstDue.microsecond);
     final end = DateTime(start.year, start.month + 1, anchorDay).subtract(const Duration(seconds: 1));
-    final due = start; // due at period start
-    return _Period(start: start, end: end, due: due);
+    return _Period(start: start, end: end, due: start);
   }
 
-  static int _monthsBetween(HomeCustomer c, DateTime ref) {
-    final int anchorDay = (c.billingDayOfMonth ?? c.startDate.day).clamp(1, 28);
-    DateTime firstDue = DateTime(c.startDate.year, c.startDate.month, anchorDay,
-        c.startDate.hour, c.startDate.minute, c.startDate.second, c.startDate.millisecond, c.startDate.microsecond);
-    if (!firstDue.isAfter(c.startDate)) {
-      firstDue = DateTime(firstDue.year, firstDue.month + 1, anchorDay, firstDue.hour, firstDue.minute, firstDue.second, firstDue.millisecond, firstDue.microsecond);
-    }
-    if (ref.isBefore(firstDue)) return 0;
-    final months = (ref.year - firstDue.year) * 12 + (ref.month - firstDue.month) + 1; // inclusive count
-    return months;
-  }
-  /// Count only months whose due timestamp has actually occurred (<= ref)
   static int _monthsDueUpTo(HomeCustomer c, DateTime ref) {
     final int anchorDay = (c.billingDayOfMonth ?? c.startDate.day).clamp(1, 28);
-    DateTime firstDue = DateTime(c.startDate.year, c.startDate.month, anchorDay,
-        c.startDate.hour, c.startDate.minute, c.startDate.second, c.startDate.millisecond, c.startDate.microsecond);
+    DateTime firstDue = DateTime(
+      c.startDate.year,
+      c.startDate.month,
+      anchorDay,
+      c.startDate.hour,
+      c.startDate.minute,
+      c.startDate.second,
+      c.startDate.millisecond,
+      c.startDate.microsecond,
+    );
     if (!firstDue.isAfter(c.startDate)) {
       firstDue = DateTime(firstDue.year, firstDue.month + 1, anchorDay, firstDue.hour, firstDue.minute, firstDue.second, firstDue.millisecond, firstDue.microsecond);
     }
     if (ref.isBefore(firstDue)) return 0;
     final int monthsDiff = (ref.year - firstDue.year) * 12 + (ref.month - firstDue.month);
-    final DateTime dueThisMonth = DateTime(firstDue.year, firstDue.month + monthsDiff, anchorDay,
-        firstDue.hour, firstDue.minute, firstDue.second, firstDue.millisecond, firstDue.microsecond);
+    final DateTime dueThisMonth = DateTime(firstDue.year, firstDue.month + monthsDiff, anchorDay, firstDue.hour, firstDue.minute, firstDue.second, firstDue.millisecond, firstDue.microsecond);
     return ref.isBefore(dueThisMonth) ? monthsDiff : (monthsDiff + 1);
-  }
-
-  static DateTime? _fromTs(dynamic v) {
-    if (v == null) return null;
-    if (v is Timestamp) return v.toDate();
-    if (v is DateTime) return v;
-    return null;
   }
 }
 
@@ -1118,11 +767,8 @@ class _Period {
   _Period({required this.start, required this.end, required this.due});
 }
 
-// Public types for UI consumption
-/// Payment coverage state for a billing period
 enum PeriodPayState { paid, partial, unpaid }
 
-/// Status summary for a specific billing period
 class PeriodPaymentStatus {
   final DateTime start;
   final DateTime end;
@@ -1130,6 +776,8 @@ class PeriodPaymentStatus {
   final double requiredAmount;
   final double paidAmount;
   final PeriodPayState state;
+  final String? invoiceNo;
+  final double balance;
 
   const PeriodPaymentStatus({
     required this.start,
@@ -1138,5 +786,7 @@ class PeriodPaymentStatus {
     required this.requiredAmount,
     required this.paidAmount,
     required this.state,
+    this.invoiceNo,
+    this.balance = 0,
   });
 }

@@ -1,4 +1,4 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:lightnetwork/utils/flex_date.dart';
 import 'attachment_ref.dart';
 import 'home_customer.dart';
 
@@ -78,16 +78,16 @@ class PaymentRecord {
       status: _statusFromString(map['status']),
       createdByUid: map['created_by_uid'] ?? '',
       createdByName: map['created_by_name'] ?? '',
-      createdAt: _fromTs(map['created_at']) ?? DateTime.now(),
-      approvedByUid: map['approved_by_uid'],
-      approvedByName: map['approved_by_name'],
-      approvedAt: _fromTs(map['approved_at']),
+      createdAt: parseFlexDate(map['created_at']) ?? DateTime.now(),
+      approvedByUid: map['approved_by_uid']?.toString(),
+      approvedByName: map['approved_by_name']?.toString(),
+      approvedAt: parseFlexDate(map['approved_at']),
       schedule: (map['schedule'] == 'weekly')
           ? PaymentScheduleType.weekly
           : PaymentScheduleType.monthly,
-      periodStart: _fromTs(map['period_start']) ?? DateTime.now(),
-      periodEnd: _fromTs(map['period_end']) ?? DateTime.now(),
-      dueDate: _fromTs(map['due_date']) ?? DateTime.now(),
+      periodStart: parseFlexDate(map['period_start']) ?? DateTime.now(),
+      periodEnd: parseFlexDate(map['period_end']) ?? DateTime.now(),
+      dueDate: parseFlexDate(map['due_date']) ?? DateTime.now(),
       reference: map['reference'],
       notes: map['notes'],
       paymentType: map['payment_type'],
@@ -105,27 +105,20 @@ class PaymentRecord {
       'status': status.name,
       'created_by_uid': createdByUid,
       'created_by_name': createdByName,
-      'created_at': Timestamp.fromDate(createdAt),
+      'created_at': createdAt.toIso8601String(),
       if (approvedByUid != null) 'approved_by_uid': approvedByUid,
       if (approvedByName != null) 'approved_by_name': approvedByName,
-      if (approvedAt != null) 'approved_at': Timestamp.fromDate(approvedAt!),
+      if (approvedAt != null) 'approved_at': approvedAt!.toIso8601String(),
       'schedule': schedule.name,
-      'period_start': Timestamp.fromDate(periodStart),
-      'period_end': Timestamp.fromDate(periodEnd),
-      'due_date': Timestamp.fromDate(dueDate),
+      'period_start': periodStart.toIso8601String(),
+      'period_end': periodEnd.toIso8601String(),
+      'due_date': dueDate.toIso8601String(),
       if (reference != null) 'reference': reference,
       if (notes != null) 'notes': notes,
       if (paymentType != null) 'payment_type': paymentType,
       if (customerZone != null) 'customer_zone': customerZone,
       if (customerType != null) 'customer_type': customerType,
     };
-  }
-
-  static DateTime? _fromTs(dynamic v) {
-    if (v == null) return null;
-    if (v is Timestamp) return v.toDate();
-    if (v is DateTime) return v;
-    return null;
   }
 
   static PaymentStatus _statusFromString(String? s) {
