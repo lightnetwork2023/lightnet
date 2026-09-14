@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:lightnetwork/services/app_db.dart';
@@ -69,6 +70,30 @@ class ApiService {
     // Clear cache after generating new users
     clearCache();
     return result;
+  }
+
+  static Future<Map<String, dynamic>> generateOneUser({
+    required String durationKey,
+  }) async {
+    final token = await FirebaseAuth.instance.currentUser?.getIdToken();
+    final response = await http.post(
+      Uri.parse('$baseUrl/generateoneuser'),
+      headers: {
+        'Content-Type': 'application/json',
+        if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
+      },
+      body: jsonEncode({'duration_key': durationKey}),
+    );
+    final result = jsonDecode(response.body);
+    if (result is! Map) {
+      throw Exception('Unexpected generateoneuser response');
+    }
+    final map = Map<String, dynamic>.from(result);
+    if (response.statusCode >= 400) {
+      throw Exception(map['error']?.toString() ?? 'generateoneuser failed');
+    }
+    clearCache();
+    return map;
   }
 
   static Future<List<dynamic>> fetchPayments() async {

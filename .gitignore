@@ -41,3 +41,13 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Local machine / secrets
+*.jks
+*.keystore
+*~
+android/local.properties
+android/.gradle/
+android/app/.cxx/
+android/build/
+ios/Flutter/ephemeral/
