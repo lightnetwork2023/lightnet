@@ -37,6 +37,14 @@ class Settings {
   const Settings({this.persistenceEnabled = true, this.cacheSizeBytes = 10485760});
 }
 
+class FieldPath {
+  final String path;
+  const FieldPath(this.path);
+  static const FieldPath documentId = FieldPath('__name__');
+  @override
+  String toString() => path;
+}
+
 class FieldValue {
   final String op;
   final num n;
@@ -149,7 +157,7 @@ class Query<T extends Object?> {
   Query._(this.path, this._filters, this._orderBy, this._limit);
 
   Query<T> where(
-    String field, {
+    Object field, {
     Object? isEqualTo,
     Object? isNotEqualTo,
     Object? isLessThan,
@@ -159,9 +167,10 @@ class Query<T extends Object?> {
     Object? arrayContains,
     List<Object?>? whereIn,
   }) {
+    final fieldName = field is FieldPath ? field.path : field.toString();
     final next = List<Map<String, dynamic>>.from(_filters);
     void add(String op, Object? value) {
-      if (value != null) next.add({'field': field, 'op': op, 'value': _encode(value)});
+      if (value != null) next.add({'field': fieldName, 'op': op, 'value': _encode(value)});
     }
     add('==', isEqualTo);
     add('!=', isNotEqualTo);
@@ -174,14 +183,28 @@ class Query<T extends Object?> {
     return Query<T>._(path, next, _orderBy, _limit);
   }
 
-  Query<T> orderBy(String field, {bool descending = false}) {
-    return Query<T>._(path, _filters, {'field': field, 'descending': descending}, _limit);
+  Query<T> orderBy(Object field, {bool descending = false}) {
+    final fieldName = field is FieldPath ? field.path : field.toString();
+    return Query<T>._(path, _filters, {'field': fieldName, 'descending': descending}, _limit);
   }
 
   Query<T> limit(int count) => Query<T>._(path, _filters, _orderBy, count);
 
+  AggregateQuery count() => AggregateQuery._(this);
+
   Future<QuerySnapshot<T>> get([GetOptions? options]) async {
-    final docs = await _AppHttp.query(path, _filters, _orderBy, _limit);
+    final remoteFilters = _filters.where((f) => f['field'] != '__name__').toList();
+    var docs = await _AppHttp.query(path, remoteFilters, _orderBy, _limit);
+    for (final f in _filters) {
+      if (f['field'] != '__name__') continue;
+      if (f['op'] == 'in') {
+        final ids = ((f['value'] as List?) ?? const []).map((e) => '$e').toSet();
+        docs = docs.where((d) => ids.contains('${d['id']}')).toList();
+      } else if (f['op'] == '==') {
+        final id = '${f['value']}';
+        docs = docs.where((d) => '${d['id']}' == id).toList();
+      }
+    }
     return QuerySnapshot<T>._(docs.map((d) => QueryDocumentSnapshot<T>._(d)).toList());
   }
 
@@ -209,11 +232,41 @@ class DocumentSnapshot<T extends Object?> {
     }
     return _hydrate(_raw!) as T;
   }
+
+  dynamic operator [](Object field) {
+    final value = data();
+    if (value is Map) return value[field];
+    return null;
+  }
+
+  dynamic get(Object field) => this[field];
 }
 
 class QueryDocumentSnapshot<T extends Object?> extends DocumentSnapshot<T> {
   QueryDocumentSnapshot._(Map<String, dynamic> raw)
       : super._(raw['collection']?.toString() ?? '', raw['id']?.toString() ?? '', raw);
+
+  @override
+  T data() {
+    final value = super.data();
+    if (value != null) return value;
+    return <String, dynamic>{} as T;
+  }
+}
+
+class AggregateQuery {
+  final Query _query;
+  AggregateQuery._(this._query);
+
+  Future<AggregateQuerySnapshot> get() async {
+    final snap = await _query.get();
+    return AggregateQuerySnapshot._(snap.size);
+  }
+}
+
+class AggregateQuerySnapshot {
+  final int? count;
+  AggregateQuerySnapshot._(this.count);
 }
 
 class QuerySnapshot<T extends Object?> {

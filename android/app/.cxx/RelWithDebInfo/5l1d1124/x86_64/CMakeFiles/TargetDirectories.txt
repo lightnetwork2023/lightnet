@@ -1,2 +1,0 @@
-C:/Users/LITtech/AndroidStudioProjects/lightnetwork/android/app/.cxx/RelWithDebInfo/5l1d1124/x86_64/CMakeFiles/edit_cache.dir
-C:/Users/LITtech/AndroidStudioProjects/lightnetwork/android/app/.cxx/RelWithDebInfo/5l1d1124/x86_64/CMakeFiles/rebuild_cache.dir
