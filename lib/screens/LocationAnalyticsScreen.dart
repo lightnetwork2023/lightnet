@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:lightnetwork/services/app_db.dart';
+import '../controllers/ApiService.dart';
 import '../services/firestore_cost_guards.dart';
 import '../theme/app_theme.dart';
 import '../widgets/modern_components.dart';
@@ -36,6 +37,23 @@ class _LocationAnalyticsScreenState extends State<LocationAnalyticsScreen> {
   void initState() {
     super.initState();
     _loadLocationAnalytics();
+  }
+
+  String? _asString(dynamic value) {
+    if (value == null) return null;
+    final text = value.toString().trim();
+    return text.isEmpty || text == 'null' ? null : text;
+  }
+
+  Timestamp? _toTimestamp(dynamic value) {
+    if (value == null) return null;
+    if (value is Timestamp) return value;
+    if (value is DateTime) return Timestamp.fromDate(value);
+    if (value is String) {
+      final dt = DateTime.tryParse(value);
+      if (dt != null) return Timestamp.fromDate(dt.toLocal());
+    }
+    return null;
   }
 
   Future<void> _loadLocationAnalytics() async {
@@ -109,19 +127,18 @@ class _LocationAnalyticsScreenState extends State<LocationAnalyticsScreen> {
       }
       }
 
-      // Get ALL locations from locations collection
-      final locationsSnapshot = await _firestore.collection('locations').get();
+      final locationRows = await ApiService.fetchLocationCatalog();
 
       if (_usedMetadataTotals) {
-        for (var doc in locationsSnapshot.docs) {
-          final nested = doc.data()['metadata'];
+        for (final loc in locationRows) {
+          final nested = loc['metadata'];
           final meta = nested is Map ? Map<String, dynamic>.from(nested) : <String, dynamic>{};
-          locationData[doc.id] = LocationStatsData(
+          final locId = loc['id']?.toString() ?? '';
+          if (locId.isEmpty) continue;
+          locationData[locId] = LocationStatsData(
             totalRevenue: (meta['total_revenue'] as num?)?.toDouble() ?? 0,
             paymentCount: (meta['payment_count'] as num?)?.toInt() ?? 0,
-            lastPaymentAt: meta['last_payment_at'] is Timestamp
-                ? meta['last_payment_at'] as Timestamp
-                : null,
+            lastPaymentAt: _toTimestamp(meta['last_payment_at']),
           );
         }
       }
@@ -129,9 +146,9 @@ class _LocationAnalyticsScreenState extends State<LocationAnalyticsScreen> {
       // Build stats list - include ALL locations, even those with no payments
       List<LocationStats> stats = [];
       
-      for (var doc in locationsSnapshot.docs) {
-        final locationId = doc.id;
-        final metadata = doc.data();
+      for (final loc in locationRows) {
+        final locationId = loc['id']?.toString() ?? '';
+        if (locationId.isEmpty) continue;
         
         // Get payment data for this location (if any)
         final paymentData = locationData[locationId];
@@ -141,8 +158,8 @@ class _LocationAnalyticsScreenState extends State<LocationAnalyticsScreen> {
           totalRevenue: paymentData?.totalRevenue ?? 0.0,
           paymentCount: paymentData?.paymentCount ?? 0,
           lastPaymentAt: paymentData?.lastPaymentAt,
-          parentLocation: metadata['parent_location'] as String?,
-          type: metadata['type'] as String?,
+          parentLocation: _asString(loc['parent_location']),
+          type: _asString(loc['type']),
         ));
       }
 
@@ -689,22 +706,12 @@ class _LocationAnalyticsScreenState extends State<LocationAnalyticsScreen> {
         ),
       );
 
-      // Update Firestore
-      final locationDoc = _firestore.collection('locations').doc(locationId);
-      
-      if (locationType == 'main') {
-        // Set as main location (no parent)
-        await locationDoc.set({
-          'parent_location': null,
-          'type': 'main',
-        }, SetOptions(merge: true));
-      } else {
-        // Set as sublocation with parent
-        await locationDoc.set({
-          'parent_location': parentLocation,
-          'type': 'sublocation',
-        }, SetOptions(merge: true));
-      }
+      await ApiService.updateLocation(
+        locationId,
+        type: locationType,
+        parentLocation: parentLocation,
+        clearParent: locationType == 'main',
+      );
 
       // Show success
       if (mounted) {
@@ -776,7 +783,7 @@ class _LocationAnalyticsScreenState extends State<LocationAnalyticsScreen> {
       return const EmptyState(
         icon: Icons.analytics_outlined,
         title: 'No locations found',
-        subtitle: 'Create locations in Firestore to see them here',
+        subtitle: 'Create locations on this server to see them here',
       );
     }
 

@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import 'package:lightnetwork/services/app_db.dart';
 import '../controllers/ApiService.dart';
 import '../controllers/location_controller.dart';
 
@@ -19,7 +18,6 @@ class _GenerateUserScreenState extends State<GenerateUserScreen> {
   String? selectedSpeedLimit;
   String? selectedParentLocation;
   final LocationController locationController = Get.find();
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   
   List<String> _mainLocations = [];
   bool _isLoadingMainLocations = true;
@@ -63,18 +61,10 @@ class _GenerateUserScreenState extends State<GenerateUserScreen> {
 
   Future<List<String>> _getMainLocations() async {
     try {
-      final snapshot = await _firestore.collection('locations').get();
-      final mainLocations = <String>[];
-      
-      for (var doc in snapshot.docs) {
-        final data = doc.data();
-        // Include locations with type='main' or locations without type field (backward compatible)
-        if (data['type'] == 'main' || !data.containsKey('type')) {
-          mainLocations.add(doc.id);
-        }
+      if (locationController.catalog.isEmpty) {
+        await locationController.loadLocations();
       }
-      
-      return mainLocations;
+      return locationController.mainLocationIds;
     } catch (e) {
       print('Error fetching main locations: $e');
       return [];

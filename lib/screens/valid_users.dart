@@ -34,7 +34,7 @@ class _ValidUsersScreenState extends State<ValidUsersScreen> {
     setState(() => loading = true);
 
     if (locationController.locations.isEmpty) {
-      locationController.loadLocations();
+      await locationController.loadLocations();
     }
 
     await _loadUserCounts();

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:lightnetwork/services/app_db.dart';
+import 'package:get/get.dart';
+import '../controllers/location_controller.dart';
 
 class LocationManagementScreen extends StatefulWidget {
   @override
@@ -7,7 +8,7 @@ class LocationManagementScreen extends StatefulWidget {
 }
 
 class _LocationManagementScreenState extends State<LocationManagementScreen> {
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final LocationController _locationController = Get.find<LocationController>();
   List<LocationItem> _locations = [];
   bool _isLoading = true;
 
@@ -17,22 +18,23 @@ class _LocationManagementScreenState extends State<LocationManagementScreen> {
     _loadLocations();
   }
 
+  List<LocationItem> _itemsFromCatalog() {
+    return _locationController.catalog.map((row) {
+      return LocationItem(
+        id: row['id']?.toString() ?? '',
+        name: row['name']?.toString() ?? row['id']?.toString() ?? '',
+        type: _asString(row['type']),
+        parentLocation: _asString(row['parent_location']),
+      );
+    }).where((item) => item.id.isNotEmpty).toList();
+  }
+
   Future<void> _loadLocations() async {
     setState(() => _isLoading = true);
     
     try {
-      final snapshot = await _firestore.collection('locations').get();
-      final locations = <LocationItem>[];
-      
-      for (var doc in snapshot.docs) {
-        final data = doc.data();
-        locations.add(LocationItem(
-          id: doc.id,
-          name: doc.id,
-          type: data['type'] as String?,
-          parentLocation: data['parent_location'] as String?,
-        ));
-      }
+      await _locationController.loadLocations();
+      final locations = _itemsFromCatalog();
       
       // Sort: main locations first, then sublocations
       locations.sort((a, b) {
@@ -302,16 +304,12 @@ class _LocationManagementScreenState extends State<LocationManagementScreen> {
 
   Future<void> _updateLocation(String locationId, String type, String? parentLocation) async {
     try {
-      final data = <String, dynamic>{'type': type};
-      
-      if (type == 'sublocation' && parentLocation != null) {
-        data['parent_location'] = parentLocation;
-      } else {
-        // Remove parent_location if converting to main
-        data['parent_location'] = FieldValue.delete();
-      }
-      
-      await _firestore.collection('locations').doc(locationId).update(data);
+      await _locationController.updateLocation(
+        locationId,
+        type: type,
+        parentLocation: parentLocation,
+        clearParent: type != 'sublocation',
+      );
       
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('✅ Location updated successfully')),
@@ -400,7 +398,7 @@ class _LocationManagementScreenState extends State<LocationManagementScreen> {
     
     if (confirmed == true) {
       try {
-        await _firestore.collection('locations').doc(location.id).delete();
+        await _locationController.deleteLocation(location.id);
         
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('✅ Location deleted successfully')),
@@ -573,6 +571,12 @@ class _LocationManagementScreenState extends State<LocationManagementScreen> {
                 ),
     );
   }
+}
+
+String? _asString(dynamic value) {
+  if (value == null) return null;
+  final text = value.toString().trim();
+  return text.isEmpty || text == 'null' ? null : text;
 }
 
 class LocationItem {

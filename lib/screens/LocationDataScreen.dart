@@ -212,12 +212,32 @@ class _LocationDataScreenState extends State<LocationDataScreen> {
                     ),
                   ),
                   const SizedBox(height: 16),
-                  Obx(() => locationController.locations.isEmpty
-                      ? const Text(
-                          'No locations available',
-                          style: TextStyle(color: Colors.grey),
-                        )
-                      : Container(
+                  Obx(() {
+                    if (locationController.loading.value && locationController.locations.isEmpty) {
+                      return const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 8),
+                        child: LinearProgressIndicator(),
+                      );
+                    }
+                    if (locationController.locations.isEmpty) {
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            locationController.error.value == null
+                                ? 'No locations available'
+                                : 'Could not load locations',
+                            style: const TextStyle(color: Colors.grey),
+                          ),
+                          TextButton.icon(
+                            onPressed: locationController.loadLocations,
+                            icon: const Icon(Icons.refresh, size: 18),
+                            label: const Text('Retry'),
+                          ),
+                        ],
+                      );
+                    }
+                    return Container(
                           width: double.infinity,
                           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
                           decoration: BoxDecoration(
@@ -244,8 +264,8 @@ class _LocationDataScreenState extends State<LocationDataScreen> {
                               onChanged: _onLocationSelected,
                             ),
                           ),
-                        ),
-                  ),
+                        );
+                  }),
                 ],
               ),
             ),

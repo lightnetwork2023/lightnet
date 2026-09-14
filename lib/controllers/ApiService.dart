@@ -50,6 +50,23 @@ class ApiService {
     _cache.remove(key);
   }
 
+  static Future<Map<String, String>> _jsonAuthHeaders() async {
+    final token = await FirebaseAuth.instance.currentUser?.getIdToken();
+    return {
+      'Content-Type': 'application/json',
+      if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
+    };
+  }
+
+  static Future<Map<String, dynamic>> _decodeJsonMap(http.Response response) async {
+    final raw = response.body.isEmpty ? <String, dynamic>{} : jsonDecode(response.body);
+    final map = raw is Map ? Map<String, dynamic>.from(raw) : <String, dynamic>{};
+    if (response.statusCode >= 400) {
+      throw Exception(map['error']?.toString() ?? 'Request failed (${response.statusCode})');
+    }
+    return map;
+  }
+
   static Future<Map<String, dynamic>> generateUsers({
     required int numUsers,
     required double numDays,
@@ -566,27 +583,78 @@ class ApiService {
     }
   }
 
-  /// Fetches all unique locations from the location table
-  static Future<List<dynamic>> fetchAllLocations() async {
+  /// Location catalog on this Flask/MySQL server (not Firestore).
+  static Future<List<Map<String, dynamic>>> fetchLocationCatalog({bool useCache = false}) async {
     const cacheKey = 'all_locations';
-    final cachedData = _getCachedData<List<dynamic>>(cacheKey);
-    if (cachedData != null) {
-      return cachedData;
+    if (useCache) {
+      final cachedData = _getCachedData<List<Map<String, dynamic>>>(cacheKey);
+      if (cachedData != null) {
+        return cachedData;
+      }
     }
 
-    try {
-      final response = await http.get(Uri.parse('$baseUrl/locations'));
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        final locations = data['locations'] as List<dynamic>;
-        _cacheData(cacheKey, locations);
-        return locations;
-      } else {
-        throw Exception('Failed to fetch locations: ${response.statusCode}');
-      }
-    } catch (e) {
-      throw Exception('Error fetching locations: $e');
-    }
+    final response = await http.get(
+      Uri.parse('$baseUrl/api/locations'),
+      headers: await _jsonAuthHeaders(),
+    );
+    final data = await _decodeJsonMap(response);
+    final locations = (data['locations'] as List? ?? [])
+        .map((e) => Map<String, dynamic>.from(e as Map))
+        .toList();
+    _cacheData(cacheKey, locations);
+    return locations;
+  }
+
+  static Future<List<dynamic>> fetchAllLocations() async {
+    return fetchLocationCatalog(useCache: true);
+  }
+
+  static Future<Map<String, dynamic>> createLocation({
+    required String id,
+    String? type,
+    String? parentLocation,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/api/locations'),
+      headers: await _jsonAuthHeaders(),
+      body: jsonEncode({
+        'id': id,
+        if (type != null) 'type': type,
+        if (parentLocation != null) 'parent_location': parentLocation,
+      }),
+    );
+    final data = await _decodeJsonMap(response);
+    clearCacheKey('all_locations');
+    return Map<String, dynamic>.from(data['location'] as Map? ?? {'id': id});
+  }
+
+  static Future<Map<String, dynamic>> updateLocation(
+    String id, {
+    String? type,
+    String? parentLocation,
+    bool clearParent = false,
+  }) async {
+    final response = await http.patch(
+      Uri.parse('$baseUrl/api/locations/${Uri.encodeComponent(id)}'),
+      headers: await _jsonAuthHeaders(),
+      body: jsonEncode({
+        if (type != null) 'type': type,
+        if (clearParent) 'parent_location': null,
+        if (!clearParent && parentLocation != null) 'parent_location': parentLocation,
+      }),
+    );
+    final data = await _decodeJsonMap(response);
+    clearCacheKey('all_locations');
+    return Map<String, dynamic>.from(data['location'] as Map? ?? {'id': id});
+  }
+
+  static Future<void> deleteLocation(String id) async {
+    final response = await http.delete(
+      Uri.parse('$baseUrl/api/locations/${Uri.encodeComponent(id)}'),
+      headers: await _jsonAuthHeaders(),
+    );
+    await _decodeJsonMap(response);
+    clearCacheKey('all_locations');
   }
 
   /// Fetches location-specific data from the location table

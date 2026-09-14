@@ -1113,21 +1113,7 @@ class _HomeCustomersList extends StatefulWidget {
 
 class _HomeCustomersListState extends State<_HomeCustomersList> {
   List<Map<String, dynamic>> _customers = [];
-  final Map<String, Map<String, dynamic>> _clientsData = {};
   bool _loading = true;
-
-  static String _fmt(int? bytes) {
-    if (bytes == null || bytes == 0) return '0 B';
-    if (bytes < 1048576) return '${(bytes / 1024).toStringAsFixed(0)} KB';
-    if (bytes < 1073741824) return '${(bytes / 1048576).toStringAsFixed(1)} MB';
-    return '${(bytes / 1073741824).toStringAsFixed(2)} GB';
-  }
-
-  static String _fmtBps(num bps) {
-    if (bps < 1000) return '${bps.toStringAsFixed(0)} bps';
-    if (bps < 1000000) return '${(bps / 1000).toStringAsFixed(1)} Kbps';
-    return '${(bps / 1000000).toStringAsFixed(2)} Mbps';
-  }
 
   @override
   void initState() {
@@ -1149,45 +1135,9 @@ class _HomeCustomersListState extends State<_HomeCustomersList> {
           _loading = false;
         });
       }
-      // Usage is loaded per card on tap to avoid N+1 Firestore reads.
     } catch (_) {
       if (mounted) setState(() => _loading = false);
     }
-  }
-
-  Future<void> _loadConsumption(String customerId) async {
-    try {
-      // Step 1: get the field registration for this customer to find their IP
-      final regSnap = await FirebaseFirestore.instance
-          .collection('field_registrations')
-          .where('owner_id', isEqualTo: customerId)
-          .limit(1)
-          .get();
-      if (regSnap.docs.isEmpty) return;
-
-      // Step 2: extract the first equipment IP
-      final equipment = List<Map<String, dynamic>>.from(
-          (regSnap.docs.first.data()['equipment'] as List? ?? [])
-              .map((e) => Map<String, dynamic>.from(e as Map)));
-      String? ip;
-      for (final eq in equipment) {
-        final eqIp = eq['ip_address'] as String?;
-        if (eqIp != null && eqIp.trim().isNotEmpty) {
-          ip = eqIp.trim();
-          break;
-        }
-      }
-      if (ip == null) return;
-
-      // Step 3: look up home_clients by IP
-      final clientSnap = await FirebaseFirestore.instance
-          .collection('home_clients')
-          .where('ip', isEqualTo: ip)
-          .limit(1)
-          .get();
-      if (clientSnap.docs.isEmpty || !mounted) return;
-      setState(() => _clientsData[customerId] = clientSnap.docs.first.data());
-    } catch (_) {}
   }
 
   @override
@@ -1205,101 +1155,19 @@ class _HomeCustomersListState extends State<_HomeCustomersList> {
         final name = c['name'] as String? ?? c['full_name'] as String? ?? c['id'] as String;
         final zone  = c['zone'] as String? ?? '';
         final plan  = c['current_plan'] as String? ?? '';
-        final custId = c['id'] as String;
-        final cd = _clientsData[custId];
-        final lastTs = cd?['last_seen'] as Timestamp?;
-        final isOnline = lastTs != null &&
-            DateTime.now().difference(lastTs.toDate()).inMinutes < 4;
-        final dlBps   = cd?['download_bps_5min'] as num?;
-        final todayDl = cd?['today_download_bytes'] as int?;
-        final todayUl = cd?['today_upload_bytes'] as int?;
-        final monDl   = cd?['month_download_bytes'] as int?;
-        final monUl   = cd?['month_upload_bytes'] as int?;
-        final weekDl  = cd?['week_download_bytes'] as int?;
-        final weekUl  = cd?['week_upload_bytes'] as int?;
 
         return Card(
           margin: const EdgeInsets.only(bottom: 8),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(10),
-            side: cd != null
-                ? BorderSide(color: isOnline ? Colors.green.shade200 : Colors.grey.shade300)
-                : BorderSide.none,
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              ListTile(
-                onTap: () => _loadConsumption(custId),
-                leading: CircleAvatar(
-                  backgroundColor: cd != null
-                      ? (isOnline ? Colors.green.withOpacity(0.1) : Colors.grey.withOpacity(0.1))
-                      : Colors.teal.withOpacity(0.1),
-                  child: Icon(Icons.home,
-                      color: cd != null ? (isOnline ? Colors.green : Colors.grey) : Colors.teal),
-                ),
-                title: Row(children: [
-                  Expanded(child: Text(name, style: const TextStyle(fontWeight: FontWeight.w600))),
-                  if (cd != null)
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: isOnline ? Colors.green.shade100 : Colors.grey.shade200,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        isOnline ? 'ONLINE' : 'OFFLINE',
-                        style: TextStyle(
-                          fontSize: 10, fontWeight: FontWeight.bold,
-                          color: isOnline ? Colors.green.shade700 : Colors.grey.shade600,
-                        ),
-                      ),
-                    ),
-                ]),
-                subtitle: Text(
-                  [if (zone.isNotEmpty) '📍 $zone', if (plan.isNotEmpty) '📶 $plan'].join('  •  '),
-                ),
-              ),
-              if (cd != null)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
-                  child: Wrap(
-                    spacing: 10,
-                    runSpacing: 4,
-                    children: [
-                      if (dlBps != null && dlBps > 0)
-                        Row(mainAxisSize: MainAxisSize.min, children: [
-                          const Icon(Icons.speed_rounded, size: 12, color: Colors.blue),
-                          const SizedBox(width: 3),
-                          Text(_fmtBps(dlBps),
-                              style: const TextStyle(fontSize: 11, color: Colors.blue, fontWeight: FontWeight.w600)),
-                        ]),
-                      Row(mainAxisSize: MainAxisSize.min, children: [
-                        const Icon(Icons.today_rounded, size: 11, color: Colors.green),
-                        const SizedBox(width: 3),
-                        const Text('Today ', style: TextStyle(fontSize: 10, color: Colors.grey)),
-                        Text('↓${_fmt(todayDl)} ↑${_fmt(todayUl)}',
-                            style: const TextStyle(fontSize: 11, color: Colors.black87)),
-                      ]),
-                      if (weekDl != null || weekUl != null)
-                        Row(mainAxisSize: MainAxisSize.min, children: [
-                          const Icon(Icons.date_range_rounded, size: 11, color: Colors.orange),
-                          const SizedBox(width: 3),
-                          const Text('Week ', style: TextStyle(fontSize: 10, color: Colors.grey)),
-                          Text('↓${_fmt(weekDl)} ↑${_fmt(weekUl)}',
-                              style: const TextStyle(fontSize: 11, color: Colors.black87)),
-                        ]),
-                      Row(mainAxisSize: MainAxisSize.min, children: [
-                        const Icon(Icons.calendar_month_rounded, size: 11, color: Colors.purple),
-                        const SizedBox(width: 3),
-                        const Text('Month ', style: TextStyle(fontSize: 10, color: Colors.grey)),
-                        Text('↓${_fmt(monDl)} ↑${_fmt(monUl)}',
-                            style: const TextStyle(fontSize: 11, color: Colors.black54)),
-                      ]),
-                    ],
-                  ),
-                ),
-            ],
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          child: ListTile(
+            leading: CircleAvatar(
+              backgroundColor: Colors.teal.withOpacity(0.1),
+              child: const Icon(Icons.home, color: Colors.teal),
+            ),
+            title: Text(name, style: const TextStyle(fontWeight: FontWeight.w600)),
+            subtitle: Text(
+              [if (zone.isNotEmpty) '📍 $zone', if (plan.isNotEmpty) '📶 $plan'].join('  •  '),
+            ),
           ),
         );
       }).toList(),

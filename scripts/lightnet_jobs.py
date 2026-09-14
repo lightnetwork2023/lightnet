@@ -215,7 +215,7 @@ def register_job_routes(app, db_config, firebase_auth=None):
         return conn, cur
 
     def _auth(required_roles=None):
-        actor = hi.resolve_actor(request, firebase_auth, None)
+        actor = hi.resolve_actor(request, firebase_auth, db_config=db_config)
         if not actor:
             return None, (jsonify({'success': False, 'error': 'Sign in required'}), 401)
         if required_roles and actor.get('role') not in required_roles:

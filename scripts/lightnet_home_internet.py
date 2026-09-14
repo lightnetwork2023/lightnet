@@ -646,8 +646,8 @@ def export_doc(cur, collection_path, doc_id, data):
     )
 
 
-def resolve_actor(request, firebase_auth=None, firestore_db=None):
-    """Signed-in Firebase user. Localhost test header is allowed on 127.0.0.1 only."""
+def resolve_actor(request, firebase_auth=None, db_config=None, firestore_db=None):
+    """Signed-in Firebase user. Profile comes from MySQL app_docs, not Firestore."""
     remote = (request.remote_addr or '').strip()
     if remote in ('127.0.0.1', '::1') and request.headers.get('X-Hi-Local') == '1':
         return {
@@ -676,15 +676,20 @@ def resolve_actor(request, firebase_auth=None, firestore_db=None):
         'home_customer_id': '',
         'email': decoded.get('email') or '',
     }
-    if firestore_db and uid:
+    if db_config and uid:
         try:
-            doc = firestore_db.collection('users').document(uid).get()
-            if doc.exists:
-                data = doc.to_dict() or {}
-                actor['role'] = str(data.get('role') or actor['role']).strip().lower()
-                actor['name'] = data.get('name') or actor['name']
-                actor['home_customer_id'] = str(data.get('home_customer_id') or '')
-                actor['email'] = data.get('email') or actor['email']
+            import lightnet_app_docs
+            conn, cur = lightnet_app_docs.store_connect(db_config)
+            try:
+                user = lightnet_app_docs.user_by_uid(cur, uid)
+                if user:
+                    data = user.get('data') or {}
+                    actor['role'] = str(data.get('role') or actor['role']).strip().lower()
+                    actor['name'] = data.get('name') or actor['name']
+                    actor['home_customer_id'] = str(data.get('home_customer_id') or '')
+                    actor['email'] = data.get('email') or actor['email']
+            finally:
+                cur.close(); conn.close()
         except Exception as e:
             log.warning('hi actor profile failed: %s', e)
     return actor
@@ -712,7 +717,7 @@ def register_hi_routes(app, db_config, firebase_auth=None, firestore_db=None):
         return conn, cur
 
     def _auth(required_roles=None):
-        actor = resolve_actor(request, firebase_auth, firestore_db)
+        actor = resolve_actor(request, firebase_auth, db_config=db_config)
         if not actor:
             return None, (jsonify({'success': False, 'error': 'Sign in required'}), 401)
         if required_roles and actor.get('role') not in required_roles:

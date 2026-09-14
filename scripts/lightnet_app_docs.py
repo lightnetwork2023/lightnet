@@ -409,6 +409,120 @@ def bump_location_metadata(cur, location, amount):
         set_doc(cur, 'locations', location, extra, merge=True)
 
 
+def serialize_location(doc):
+    data = dict((doc or {}).get('data') or {})
+    loc_id = str((doc or {}).get('id') or '')
+    parent = data.get('parent_location')
+    if parent is None or str(parent).strip() in ('', 'null'):
+        parent = None
+    else:
+        parent = str(parent).strip()
+    loc_type = data.get('type')
+    if loc_type is not None:
+        loc_type = str(loc_type).strip() or None
+    meta = data.get('metadata')
+    return {
+        'id': loc_id,
+        'name': loc_id,
+        'type': loc_type,
+        'parent_location': parent,
+        'auto_created': bool(data.get('auto_created')),
+        'metadata': meta if isinstance(meta, dict) else {},
+        'created_at': (doc or {}).get('created_at'),
+        'updated_at': (doc or {}).get('updated_at'),
+    }
+
+
+def list_locations(cur):
+    out = [serialize_location(d) for d in list_docs(cur, 'locations')]
+    out.sort(key=lambda x: (
+        0 if (x.get('type') == 'main' or not x.get('type')) else 1,
+        (x.get('id') or '').lower(),
+    ))
+    return out
+
+
+def get_location(cur, loc_id):
+    loc_id = (loc_id or '').strip()
+    if not loc_id:
+        return None
+    doc = get_doc(cur, 'locations', loc_id)
+    if not doc:
+        return None
+    return serialize_location(doc)
+
+
+def create_location(cur, loc_id, loc_type=None, parent_location=None):
+    loc_id = (loc_id or '').strip()
+    if not loc_id:
+        raise ValueError('id required')
+    if get_doc(cur, 'locations', loc_id):
+        raise ValueError('Location already exists')
+    loc_type = (loc_type or 'main').strip().lower()
+    if loc_type not in ('main', 'sublocation'):
+        raise ValueError('type must be main or sublocation')
+    parent = (parent_location or '').strip() or None
+    payload = {'type': loc_type, 'auto_created': False}
+    if loc_type == 'sublocation':
+        if not parent:
+            raise ValueError('parent_location is required for sublocations')
+        if not get_doc(cur, 'locations', parent):
+            raise ValueError("Parent location '%s' does not exist" % parent)
+        payload['parent_location'] = parent
+    set_doc(cur, 'locations', loc_id, payload, merge=False)
+    return get_location(cur, loc_id)
+
+
+def update_location(cur, loc_id, loc_type=None, parent_location=None, clear_parent=False):
+    loc_id = (loc_id or '').strip()
+    existing = get_doc(cur, 'locations', loc_id)
+    if not existing:
+        raise KeyError('not found')
+    patch = {}
+    if loc_type is not None:
+        loc_type = str(loc_type).strip().lower()
+        if loc_type not in ('main', 'sublocation'):
+            raise ValueError('type must be main or sublocation')
+        patch['type'] = loc_type
+        if loc_type == 'main':
+            clear_parent = True
+    if clear_parent:
+        patch['parent_location'] = {SPECIAL: 'delete'}
+        if 'type' not in patch:
+            patch['type'] = 'main'
+    elif parent_location is not None:
+        parent = str(parent_location).strip()
+        if not parent:
+            patch['parent_location'] = {SPECIAL: 'delete'}
+            if 'type' not in patch:
+                patch['type'] = 'main'
+        else:
+            if parent == loc_id:
+                raise ValueError('Location cannot be its own parent')
+            if not get_doc(cur, 'locations', parent):
+                raise ValueError("Parent location '%s' does not exist" % parent)
+            patch['parent_location'] = parent
+            if 'type' not in patch:
+                patch['type'] = 'sublocation'
+    if not patch:
+        return serialize_location(existing)
+    set_doc(cur, 'locations', loc_id, patch, merge=True)
+    return get_location(cur, loc_id)
+
+
+def delete_location(cur, loc_id):
+    loc_id = (loc_id or '').strip()
+    if not loc_id:
+        raise ValueError('id required')
+    if not get_doc(cur, 'locations', loc_id):
+        raise KeyError('not found')
+    for loc in list_locations(cur):
+        if loc.get('parent_location') == loc_id:
+            raise ValueError('Cannot delete location with sublocations')
+    delete_doc(cur, 'locations', loc_id)
+    return True
+
+
 def user_by_uid(cur, uid):
     return get_doc(cur, 'users', uid)
 
@@ -768,6 +882,108 @@ def register_routes(app, db_config, firebase_auth=None):
                 set_doc(cur, 'nokia_beacons', b['id'], update, merge=True)
             conn.commit()
             return jsonify({'success': True, 'online': online, 'offline': offline})
+        finally:
+            cur.close(); conn.close()
+
+    @app.route('/api/locations', methods=['GET'])
+    @app.route('/locations', methods=['GET'])
+    def api_locations_list():
+        actor, err = _require()
+        if err:
+            return err
+        conn, cur = _conn()
+        try:
+            return jsonify({'success': True, 'locations': list_locations(cur)})
+        finally:
+            cur.close(); conn.close()
+
+    @app.route('/api/locations', methods=['POST'])
+    def api_locations_create():
+        actor, err = _require()
+        if err:
+            return err
+        data = _body()
+        loc_id = str(data.get('id') or data.get('name') or '').strip()
+        conn, cur = _conn()
+        try:
+            loc = create_location(
+                cur,
+                loc_id,
+                loc_type=data.get('type'),
+                parent_location=data.get('parent_location') or data.get('parentLocation'),
+            )
+            conn.commit()
+            return jsonify({'success': True, 'location': loc}), 201
+        except ValueError as e:
+            conn.rollback()
+            status = 409 if 'already exists' in str(e).lower() else 400
+            return jsonify({'success': False, 'error': str(e)}), status
+        finally:
+            cur.close(); conn.close()
+
+    @app.route('/api/locations/<path:loc_id>', methods=['GET'])
+    def api_locations_get(loc_id):
+        actor, err = _require()
+        if err:
+            return err
+        conn, cur = _conn()
+        try:
+            loc = get_location(cur, loc_id)
+            if not loc:
+                return jsonify({'success': False, 'error': 'Location not found'}), 404
+            return jsonify({'success': True, 'location': loc})
+        finally:
+            cur.close(); conn.close()
+
+    @app.route('/api/locations/<path:loc_id>', methods=['PATCH', 'PUT'])
+    def api_locations_update(loc_id):
+        actor, err = _require()
+        if err:
+            return err
+        data = _body()
+        clear_parent = bool(data.get('clear_parent'))
+        parent = None
+        if 'parent_location' in data or 'parentLocation' in data:
+            parent = data.get('parent_location') if 'parent_location' in data else data.get('parentLocation')
+            if parent in (None, ''):
+                clear_parent = True
+                parent = None
+        conn, cur = _conn()
+        try:
+            loc = update_location(
+                cur,
+                loc_id,
+                loc_type=data.get('type'),
+                parent_location=parent,
+                clear_parent=clear_parent,
+            )
+            conn.commit()
+            return jsonify({'success': True, 'location': loc})
+        except KeyError:
+            conn.rollback()
+            return jsonify({'success': False, 'error': 'Location not found'}), 404
+        except ValueError as e:
+            conn.rollback()
+            return jsonify({'success': False, 'error': str(e)}), 400
+        finally:
+            cur.close(); conn.close()
+
+    @app.route('/api/locations/<path:loc_id>', methods=['DELETE'])
+    def api_locations_delete(loc_id):
+        actor, err = _require()
+        if err:
+            return err
+        conn, cur = _conn()
+        try:
+            delete_location(cur, loc_id)
+            conn.commit()
+            return jsonify({'success': True})
+        except KeyError:
+            conn.rollback()
+            return jsonify({'success': False, 'error': 'Location not found'}), 404
+        except ValueError as e:
+            conn.rollback()
+            return jsonify({'success': False, 'error': str(e)}), 409
         finally:
             cur.close(); conn.close()
 

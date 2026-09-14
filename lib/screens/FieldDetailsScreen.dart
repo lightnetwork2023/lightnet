@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:lightnetwork/services/app_db.dart';
 import 'package:geolocator/geolocator.dart';
@@ -412,21 +411,6 @@ class _FieldRegistrationFormScreenState
     super.dispose();
   }
 
-  static String _fmtBytes(int? bytes) {
-    if (bytes == null || bytes == 0) return '0 B';
-    if (bytes < 1024) return '${bytes} B';
-    if (bytes < 1048576) return '${(bytes / 1024).toStringAsFixed(1)} KB';
-    if (bytes < 1073741824) return '${(bytes / 1048576).toStringAsFixed(1)} MB';
-    return '${(bytes / 1073741824).toStringAsFixed(2)} GB';
-  }
-
-  static String _fmtBps(num? bps) {
-    if (bps == null || bps == 0) return '0 bps';
-    if (bps < 1000) return '${bps.toStringAsFixed(0)} bps';
-    if (bps < 1000000) return '${(bps / 1000).toStringAsFixed(1)} Kbps';
-    return '${(bps / 1000000).toStringAsFixed(2)} Mbps';
-  }
-
   Future<void> _loadMikrotikDevices(StateSetter setDlg) async {
     if (_mikrotikLoaded) return;
     setDlg(() {});
@@ -760,39 +744,6 @@ class _FieldRegistrationFormScreenState
           text: existing?['serial_number'] as String? ?? '');
     }
 
-    // ── Home client live lookup state ───────────────────────────────────────
-    Map<String, dynamic>? homeClient;
-    bool homeClientLoading = false;
-    String lastSearchedIp = '';
-    Timer? ipLookupTimer;
-
-    void lookupByIp(String ip, StateSetter setDlg) {
-      ipLookupTimer?.cancel();
-      final trimmed = ip.trim();
-      if (trimmed.length < 7) {
-        setDlg(() { homeClient = null; homeClientLoading = false; lastSearchedIp = ''; });
-        return;
-      }
-      setDlg(() => homeClientLoading = true);
-      ipLookupTimer = Timer(const Duration(milliseconds: 800), () async {
-        try {
-          final snap = await FirebaseFirestore.instance
-              .collection('home_clients')
-              .where('ip', isEqualTo: trimmed)
-              .limit(1)
-              .get();
-          setDlg(() {
-            homeClient = snap.docs.isNotEmpty ? snap.docs.first.data() : null;
-            homeClientLoading = false;
-            lastSearchedIp = trimmed;
-          });
-        } catch (_) {
-          setDlg(() { homeClient = null; homeClientLoading = false; lastSearchedIp = trimmed; });
-        }
-      });
-    }
-    // ─────────────────────────────────────────────────────────────────────────
-
     showDialog(
       context: context,
       builder: (ctx) => StatefulBuilder(
@@ -951,7 +902,6 @@ class _FieldRegistrationFormScreenState
                   TextField(
                       controller: ctrls['ip'],
                       keyboardType: TextInputType.number,
-                      onChanged: (v) => lookupByIp(v, setDlg),
                       decoration: const InputDecoration(
                           labelText: 'IP Address',
                           hintText: 'e.g. 192.168.1.10',
@@ -982,7 +932,6 @@ class _FieldRegistrationFormScreenState
                   TextField(
                       controller: ctrls['ip'],
                       keyboardType: TextInputType.number,
-                      onChanged: (v) => lookupByIp(v, setDlg),
                       decoration: const InputDecoration(
                           labelText: 'IP Address',
                           hintText: 'e.g. 192.168.1.20',
@@ -1013,7 +962,6 @@ class _FieldRegistrationFormScreenState
                   TextField(
                       controller: ctrls['ip'],
                       keyboardType: TextInputType.number,
-                      onChanged: (v) => lookupByIp(v, setDlg),
                       decoration: const InputDecoration(
                           labelText: 'IP Address',
                           hintText: 'e.g. 192.168.1.1',
@@ -1103,110 +1051,12 @@ class _FieldRegistrationFormScreenState
                           labelText: 'Serial Number',
                           border: OutlineInputBorder())),
                 ],
-                // ── Home client lookup result ─────────────────────────────
-                if (homeClientLoading && ctrls.containsKey('ip')) ...[
-                  const SizedBox(height: 10),
-                  const Row(children: [
-                    SizedBox(width: 14, height: 14,
-                        child: CircularProgressIndicator(strokeWidth: 2)),
-                    SizedBox(width: 8),
-                    Text('Looking up home client…',
-                        style: TextStyle(fontSize: 11, color: Colors.grey)),
-                  ]),
-                ] else if (!homeClientLoading && homeClient != null) ...[
-                  const SizedBox(height: 10),
-                  Builder(builder: (_) {
-                    final name    = homeClient!['name'] as String? ?? '—';
-                    final lastTs  = homeClient!['last_seen'] as Timestamp?;
-                    final isOnline = lastTs != null &&
-                        DateTime.now().difference(lastTs.toDate()).inMinutes < 6;
-                    final dlBps   = homeClient!['download_bps_5min'] as num?;
-                    final todayDl = homeClient!['today_download_bytes'] as int?;
-                    final todayUl = homeClient!['today_upload_bytes'] as int?;
-                    final monDl   = homeClient!['month_download_bytes'] as int?;
-                    final monUl   = homeClient!['month_upload_bytes'] as int?;
-                    final router  = homeClient!['router_name'] as String?;
-                    return Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: isOnline ? Colors.green.shade50 : Colors.grey.shade100,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                            color: isOnline ? Colors.green.shade200 : Colors.grey.shade300),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(children: [
-                            Container(
-                              width: 8, height: 8,
-                              decoration: BoxDecoration(
-                                color: isOnline ? Colors.green : Colors.grey,
-                                shape: BoxShape.circle),
-                            ),
-                            const SizedBox(width: 6),
-                            Text(name,
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.bold, fontSize: 13)),
-                            const Spacer(),
-                            Text(isOnline ? 'ONLINE' : 'OFFLINE',
-                                style: TextStyle(
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.bold,
-                                    color: isOnline ? Colors.green : Colors.grey)),
-                          ]),
-                          if (router != null) ...[
-                            const SizedBox(height: 2),
-                            Text('Router: $router',
-                                style: const TextStyle(fontSize: 10, color: Colors.grey)),
-                          ],
-                          if (dlBps != null && dlBps > 0) ...[
-                            const SizedBox(height: 4),
-                            Row(children: [
-                              const Icon(Icons.speed_rounded, size: 12, color: Colors.blue),
-                              const SizedBox(width: 4),
-                              Text('Current: ${_fmtBps(dlBps)}',
-                                  style: const TextStyle(fontSize: 11, color: Colors.blue)),
-                            ]),
-                          ],
-                          const SizedBox(height: 4),
-                          Text(
-                            'Today  ↓${_fmtBytes(todayDl)}  ↑${_fmtBytes(todayUl)}',
-                            style: const TextStyle(fontSize: 11, color: Colors.black87),
-                          ),
-                          Text(
-                            'Month  ↓${_fmtBytes(monDl)}  ↑${_fmtBytes(monUl)}',
-                            style: const TextStyle(fontSize: 11, color: Colors.black54),
-                          ),
-                        ],
-                      ),
-                    );
-                  }),
-                ] else if (!homeClientLoading && lastSearchedIp.length >= 7
-                    && homeClient == null && ctrls.containsKey('ip')) ...[
-                  const SizedBox(height: 10),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: Colors.orange.shade50,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.orange.shade200),
-                    ),
-                    child: const Row(children: [
-                      Icon(Icons.info_outline, size: 13, color: Colors.orange),
-                      SizedBox(width: 6),
-                      Text('No home client found for this IP',
-                          style: TextStyle(fontSize: 11, color: Colors.orange)),
-                    ]),
-                  ),
-                ],
               ],
             ),
           ),
           actions: [
             TextButton(
               onPressed: () {
-                ipLookupTimer?.cancel();
                 for (final c in ctrls.values) c.dispose();
                 Navigator.pop(ctx);
               },
@@ -1217,7 +1067,6 @@ class _FieldRegistrationFormScreenState
                   backgroundColor: AppTheme.primaryColor,
                   foregroundColor: Colors.white),
               onPressed: () {
-                ipLookupTimer?.cancel();
                 if (type == 'mikrotik' && mikrotikId == null) {
                   ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
                       content: Text('Please select a MikroTik device.')));

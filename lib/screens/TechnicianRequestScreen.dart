@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:lightnetwork/services/app_db.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:get/get.dart';
+import '../controllers/location_controller.dart';
 import '../theme/app_theme.dart';
 
 class TechnicianRequestScreen extends StatefulWidget {
@@ -61,16 +63,12 @@ class _TechnicianRequestScreenState extends State<TechnicianRequestScreen> {
 
   Future<void> _loadLocations() async {
     try {
-      final snapshot = await _firestore.collection('locations').get();
-      final mainLocations = snapshot.docs.where((doc) {
-        final data = doc.data() as Map<String, dynamic>?;
-        if (data == null) return false;
-        final type = data['type'] as String?;
-        final hasParent = data.containsKey('parentLocation');
-        return type == 'main' || (!hasParent && type != 'sublocation');
-      }).map((doc) => doc.id).toList();
+      final ctrl = Get.find<LocationController>();
+      if (ctrl.catalog.isEmpty) {
+        await ctrl.loadLocations();
+      }
       setState(() {
-        _locations = mainLocations;
+        _locations = ctrl.mainLocationIds;
         _loadingLocations = false;
       });
     } catch (e) {

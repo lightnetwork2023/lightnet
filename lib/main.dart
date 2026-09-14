@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:lightnetwork/services/app_db.dart';
 import 'package:get/get.dart';
 import 'package:lightnetwork/screens/HomeScreen.dart';
 import 'package:lightnetwork/screens/LoginScreen.dart';
@@ -17,12 +16,6 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
-  );
-
-  // Enable Firestore offline persistence with optimized settings
-  FirebaseFirestore.instance.settings = const Settings(
-    persistenceEnabled: true,
-    cacheSizeBytes: 50 * 1024 * 1024,
   );
 
   // Initialize controllers globally
