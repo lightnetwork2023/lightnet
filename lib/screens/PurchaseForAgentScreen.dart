@@ -3,6 +3,7 @@ import 'package:get/get.dart';
 import 'package:lightnetwork/services/app_db.dart';
 import '../controllers/auth_controller.dart';
 import '../controllers/ApiService.dart';
+import '../widgets/searchable_picker.dart';
 
 class PurchaseForAgentScreen extends StatefulWidget {
   const PurchaseForAgentScreen({super.key});
@@ -239,29 +240,32 @@ class _PurchaseForAgentScreenState extends State<PurchaseForAgentScreen> {
                                 ),
                               ),
                               const SizedBox(height: 16),
-                              DropdownButtonFormField<String>(
-                                value: _selectedAgentId.isEmpty ? null : _selectedAgentId,
-                                decoration: const InputDecoration(
-                                  labelText: 'Choose Agent',
-                                  border: OutlineInputBorder(),
-                                  prefixIcon: Icon(Icons.person),
-                                ),
-                                items: _agents.map<DropdownMenuItem<String>>((agent) {
-                                  return DropdownMenuItem<String>(
-                                    value: agent['id'],
-                                    child: Text(
-                                      agent['location'],
-                                      style: const TextStyle(fontWeight: FontWeight.bold),
-                                    ),
-                                  );
-                                }).toList(),
-                                onChanged: (value) {
-                                  if (value != null) {
-                                    _onAgentSelected(value);
-                                  }
+                              SearchablePickerField<Map<String, dynamic>>(
+                                label: 'Choose Agent Location',
+                                hint: 'Search agent or location',
+                                sheetTitle: 'Select Agent Location',
+                                searchHint: 'Type location or agent name',
+                                prefixIcon: Icons.person,
+                                value: _selectedAgentId.isEmpty
+                                    ? null
+                                    : _agents.where((agent) => agent['id'] == _selectedAgentId).firstOrNull,
+                                items: _agents,
+                                labelOf: (agent) => '${agent['location'] ?? ''}'.trim().isEmpty
+                                    ? (agent['name'] ?? 'Unknown')
+                                    : '${agent['location']}',
+                                subtitleOf: (agent) {
+                                  final name = '${agent['name'] ?? ''}'.trim();
+                                  final email = '${agent['email'] ?? ''}'.trim();
+                                  return [name, email].where((s) => s.isNotEmpty).join(' · ');
                                 },
-                                validator: (value) {
-                                  if (value == null || value.isEmpty) {
+                                searchTextOf: (agent) =>
+                                    '${agent['location'] ?? ''} ${agent['name'] ?? ''} ${agent['email'] ?? ''}',
+                                onChanged: (agent) {
+                                  final id = '${agent['id'] ?? ''}';
+                                  if (id.isNotEmpty) _onAgentSelected(id);
+                                },
+                                validator: (agent) {
+                                  if (agent == null || '${agent['id'] ?? ''}'.isEmpty) {
                                     return 'Please select an agent';
                                   }
                                   return null;

@@ -10,6 +10,7 @@ import '../controllers/ApiService.dart';
 import '../controllers/location_controller.dart';
 import '../utils/voucher_pdf_grid.dart';
 import '../widgets/modern_components.dart';
+import '../widgets/searchable_picker.dart';
 
 class LocationDataScreen extends StatefulWidget {
   const LocationDataScreen({Key? key}) : super(key: key);
@@ -238,36 +239,41 @@ class _LocationDataScreenState extends State<LocationDataScreen> {
                         ],
                       );
                     }
-                    return Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF2D3748),
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: const Color(0xFF4A5568)),
-                          ),
-                          child: DropdownButtonHideUnderline(
-                            child: DropdownButton<String>(
-                              hint: const Text(
-                                'Choose a location',
-                                style: TextStyle(color: Colors.grey),
-                              ),
-                              dropdownColor: const Color(0xFF2D3748),
-                              style: const TextStyle(color: Colors.white),
-                              icon: const Icon(Icons.arrow_drop_down, color: Colors.white),
-                              items: locationController.locations.map<DropdownMenuItem<String>>((location) {
-                                return DropdownMenuItem<String>(
-                                  value: location,
-                                  child: Text(locationController.displayName(location)),
-                                );
-                              }).toList(),
-                              value: locationController.locations.contains(_selectedLocation)
-                                  ? _selectedLocation
-                                  : null,
-                              onChanged: _onLocationSelected,
-                            ),
-                          ),
-                        );
+                    return SearchablePickerField<String>(
+                      label: 'Location',
+                      hint: 'Search and choose a location',
+                      sheetTitle: 'Select Location',
+                      searchHint: 'Type a location name',
+                      value: locationController.locations.contains(_selectedLocation)
+                          ? _selectedLocation
+                          : null,
+                      items: locationController.locations.toList(),
+                      labelOf: locationController.displayName,
+                      prefixIcon: Icons.search,
+                      sheetBackgroundColor: const Color(0xFF1A1F3A),
+                      sheetTextColor: Colors.white,
+                      sheetHintColor: Colors.white70,
+                      valueStyle: const TextStyle(color: Colors.white, fontSize: 16),
+                      decoration: InputDecoration(
+                        labelText: 'Location',
+                        hintText: 'Search and choose a location',
+                        hintStyle: const TextStyle(color: Colors.grey),
+                        labelStyle: const TextStyle(color: Colors.white70),
+                        prefixIcon: const Icon(Icons.search, color: Colors.white70),
+                        suffixIcon: const Icon(Icons.arrow_drop_down, color: Colors.white),
+                        filled: true,
+                        fillColor: const Color(0xFF2D3748),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: Color(0xFF4A5568)),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: Color(0xFF6C5CE7)),
+                        ),
+                      ),
+                      onChanged: (location) => _onLocationSelected(location),
+                    );
                   }),
                 ],
               ),

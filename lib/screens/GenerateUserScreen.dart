@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import '../controllers/ApiService.dart';
 import '../controllers/location_controller.dart';
+import '../widgets/searchable_picker.dart';
 
 class GenerateUserScreen extends StatefulWidget {
   @override
@@ -145,21 +146,20 @@ class _GenerateUserScreenState extends State<GenerateUserScreen> {
               ),
               const SizedBox(height: 8),
               Obx(() {
-                final items = locationController.locations;
+                final items = locationController.locations.toList();
                 final value = items.contains(selectedLocation) ? selectedLocation : null;
-                return DropdownButtonFormField<String>(
-                value: value,
-                hint: const Text("Select Location"),
-                icon: const Icon(Icons.location_on),
-                onChanged: (v) => setState(() => selectedLocation = v),
-                items: items
-                    .map((loc) => DropdownMenuItem(
-                          value: loc,
-                          child: Text(locationController.displayName(loc)),
-                        ))
-                    .toList(),
-                validator: (v) => v == null ? "Please select a location" : null,
-              );
+                return SearchablePickerField<String>(
+                  label: 'Select Location',
+                  hint: 'Search location',
+                  sheetTitle: 'Select Location',
+                  searchHint: 'Type a location name',
+                  value: value,
+                  items: items,
+                  labelOf: locationController.displayName,
+                  prefixIcon: Icons.location_on,
+                  onChanged: (v) => setState(() => selectedLocation = v),
+                  validator: (v) => v == null ? 'Please select a location' : null,
+                );
               }),
               const SizedBox(height: 10),
               Row(
@@ -191,19 +191,23 @@ class _GenerateUserScreenState extends State<GenerateUserScreen> {
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    DropdownButtonFormField<String>(
+                    SearchablePickerField<String>(
+                      label: 'Select Main Location *',
+                      hint: 'Search main location',
+                      sheetTitle: 'Select Main Location',
+                      searchHint: 'Type a main location name',
                       value: selectedParentLocation,
+                      items: _mainLocations,
+                      labelOf: locationController.displayName,
+                      prefixIcon: Icons.account_tree,
                       decoration: const InputDecoration(
-                        labelText: "Select Main Location *",
+                        labelText: 'Select Main Location *',
+                        hintText: 'Search main location',
                         prefixIcon: Icon(Icons.account_tree),
-                        helperText: "Choose which main location this sublocation belongs to",
+                        suffixIcon: Icon(Icons.search),
+                        helperText: 'Choose which main location this sublocation belongs to',
+                        border: OutlineInputBorder(),
                       ),
-                      items: _mainLocations
-                          .map((loc) => DropdownMenuItem(
-                                value: loc,
-                                child: Text(loc),
-                              ))
-                          .toList(),
                       onChanged: (value) {
                         setState(() {
                           selectedParentLocation = value;

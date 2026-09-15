@@ -1,50 +1,8 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // App data lives on the LightNet MySQL/Flask API. Only Firebase Auth remains.
     match /{document=**} {
       allow read, write: if false;
-    }
-  }
-}
-
-    // Old MikroTik builds scanned this collection (hundreds of docs per router).
-    // New app does not read it. Admin SDK / Cloud Functions still can.
-    match /radacct_history/{id} {
-      allow read, write: if false;
-    }
-
-    // Home internet billing now lives on the LightNet MySQL/Flask API.
-    // Block client access so old APKs cannot split writes with the new server.
-    match /home_customers/{document=**} {
-      allow read, write: if false;
-    }
-    match /archived_home_customers/{document=**} {
-      allow read, write: if false;
-    }
-    match /home_internet_config/{document=**} {
-      allow read, write: if false;
-    }
-
-    // Top-level hotspot payments only. Home-customer payments are blocked above.
-    // List still requires a limit so old unbounded scans stay blocked.
-    match /payments/{id} {
-      allow get: if isSignedIn();
-      allow list: if isSignedIn()
-        && request.query.limit is number
-        && request.query.limit > 0
-        && request.query.limit <= 3000;
-      allow create, update, delete: if isSignedIn();
-    }
-
-    // All other collections: signed-in app users only.
-    match /{collection}/{document=**} {
-      allow read, write: if isSignedIn()
-        && collection != 'radacct_history'
-        && collection != 'payments'
-        && collection != 'home_customers'
-        && collection != 'archived_home_customers'
-        && collection != 'home_internet_config';
     }
   }
 }
