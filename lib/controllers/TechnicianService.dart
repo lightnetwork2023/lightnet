@@ -6,7 +6,8 @@ class TechnicianService {
   // Reuse ApiService base URL
   static const String _baseUrl = ApiService.baseUrl;
 
-  /// Fetch technician payments summary that INCLUDES test payments (phone '12345678').
+  /// Fetch technician payments summary. Includes agent_stock and test checkouts
+  /// (unlike agent/superagent analytics, which exclude those kinds).
   /// Accepts either a single location or a comma-separated list of locations.
   static Future<Map<String, dynamic>> fetchTechnicianPaymentsSummary({
     String? location,

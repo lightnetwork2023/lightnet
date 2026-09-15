@@ -76,3 +76,14 @@ def daily_average(this_month, days_in_month):
     if days_in_month <= 0:
         return 0.0
     return float(this_month) / days_in_month
+
+
+def analytics_exclude_sql(kind_col='kind', phone_col='phone'):
+    """Hide agent stock and test checkouts from agent/superagent sales totals.
+
+    New rows use payments.kind. Legacy bulk used phone 12345678.
+    """
+    return (
+        " AND COALESCE({kind}, IF({phone} = '12345678', 'agent_stock', 'customer')) "
+        "NOT IN ('agent_stock', 'test')"
+    ).format(kind=kind_col, phone=phone_col)

@@ -13,6 +13,7 @@ from query_efficiency import (
     payment_summary_params,
     payment_summary_sql,
     search_phone_ok,
+    analytics_exclude_sql,
 )
 
 
@@ -43,6 +44,11 @@ class QueryEfficiencyTest(unittest.TestCase):
         self.assertEqual(len(params), 7)
         self.assertEqual(params[-1], 'Kigamboni')
         self.assertAlmostEqual(daily_average(1100, 11), 100.0)
+
+    def test_analytics_exclude_sql(self):
+        sql = analytics_exclude_sql()
+        self.assertIn('agent_stock', sql)
+        self.assertIn('12345678', sql)
 
 
 if __name__ == '__main__':

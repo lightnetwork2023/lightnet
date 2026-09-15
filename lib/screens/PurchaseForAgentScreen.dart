@@ -181,7 +181,7 @@ class _PurchaseForAgentScreenState extends State<PurchaseForAgentScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Confirm by Entering your PIN'),
+            content: Text('Confirm PIN on your phone. Vouchers appear after payment succeeds.'),
             backgroundColor: Colors.green,
           ),
         );

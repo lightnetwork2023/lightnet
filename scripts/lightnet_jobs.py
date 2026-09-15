@@ -96,7 +96,8 @@ def last_month_revenue(cur, locations):
         """
         SELECT COALESCE(SUM(amount), 0) AS total
         FROM payments
-        WHERE phone <> '12345678'
+        WHERE COALESCE(kind, IF(phone = '12345678', 'agent_stock', 'customer'))
+              NOT IN ('agent_stock', 'test')
           AND timestamp >= %s AND timestamp < %s
           AND location IN ({})
         """.format(placeholders),
