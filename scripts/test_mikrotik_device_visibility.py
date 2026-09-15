@@ -64,6 +64,85 @@ class MikroTikDeviceVisibilityTest(unittest.TestCase):
         self.assertEqual(payload['mikrotik_owner_id'], 13)
         self.assertEqual(payload['location'], 'CHALINZE')
 
+    def test_unstamped_sites_visible_only_to_default_owner(self):
+        doc = {
+            'id': 'h2HBwbTIJFVdM1gaLGNm',
+            'collection': 'sites',
+            'data': {'name': 'CHALINZE', 'main_location': 'Chalinze'},
+        }
+        self.assertTrue(
+            ad.tenant_docs_visible(
+                {'role': 'boss', 'mikrotik_owner_id': 13},
+                'sites',
+                doc,
+                set(),
+                13,
+            )
+        )
+        self.assertFalse(
+            ad.tenant_docs_visible(
+                {'role': 'boss', 'mikrotik_owner_id': 10},
+                'sites',
+                doc,
+                set(),
+                13,
+            )
+        )
+
+    def test_owner_cannot_see_other_owner_sites(self):
+        doc = {
+            'id': 'site1',
+            'collection': 'sites',
+            'data': {'name': 'MBAGALA', 'main_location': 'Mbagala', 'mikrotik_owner_id': 13},
+        }
+        self.assertFalse(
+            ad.tenant_docs_visible(
+                {'role': 'boss', 'mikrotik_owner_id': 10},
+                'sites',
+                doc,
+                {'Mbagala', 'BABUU'},
+                13,
+            )
+        )
+
+    def test_site_write_stamps_actor_owner(self):
+        payload = ad.stamp_write_owner(
+            {'mikrotik_owner_id': 10},
+            'sites',
+            {'name': 'BABUU', 'main_location': 'BABUU', 'mikrotik_owner_id': 13},
+        )
+        self.assertEqual(payload['mikrotik_owner_id'], 10)
+        self.assertEqual(payload['name'], 'BABUU')
+
+    def test_lightnet_ops_hidden_from_other_owner(self):
+        cases = [
+            ('expenses', {'title': 'server payment', 'status': 'pending', 'location_id': 'Chalinze'}),
+            ('float_transactions', {'type': 'credit', 'amount': 100000}),
+            ('technician_vouchers', {'agent_name': 'HARDWARE', 'agent_location': 'HARDWARE CHALINZE'}),
+            ('tech_checkins', {'destination_type': 'site', 'destination_name': 'MLANDIZI'}),
+        ]
+        actor = {'role': 'boss', 'mikrotik_owner_id': 10}
+        lightnet = {'role': 'boss', 'mikrotik_owner_id': 13}
+        for collection, data in cases:
+            doc = {'id': collection, 'collection': collection, 'data': data}
+            self.assertFalse(
+                ad.tenant_docs_visible(actor, collection, doc, set(), 13),
+                collection,
+            )
+            self.assertTrue(
+                ad.tenant_docs_visible(lightnet, collection, doc, set(), 13),
+                collection,
+            )
+
+    def test_expense_write_stamps_actor_owner(self):
+        payload = ad.stamp_write_owner(
+            {'mikrotik_owner_id': 10},
+            'expenses',
+            {'title': 'fuel', 'status': 'pending', 'mikrotik_owner_id': 13},
+        )
+        self.assertEqual(payload['mikrotik_owner_id'], 10)
+        self.assertEqual(payload['title'], 'fuel')
+
     def test_owner_email_wins_over_backfilled_lightnet_staff_stamp(self):
         self.assertEqual(ad.pick_actor_owner_id(10, 13, 13), 10)
 

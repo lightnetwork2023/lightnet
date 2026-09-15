@@ -1,0 +1,14 @@
+---
+description: After app changes, commit and push every branch including main
+alwaysApply: true
+---
+
+# Push all branches
+
+After finishing work in this repo, commit the relevant files (unless the user said not to commit) and push the same commit to every remote branch:
+
+- `git push origin main`
+- `git push origin main:fix/firestore-read-costs`
+- `git push origin main:fix/android-linux-build`
+
+Never force-push `main`. Do not commit scripts that contain database passwords (`scripts/migrate_firestore_*.py`, `scripts/import_home_users_from_routers.py`, `scripts/enable_traffic_flow_on_routers.py`).

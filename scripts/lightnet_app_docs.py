@@ -394,6 +394,28 @@ def docs_list(db_config, collection):
 
 DEFAULT_MIKROTIK_OWNER_EMAIL = 'lightnetwork2023@gmail.com'
 _OWNER_TENANCY_READY = False
+OWNER_SCOPED_COLLECTIONS = frozenset({
+    'mikrotik_devices',
+    'sites',
+    'expenses',
+    'float_transactions',
+    'technician_vouchers',
+    'tech_checkins',
+    'sa_withdrawal_requests',
+    'technician_one_user_logs',
+    'technician_one_user_daily',
+    'technician_one_user_monthly',
+})
+OPS_BACKFILL_COLLECTIONS = (
+    'expenses',
+    'float_transactions',
+    'technician_vouchers',
+    'tech_checkins',
+    'sa_withdrawal_requests',
+    'technician_one_user_logs',
+    'technician_one_user_daily',
+    'technician_one_user_monthly',
+)
 
 
 def coerce_owner_id(val):
@@ -600,18 +622,26 @@ def bind_users_to_owner_emails(cur):
     return n
 
 
-def stamp_legacy_mikrotik_devices(cur, owner_id):
+def stamp_legacy_owner_collection(cur, collection, owner_id):
     oid = coerce_owner_id(owner_id)
     if not oid:
         return 0
     n = 0
-    for doc in list_docs(cur, 'mikrotik_devices'):
+    for doc in list_docs(cur, collection):
         data = doc.get('data') or {}
         if coerce_owner_id(data.get('mikrotik_owner_id') or data.get('owner_id')):
             continue
-        set_doc(cur, 'mikrotik_devices', doc['id'], {'mikrotik_owner_id': oid}, merge=True)
+        set_doc(cur, collection, doc['id'], {'mikrotik_owner_id': oid}, merge=True)
         n += 1
     return n
+
+
+def stamp_legacy_mikrotik_devices(cur, owner_id):
+    return stamp_legacy_owner_collection(cur, 'mikrotik_devices', owner_id)
+
+
+def stamp_legacy_sites(cur, owner_id):
+    return stamp_legacy_owner_collection(cur, 'sites', owner_id)
 
 
 def ensure_owner_tenancy(cur):
@@ -638,6 +668,11 @@ def ensure_owner_tenancy(cur):
                 set_doc(cur, 'users', doc['id'], {'mikrotik_owner_id': oid}, merge=True)
         if not marker_data.get('devices_backfilled'):
             stamp_legacy_mikrotik_devices(cur, oid)
+        if not marker_data.get('sites_backfilled'):
+            stamp_legacy_sites(cur, oid)
+        if not marker_data.get('ops_backfilled'):
+            for collection in OPS_BACKFILL_COLLECTIONS:
+                stamp_legacy_owner_collection(cur, collection, oid)
         if not marker_data.get('email_owner_bind'):
             bind_users_to_owner_emails(cur)
         set_doc(
@@ -647,6 +682,8 @@ def ensure_owner_tenancy(cur):
             {
                 'backfilled': True,
                 'devices_backfilled': True,
+                'sites_backfilled': True,
+                'ops_backfilled': True,
                 'email_owner_bind': True,
                 'owner_id': oid,
                 'at': _iso(_now()),
@@ -1041,6 +1078,30 @@ def location_access_ok(actor, loc_id, all_locs):
     return str(loc_id or '').strip() in allowed
 
 
+def doc_owner_id(data, default_owner_id=None):
+    oid = coerce_owner_id((data or {}).get('mikrotik_owner_id') or (data or {}).get('owner_id'))
+    if oid is None:
+        return coerce_owner_id(default_owner_id)
+    return oid
+
+
+def site_location_name(data):
+    return str((data or {}).get('main_location') or (data or {}).get('location') or '').strip()
+
+
+def doc_location_name(collection, data):
+    data = data or {}
+    if collection == 'sites':
+        return site_location_name(data)
+    if collection == 'technician_vouchers':
+        return str(data.get('agent_location') or data.get('location') or '').strip()
+    if collection == 'expenses':
+        return str(data.get('location_id') or data.get('location_name') or data.get('location') or '').strip()
+    if collection == 'tech_checkins':
+        return str(data.get('destination_name') or data.get('location') or '').strip()
+    return str(data.get('location') or '').strip()
+
+
 def tenant_docs_visible(actor, collection, doc, allowed_locs, default_owner_id=None):
     data = (doc or {}).get('data') or {}
     owner_id = (actor or {}).get('mikrotik_owner_id')
@@ -1049,16 +1110,17 @@ def tenant_docs_visible(actor, collection, doc, allowed_locs, default_owner_id=N
         return same_owner(owner_id, data.get('mikrotik_owner_id'))
     if collection == 'locations':
         return (doc or {}).get('id') in (allowed_locs or set())
-    if collection == 'mikrotik_devices':
-        device_oid = coerce_owner_id(data.get('mikrotik_owner_id') or data.get('owner_id'))
-        if device_oid is None:
-            device_oid = coerce_owner_id(default_owner_id)
-        if not same_owner(owner_id, device_oid):
+    if collection in OWNER_SCOPED_COLLECTIONS:
+        if not same_owner(owner_id, doc_owner_id(data, default_owner_id)):
             return False
         if role in FULL_LOCATION_ROLES:
             return True
-        loc = str(data.get('location') or '').strip()
-        return bool(loc) and loc in (allowed_locs or set())
+        loc = doc_location_name(collection, data)
+        if collection in ('mikrotik_devices', 'sites'):
+            return bool(loc) and loc in (allowed_locs or set())
+        if loc:
+            return loc in (allowed_locs or set())
+        return True
     loc = data.get('location')
     if loc:
         return str(loc).strip() in (allowed_locs or set())
@@ -1072,9 +1134,10 @@ def stamp_write_owner(actor, collection, payload):
     if payload is None:
         return payload
     payload = dict(payload)
-    if collection == 'mikrotik_devices':
+    if collection in OWNER_SCOPED_COLLECTIONS:
         payload.pop('mikrotik_owner_id', None)
-        payload.pop('owner_id', None)
+        if collection in ('mikrotik_devices', 'sites'):
+            payload.pop('owner_id', None)
         payload['mikrotik_owner_id'] = coerce_owner_id(actor.get('mikrotik_owner_id'))
     return payload
 
@@ -1210,6 +1273,17 @@ def register_routes(app, db_config, firebase_auth=None):
             return (jsonify({'success': False, 'error': 'Not allowed'}), 403), payload
         return None, payload
 
+    def _tenant_write_guard(cur, actor, collection, doc_id):
+        if collection not in OWNER_SCOPED_COLLECTIONS or not doc_id:
+            return None
+        existing = get_doc(cur, collection, doc_id)
+        if not existing:
+            return None
+        allowed = allowed_location_ids(actor, list_locations(cur))
+        if tenant_docs_visible(actor, collection, existing, allowed, default_mikrotik_owner_id(cur)):
+            return None
+        return jsonify({'success': False, 'error': 'Not allowed'}), 403
+
     def _payment_doc(row):
         return {
             'id': str(row['id']),
@@ -1306,12 +1380,17 @@ def register_routes(app, db_config, firebase_auth=None):
             denied, payload = _user_guard(cur, actor, collection, doc_id, payload=payload, writing=True)
             if denied:
                 return denied
+            denied = _tenant_write_guard(cur, actor, collection, doc_id)
+            if denied:
+                return denied
             payload = stamp_write_owner(actor, collection, payload)
             if collection == 'locations' and payload is not None:
                 payload = dict(payload)
                 payload.pop('owner_id', None)
                 payload['owner_id'] = coerce_owner_id(actor.get('mikrotik_owner_id'))
             loc_name = (payload or {}).get('location')
+            if collection == 'sites':
+                loc_name = loc_name or (payload or {}).get('main_location')
             if (
                 loc_name
                 and collection != 'mikrotik_devices'
@@ -1369,6 +1448,9 @@ def register_routes(app, db_config, firebase_auth=None):
             denied, _ = _user_guard(cur, actor, collection, doc_id, writing=True)
             if denied:
                 return denied
+            denied = _tenant_write_guard(cur, actor, collection, doc_id)
+            if denied:
+                return denied
             delete_doc(cur, collection, doc_id)
             conn.commit()
             return jsonify({'success': True})
@@ -1399,6 +1481,9 @@ def register_routes(app, db_config, firebase_auth=None):
                     payload=op.get('data') or {},
                     writing=True,
                 )
+                if denied:
+                    return denied
+                denied = _tenant_write_guard(cur, actor, collection, doc_id)
                 if denied:
                     return denied
                 op_data = stamp_write_owner(actor, collection, op_data)
