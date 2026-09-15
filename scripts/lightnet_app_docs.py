@@ -306,7 +306,7 @@ def query_docs(cur, collection, filters=None, order_by=None, limit=None):
     return rows
 
 
-def query_mysql_payments(cur, filters=None, order_by=None, limit=None, location_ids=None):
+def query_mysql_payments(cur, filters=None, order_by=None, limit=None, location_ids=None, owner_id=None):
     filters = filters or []
     sql = """
         SELECT id, location, amount, duration, username, timestamp, phone, payment_method
@@ -314,6 +314,14 @@ def query_mysql_payments(cur, filters=None, order_by=None, limit=None, location_
     """
     params = []
     leftover = []
+    oid = coerce_owner_id(owner_id)
+    if oid is not None:
+        default_id = coerce_owner_id(default_mikrotik_owner_id(cur))
+        if default_id is not None and int(oid) == int(default_id):
+            sql += " AND (owner_id = %s OR owner_id IS NULL)"
+        else:
+            sql += " AND owner_id = %s"
+        params.append(int(oid))
     if location_ids is not None:
         ids = [str(x).strip() for x in location_ids if str(x).strip()]
         if not ids:
@@ -394,21 +402,23 @@ def docs_list(db_config, collection):
 
 DEFAULT_MIKROTIK_OWNER_EMAIL = 'lightnetwork2023@gmail.com'
 _OWNER_TENANCY_READY = False
-OWNER_SCOPED_COLLECTIONS = frozenset({
-    'mikrotik_devices',
-    'sites',
-    'expenses',
-    'float_transactions',
-    'technician_vouchers',
-    'tech_checkins',
-    'sa_withdrawal_requests',
-    'technician_one_user_logs',
-    'technician_one_user_daily',
-    'technician_one_user_monthly',
-    'home_customers',
-    'archived_home_customers',
-    'home_clients',
-})
+SYSTEM_COLLECTIONS = frozenset({'app_meta'})
+
+
+def collection_root(collection):
+    return (collection or '').strip().split('/')[0]
+
+
+def is_system_collection(collection):
+    c = (collection or '').strip()
+    return c in SYSTEM_COLLECTIONS or collection_root(c) in SYSTEM_COLLECTIONS
+
+
+def is_location_tree_collection(collection):
+    c = (collection or '').strip()
+    return c == 'locations' or c.startswith('locations/')
+
+
 OPS_BACKFILL_COLLECTIONS = (
     'expenses',
     'float_transactions',
@@ -645,7 +655,9 @@ def stamp_legacy_owner_collection(cur, collection, owner_id):
     n = 0
     for doc in list_docs(cur, collection):
         data = doc.get('data') or {}
-        if coerce_owner_id(data.get('mikrotik_owner_id') or data.get('owner_id')):
+        if coerce_owner_id(data.get('mikrotik_owner_id')):
+            continue
+        if collection != 'field_registrations' and coerce_owner_id(data.get('owner_id')):
             continue
         set_doc(cur, collection, doc['id'], {'mikrotik_owner_id': oid}, merge=True)
         n += 1
@@ -692,6 +704,13 @@ def ensure_owner_tenancy(cur):
         if not marker_data.get('home_docs_backfilled'):
             for collection in ('home_customers', 'archived_home_customers', 'home_clients'):
                 stamp_legacy_owner_collection(cur, collection, oid)
+        if not marker_data.get('all_docs_backfilled'):
+            cur.execute('SELECT DISTINCT collection FROM app_docs')
+            for row in cur.fetchall() or []:
+                coll = str(row.get('collection') or '')
+                if coll in ('users', 'locations', 'app_meta') or coll.startswith('locations/'):
+                    continue
+                stamp_legacy_owner_collection(cur, coll, oid)
         if not marker_data.get('email_owner_bind'):
             bind_users_to_owner_emails(cur)
         set_doc(
@@ -704,6 +723,7 @@ def ensure_owner_tenancy(cur):
                 'sites_backfilled': True,
                 'ops_backfilled': True,
                 'home_docs_backfilled': True,
+                'all_docs_backfilled': True,
                 'email_owner_bind': True,
                 'owner_id': oid,
                 'at': _iso(_now()),
@@ -1111,8 +1131,12 @@ def location_access_ok(actor, loc_id, all_locs):
     return str(loc_id or '').strip() in allowed
 
 
-def doc_owner_id(data, default_owner_id=None):
-    oid = coerce_owner_id((data or {}).get('mikrotik_owner_id') or (data or {}).get('owner_id'))
+def doc_owner_id(data, default_owner_id=None, collection=None):
+    data = data or {}
+    if collection == 'field_registrations':
+        oid = coerce_owner_id(data.get('mikrotik_owner_id'))
+    else:
+        oid = coerce_owner_id(data.get('mikrotik_owner_id') or data.get('owner_id'))
     if oid is None:
         return coerce_owner_id(default_owner_id)
     return oid
@@ -1124,54 +1148,55 @@ def site_location_name(data):
 
 def doc_location_name(collection, data):
     data = data or {}
-    if collection == 'sites':
+    root = collection_root(collection)
+    if root == 'sites':
         return site_location_name(data)
-    if collection == 'technician_vouchers':
+    if root == 'technician_vouchers':
         return str(data.get('agent_location') or data.get('location') or '').strip()
-    if collection == 'expenses':
+    if root == 'expenses':
         return str(data.get('location_id') or data.get('location_name') or data.get('location') or '').strip()
-    if collection == 'tech_checkins':
+    if root == 'tech_checkins':
         return str(data.get('destination_name') or data.get('location') or '').strip()
-    return str(data.get('location') or '').strip()
+    return str(data.get('location') or data.get('location_id') or '').strip()
 
 
 def tenant_docs_visible(actor, collection, doc, allowed_locs, default_owner_id=None):
     data = (doc or {}).get('data') or {}
     owner_id = (actor or {}).get('mikrotik_owner_id')
     role = str((actor or {}).get('role') or '').strip().lower()
-    if collection == 'users':
+    c = (collection or '').strip()
+    if c == 'users':
         return same_owner(owner_id, data.get('mikrotik_owner_id'))
-    if collection == 'locations':
+    if c == 'locations':
         return (doc or {}).get('id') in (allowed_locs or set())
-    if collection in OWNER_SCOPED_COLLECTIONS:
-        if not same_owner(owner_id, doc_owner_id(data, default_owner_id)):
-            return False
-        if role in FULL_LOCATION_ROLES:
-            return True
-        loc = doc_location_name(collection, data)
-        if collection in ('mikrotik_devices', 'sites'):
-            return bool(loc) and loc in (allowed_locs or set())
-        if loc:
-            return loc in (allowed_locs or set())
+    if c.startswith('locations/'):
+        loc_id = location_id_from_collection(c)
+        return bool(loc_id) and loc_id in (allowed_locs or set())
+    if is_system_collection(c):
         return True
-    loc = data.get('location')
+    if not same_owner(owner_id, doc_owner_id(data, default_owner_id, collection=c)):
+        return False
+    if role in FULL_LOCATION_ROLES:
+        return True
+    loc = doc_location_name(c, data)
+    if c in ('mikrotik_devices', 'sites'):
+        return bool(loc) and loc in (allowed_locs or set())
     if loc:
-        return str(loc).strip() in (allowed_locs or set())
-    oid = data.get('mikrotik_owner_id')
-    if oid is not None and collection != 'field_registrations':
-        return same_owner(owner_id, oid)
+        return loc in (allowed_locs or set())
     return True
 
 
 def stamp_write_owner(actor, collection, payload):
     if payload is None:
         return payload
+    c = (collection or '').strip()
+    if c == 'users' or is_location_tree_collection(c) or is_system_collection(c):
+        return dict(payload)
     payload = dict(payload)
-    if collection in OWNER_SCOPED_COLLECTIONS:
-        payload.pop('mikrotik_owner_id', None)
-        if collection in ('mikrotik_devices', 'sites'):
-            payload.pop('owner_id', None)
-        payload['mikrotik_owner_id'] = coerce_owner_id(actor.get('mikrotik_owner_id'))
+    payload.pop('mikrotik_owner_id', None)
+    if c in ('mikrotik_devices', 'sites'):
+        payload.pop('owner_id', None)
+    payload['mikrotik_owner_id'] = coerce_owner_id(actor.get('mikrotik_owner_id'))
     return payload
 
 
@@ -1281,7 +1306,11 @@ def register_routes(app, db_config, firebase_auth=None):
         allowed = allowed_location_ids(actor, list_locations(cur))
         default_oid = default_mikrotik_owner_id(cur)
         if collection == 'payments':
-            return query_mysql_payments(cur, filters, order_by, limit, location_ids=allowed)
+            return query_mysql_payments(
+                cur, filters, order_by, limit,
+                location_ids=allowed,
+                owner_id=actor.get('mikrotik_owner_id'),
+            )
         docs = query_docs(cur, collection, filters, order_by, limit)
         return [d for d in docs if tenant_docs_visible(actor, collection, d, allowed, default_oid)]
 
@@ -1307,7 +1336,7 @@ def register_routes(app, db_config, firebase_auth=None):
         return None, payload
 
     def _tenant_write_guard(cur, actor, collection, doc_id):
-        if collection not in OWNER_SCOPED_COLLECTIONS or not doc_id:
+        if is_system_collection(collection) or collection == 'users' or is_location_tree_collection(collection) or not doc_id:
             return None
         existing = get_doc(cur, collection, doc_id)
         if not existing:

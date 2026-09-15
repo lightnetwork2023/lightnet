@@ -462,8 +462,21 @@ def unique_customer_id(cur, attempts=50) -> str:
     raise ValueError('Could not generate unique customer id')
 
 
-def get_config(cur):
-    cur.execute("SELECT * FROM hi_config WHERE id='enums'")
+def _config_id(cur, owner_id):
+    try:
+        import lightnet_app_docs as ad
+        oid = ad.coerce_owner_id(owner_id)
+        default_oid = ad.default_mikrotik_owner_id(cur)
+        if oid is None or oid == default_oid:
+            return 'enums'
+        return 'enums-%s' % oid
+    except Exception:
+        return 'enums'
+
+
+def get_config(cur, owner_id=None):
+    cid = _config_id(cur, owner_id)
+    cur.execute("SELECT * FROM hi_config WHERE id=%s", (cid,))
     row = cur.fetchone()
     if not row:
         return {'zones': [], 'customer_types': []}
@@ -474,11 +487,12 @@ def get_config(cur):
     }
 
 
-def set_config(cur, zones, types, uid=None, name=None):
+def set_config(cur, zones, types, uid=None, name=None, owner_id=None):
+    cid = _config_id(cur, owner_id)
     cur.execute(
         """
         INSERT INTO hi_config (id, zones_json, customer_types_json, updated_at, updated_by_uid, updated_by_name)
-        VALUES ('enums', %s, %s, UTC_TIMESTAMP(), %s, %s)
+        VALUES (%s, %s, %s, UTC_TIMESTAMP(), %s, %s)
         ON DUPLICATE KEY UPDATE
             zones_json=VALUES(zones_json),
             customer_types_json=VALUES(customer_types_json),
@@ -486,7 +500,7 @@ def set_config(cur, zones, types, uid=None, name=None):
             updated_by_uid=VALUES(updated_by_uid),
             updated_by_name=VALUES(updated_by_name)
         """,
-        (_json(zones or []), _json(types or []), uid, name),
+        (cid, _json(zones or []), _json(types or []), uid, name),
     )
 
 
@@ -824,7 +838,7 @@ def register_hi_routes(app, db_config, firebase_auth=None, firestore_db=None):
             return err
         conn, cur = _conn()
         try:
-            return jsonify({'success': True, **get_config(cur)})
+            return jsonify({'success': True, **get_config(cur, owner_id=_owner_id(actor))})
         finally:
             cur.close(); conn.close()
 
@@ -842,9 +856,10 @@ def register_hi_routes(app, db_config, firebase_auth=None, firestore_db=None):
                 data.get('customer_types') or data.get('customerTypes') or [],
                 uid=actor.get('uid'),
                 name=actor.get('name'),
+                owner_id=_owner_id(actor),
             )
             conn.commit()
-            return jsonify({'success': True, **get_config(cur)})
+            return jsonify({'success': True, **get_config(cur, owner_id=_owner_id(actor))})
         finally:
             cur.close(); conn.close()
 

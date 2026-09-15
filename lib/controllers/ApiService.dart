@@ -122,13 +122,14 @@ class ApiService {
   }
 
   static Future<List<dynamic>> fetchPayments() async {
-    const cacheKey = 'payments';
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? 'anon';
+    final cacheKey = 'payments_$uid';
     final cachedData = _getCachedData<List<dynamic>>(cacheKey);
     if (cachedData != null) {
       return cachedData;
     }
 
-    final response = await http.get(Uri.parse('$baseUrl/payments'));
+    final response = await http.get(Uri.parse('$baseUrl/payments'), headers: await _authHeaders());
     final payments = jsonDecode(response.body)['payments'];
     _cacheData(cacheKey, payments);
     return payments;
@@ -137,7 +138,7 @@ class ApiService {
   static Future<Map<String, dynamic>> deleteUser(String username) async {
     final response = await http.post(
       Uri.parse('$baseUrl/delete_user'),
-      headers: {'Content-Type': 'application/json'},
+      headers: await _jsonAuthHeaders(),
       body: jsonEncode({'username': username}),
     );
     final result = jsonDecode(response.body);
@@ -263,7 +264,7 @@ class ApiService {
       return cachedData;
     }
     
-    final response = await http.get(Uri.parse(url));
+    final response = await http.get(Uri.parse(url), headers: await _authHeaders());
     if (response.statusCode != 200) {
       throw Exception('Failed to fetch agent payment summary: ${response.body}');
     }
@@ -366,7 +367,10 @@ class ApiService {
       return [];
     }
     try {
-      final response = await http.get(Uri.parse('$baseUrl/search_payments?phone=${Uri.encodeComponent(phone)}'));
+      final response = await http.get(
+        Uri.parse('$baseUrl/search_payments?phone=${Uri.encodeComponent(phone)}'),
+        headers: await _authHeaders(),
+      );
       if (response.statusCode == 404 || response.statusCode == 400) {
         return [];
       }
@@ -430,7 +434,7 @@ class ApiService {
     }
 
     try {
-      final response = await http.get(Uri.parse('$baseUrl/fetch_payments_this_month'));
+      final response = await http.get(Uri.parse('$baseUrl/fetch_payments_this_month'), headers: await _authHeaders());
       if (response.statusCode != 200) {
         throw Exception('Failed to load this month\'s total payments: ${response.body}');
       }
@@ -453,7 +457,7 @@ class ApiService {
     }
 
     try {
-      final response = await http.get(Uri.parse('$baseUrl/fetch_payments_last_month'));
+      final response = await http.get(Uri.parse('$baseUrl/fetch_payments_last_month'), headers: await _authHeaders());
       if (response.statusCode != 200) {
         throw Exception('Failed to load last month\'s total payments: ${response.body}');
       }
@@ -686,7 +690,8 @@ class ApiService {
   }
 
   static Future<List<dynamic>> fetchOnlineMacs() async {
-    const cacheKey = 'online_macs';
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? 'anon';
+    final cacheKey = 'online_macs_$uid';
     try {
       // Check cache first
       final cachedData = _getCachedData<List<dynamic>>(cacheKey);
@@ -694,7 +699,7 @@ class ApiService {
         return cachedData;
       }
 
-      final response = await http.get(Uri.parse('$baseUrl/get-all-macs'));
+      final response = await http.get(Uri.parse('$baseUrl/get-all-macs'), headers: await _authHeaders());
       if (response.statusCode == 200) {
         final List<dynamic> data = json.decode(response.body);
         _cacheData(cacheKey, data);
@@ -708,11 +713,12 @@ class ApiService {
   }
 
   static Future<List<dynamic>> fetchActiveMacs() async {
-    const cacheKey = 'active_macs';
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? 'anon';
+    final cacheKey = 'active_macs_$uid';
     final cachedData = _getCachedData<List<dynamic>>(cacheKey);
     if (cachedData != null) return cachedData;
 
-    final response = await http.get(Uri.parse('$baseUrl/get-all-macs-active'));
+    final response = await http.get(Uri.parse('$baseUrl/get-all-macs-active'), headers: await _authHeaders());
     if (response.statusCode == 200) {
       final List<dynamic> data = json.decode(response.body);
       _cacheData(cacheKey, data);
@@ -939,7 +945,7 @@ class ApiService {
 
     final response = await http.post(
       Uri.parse('$baseUrl/update_voucher_settings'),
-      headers: {'Content-Type': 'application/json'},
+      headers: await _jsonAuthHeaders(),
       body: jsonEncode(body),
     );
 
@@ -960,7 +966,7 @@ class ApiService {
     final locationsParam = locations.map((loc) => 'locations=${Uri.encodeComponent(loc)}').join('&');
     final response = await http.get(
       Uri.parse('$baseUrl/fetch_superagent_payments?$locationsParam'),
-      headers: {'Content-Type': 'application/json'},
+      headers: await _jsonAuthHeaders(),
     );
 
     if (response.statusCode == 200) {
@@ -992,7 +998,7 @@ class ApiService {
 
     final response = await http.get(
       uri,
-      headers: {'Content-Type': 'application/json'},
+      headers: await _jsonAuthHeaders(),
     );
 
     if (response.statusCode == 200) {
@@ -1025,7 +1031,7 @@ class ApiService {
       },
     );
 
-    final response = await http.get(uri, headers: {'Content-Type': 'application/json'});
+    final response = await http.get(uri, headers: await _jsonAuthHeaders());
     if (response.statusCode != 200) {
       throw Exception('Failed to fetch payments by location: ${response.body}');
     }
@@ -1045,7 +1051,7 @@ class ApiService {
 
     final response = await http.get(
       uri,
-      headers: {'Content-Type': 'application/json'},
+      headers: await _jsonAuthHeaders(),
     );
 
     final result = jsonDecode(response.body);
@@ -1066,7 +1072,7 @@ class ApiService {
   }) async {
     final response = await http.post(
       Uri.parse('$baseUrl/register_unifi_ap'),
-      headers: {'Content-Type': 'application/json'},
+      headers: await _jsonAuthHeaders(),
       body: jsonEncode({
         'mac_address': macAddress,
         'location': location,

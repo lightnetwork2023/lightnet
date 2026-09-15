@@ -143,6 +143,62 @@ class MikroTikDeviceVisibilityTest(unittest.TestCase):
         self.assertEqual(payload['mikrotik_owner_id'], 10)
         self.assertEqual(payload['title'], 'fuel')
 
+    def test_unstamped_ops_docs_are_hidden_from_other_owners(self):
+        for collection in (
+            'internet_payments',
+            'simcards',
+            'devices',
+            'nokia_beacons',
+            'debt_payables',
+            'bundle_configurations',
+            'sold_vouchers',
+        ):
+            doc = {'id': 'x', 'collection': collection, 'data': {'name': 'LightNet'}}
+            self.assertFalse(
+                ad.tenant_docs_visible(
+                    {'role': 'boss', 'mikrotik_owner_id': 10},
+                    collection,
+                    doc,
+                    set(),
+                    13,
+                ),
+                collection,
+            )
+            self.assertTrue(
+                ad.tenant_docs_visible(
+                    {'role': 'boss', 'mikrotik_owner_id': 13},
+                    collection,
+                    doc,
+                    set(),
+                    13,
+                ),
+                collection,
+            )
+
+    def test_field_registration_home_owner_id_is_not_mikrotik_owner(self):
+        doc = {
+            'id': 'fr1',
+            'data': {'owner_id': '51215', 'location': 'chalinze', 'client_name': 'IBRA'},
+        }
+        self.assertTrue(
+            ad.tenant_docs_visible(
+                {'role': 'boss', 'mikrotik_owner_id': 13},
+                'field_registrations',
+                doc,
+                set(),
+                13,
+            )
+        )
+        self.assertFalse(
+            ad.tenant_docs_visible(
+                {'role': 'boss', 'mikrotik_owner_id': 10},
+                'field_registrations',
+                doc,
+                set(),
+                13,
+            )
+        )
+
     def test_owner_email_wins_over_backfilled_lightnet_staff_stamp(self):
         self.assertEqual(ad.pick_actor_owner_id(10, 13, 13), 10)
 
