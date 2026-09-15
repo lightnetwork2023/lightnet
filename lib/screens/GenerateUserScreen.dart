@@ -61,9 +61,7 @@ class _GenerateUserScreenState extends State<GenerateUserScreen> {
 
   Future<List<String>> _getMainLocations() async {
     try {
-      if (locationController.catalog.isEmpty) {
-        await locationController.loadLocations();
-      }
+      await locationController.loadLocations();
       return locationController.mainLocationIds;
     } catch (e) {
       print('Error fetching main locations: $e');
@@ -146,16 +144,23 @@ class _GenerateUserScreenState extends State<GenerateUserScreen> {
                 style: TextStyle(fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 8),
-              Obx(() => DropdownButtonFormField<String>(
-                value: selectedLocation,
+              Obx(() {
+                final items = locationController.locations;
+                final value = items.contains(selectedLocation) ? selectedLocation : null;
+                return DropdownButtonFormField<String>(
+                value: value,
                 hint: const Text("Select Location"),
                 icon: const Icon(Icons.location_on),
-                onChanged: (value) => setState(() => selectedLocation = value),
-                items: locationController.locations
-                    .map((loc) => DropdownMenuItem(value: loc, child: Text(loc)))
+                onChanged: (v) => setState(() => selectedLocation = v),
+                items: items
+                    .map((loc) => DropdownMenuItem(
+                          value: loc,
+                          child: Text(locationController.displayName(loc)),
+                        ))
                     .toList(),
-                validator: (value) => value == null ? "Please select a location" : null,
-              )),
+                validator: (v) => v == null ? "Please select a location" : null,
+              );
+              }),
               const SizedBox(height: 10),
               Row(
                 children: [

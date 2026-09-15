@@ -29,6 +29,7 @@ class _LocationDataScreenState extends State<LocationDataScreen> {
   @override
   void initState() {
     super.initState();
+    locationController.loadLocations();
   }
 
   Future<void> _loadLocationData(String location) async {
@@ -258,9 +259,12 @@ class _LocationDataScreenState extends State<LocationDataScreen> {
                               items: locationController.locations.map<DropdownMenuItem<String>>((location) {
                                 return DropdownMenuItem<String>(
                                   value: location,
-                                  child: Text(location),
+                                  child: Text(locationController.displayName(location)),
                                 );
                               }).toList(),
+                              value: locationController.locations.contains(_selectedLocation)
+                                  ? _selectedLocation
+                                  : null,
                               onChanged: _onLocationSelected,
                             ),
                           ),

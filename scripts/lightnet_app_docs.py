@@ -428,6 +428,192 @@ def same_owner(a, b):
     return aa is not None and aa == bb
 
 
+def pick_actor_owner_id(email_owner_id, user_owner_id, default_owner_id):
+    """Owner email wins so a registered owner is not kept on the LightNet tenant."""
+    return (
+        coerce_owner_id(email_owner_id)
+        or coerce_owner_id(user_owner_id)
+        or coerce_owner_id(default_owner_id)
+    )
+
+
+def site_location_candidates(site):
+    name = str((site or {}).get('name') or '').strip()
+    if name:
+        return [name]
+    sid = (site or {}).get('id')
+    return ['site-%s' % sid] if sid is not None else []
+
+
+def scoped_location_doc_id(owner_id, loc_id):
+    oid = coerce_owner_id(owner_id)
+    name = str(loc_id or '').strip()
+    if not oid or not name:
+        return name
+    prefix = '%s::' % oid
+    if name.startswith(prefix):
+        return name
+    return prefix + name
+
+
+def public_location_id(doc):
+    loc_id = str((doc or {}).get('id') or '')
+    data = (doc or {}).get('data') or {}
+    name = str(data.get('name') or '').strip()
+    oid = coerce_owner_id(data.get('owner_id'))
+    prefix = '%s::' % oid if oid is not None else ''
+    if prefix and loc_id.startswith(prefix):
+        return loc_id[len(prefix):]
+    if data.get('from_site') and name:
+        return name
+    return loc_id
+
+
+def location_storage_id(cur, loc_id, owner_id=None):
+    loc_id = (loc_id or '').strip()
+    oid = coerce_owner_id(owner_id)
+    if not loc_id:
+        return None
+    if oid is not None:
+        scoped = scoped_location_doc_id(oid, loc_id)
+        if get_doc(cur, 'locations', scoped):
+            return scoped
+        doc = get_doc(cur, 'locations', loc_id)
+        if doc and same_owner(oid, (doc.get('data') or {}).get('owner_id')):
+            return loc_id
+        return None
+    if get_doc(cur, 'locations', loc_id):
+        return loc_id
+    return None
+
+
+def location_storage_id_for_write(cur, loc_id, owner_id=None):
+    loc_id = (loc_id or '').strip()
+    oid = coerce_owner_id(owner_id)
+    if not loc_id:
+        return loc_id
+    existing_id = location_storage_id(cur, loc_id, oid)
+    if existing_id:
+        return existing_id
+    if oid is None:
+        return loc_id
+    taken = get_doc(cur, 'locations', loc_id)
+    if taken and not same_owner(oid, (taken.get('data') or {}).get('owner_id')):
+        return scoped_location_doc_id(oid, loc_id)
+    return loc_id
+
+
+def choose_site_location_id(cur, site):
+    oid = coerce_owner_id((site or {}).get('owner_id'))
+    for loc_id in site_location_candidates(site):
+        return location_storage_id_for_write(cur, loc_id, oid)
+    return scoped_location_doc_id(oid, 'site-%s' % (site or {}).get('id'))
+
+
+def ensure_owner_site_locations(cur, owner_id):
+    """Create a main location for each active MikroTik site this owner has."""
+    oid = coerce_owner_id(owner_id)
+    if not oid:
+        return 0
+    try:
+        cur.execute(
+            "SELECT id, name, wg_ip, owner_id FROM sites WHERE owner_id=%s AND status='active'",
+            (oid,),
+        )
+        sites = cur.fetchall() or []
+    except Exception as e:
+        log.warning('ensure_owner_site_locations: %s', e)
+        return 0
+    n = 0
+    keep = set()
+    for site in sites:
+        display = str(site.get('name') or '').strip() or ('site-%s' % site.get('id'))
+        loc_id = location_storage_id_for_write(cur, display, oid)
+        keep.add(loc_id)
+        payload = {
+            'type': 'main',
+            'parent_location': None,
+            'owner_id': oid,
+            'name': display,
+            'site_id': site.get('id'),
+            'wg_ip': site.get('wg_ip'),
+            'from_site': True,
+        }
+        set_doc(cur, 'locations', loc_id, payload, merge=True)
+        n += 1
+    for doc in list_docs(cur, 'locations'):
+        data = doc.get('data') or {}
+        if not data.get('from_site') or not same_owner(oid, data.get('owner_id')):
+            continue
+        if doc.get('id') in keep:
+            continue
+        if public_location_id(doc) in {str(s.get('name') or '').strip() for s in sites}:
+            delete_doc(cur, 'locations', doc['id'])
+    return n
+
+
+def owner_id_for_email(cur, email):
+    em = (email or '').strip().lower()
+    if not em:
+        return None
+    try:
+        cur.execute(
+            "SELECT id FROM mikrotik_owners WHERE LOWER(email)=%s AND status='active' "
+            "ORDER BY id ASC LIMIT 1",
+            (em,),
+        )
+        row = cur.fetchone()
+        if row:
+            return int(row['id'] if isinstance(row, dict) else row[0])
+    except Exception as e:
+        log.warning('owner_id_for_email: %s', e)
+    return None
+
+
+def bind_users_to_owner_emails(cur):
+    """Move app users onto the tenant that owns their email address."""
+    try:
+        cur.execute(
+            "SELECT id, email FROM mikrotik_owners "
+            "WHERE status='active' AND email IS NOT NULL AND email<>'' "
+            "ORDER BY id ASC"
+        )
+    except Exception as e:
+        log.warning('bind_users_to_owner_emails: %s', e)
+        return 0
+    by_email = {}
+    for row in cur.fetchall() or []:
+        em = str(row.get('email') or '').strip().lower()
+        if em and em not in by_email:
+            by_email[em] = int(row['id'])
+    n = 0
+    for doc in list_docs(cur, 'users'):
+        data = doc.get('data') or {}
+        em = str(data.get('email') or '').strip().lower()
+        oid = by_email.get(em)
+        if not oid:
+            continue
+        if coerce_owner_id(data.get('mikrotik_owner_id')) == oid:
+            continue
+        set_doc(cur, 'users', doc['id'], {'mikrotik_owner_id': oid}, merge=True)
+        n += 1
+    return n
+
+
+def stamp_legacy_mikrotik_devices(cur, owner_id):
+    oid = coerce_owner_id(owner_id)
+    if not oid:
+        return 0
+    n = 0
+    for doc in list_docs(cur, 'mikrotik_devices'):
+        data = doc.get('data') or {}
+        if coerce_owner_id(data.get('mikrotik_owner_id') or data.get('owner_id')):
+            continue
+        set_doc(cur, 'mikrotik_devices', doc['id'], {'mikrotik_owner_id': oid}, merge=True)
+        n += 1
+    return n
+
+
 def ensure_owner_tenancy(cur):
     """Stamp existing app users/locations onto the default LightNet owner once."""
     global _OWNER_TENANCY_READY
@@ -435,27 +621,36 @@ def ensure_owner_tenancy(cur):
         return
     try:
         marker = get_doc(cur, 'app_meta', 'owner_tenancy')
-        if marker and (marker.get('data') or {}).get('backfilled'):
-            _OWNER_TENANCY_READY = True
-            return
-        oid = default_mikrotik_owner_id(cur)
+        marker_data = (marker or {}).get('data') or {}
+        oid = coerce_owner_id(marker_data.get('owner_id')) or default_mikrotik_owner_id(cur)
         if not oid:
             return
-        for doc in list_docs(cur, 'locations'):
-            data = doc.get('data') or {}
-            if coerce_owner_id(data.get('owner_id')):
-                continue
-            set_doc(cur, 'locations', doc['id'], {'owner_id': oid}, merge=True)
-        for doc in list_docs(cur, 'users'):
-            data = doc.get('data') or {}
-            if coerce_owner_id(data.get('mikrotik_owner_id')):
-                continue
-            set_doc(cur, 'users', doc['id'], {'mikrotik_owner_id': oid}, merge=True)
+        if not marker_data.get('backfilled'):
+            for doc in list_docs(cur, 'locations'):
+                data = doc.get('data') or {}
+                if coerce_owner_id(data.get('owner_id')):
+                    continue
+                set_doc(cur, 'locations', doc['id'], {'owner_id': oid}, merge=True)
+            for doc in list_docs(cur, 'users'):
+                data = doc.get('data') or {}
+                if coerce_owner_id(data.get('mikrotik_owner_id')):
+                    continue
+                set_doc(cur, 'users', doc['id'], {'mikrotik_owner_id': oid}, merge=True)
+        if not marker_data.get('devices_backfilled'):
+            stamp_legacy_mikrotik_devices(cur, oid)
+        if not marker_data.get('email_owner_bind'):
+            bind_users_to_owner_emails(cur)
         set_doc(
             cur,
             'app_meta',
             'owner_tenancy',
-            {'backfilled': True, 'owner_id': oid, 'at': _iso(_now())},
+            {
+                'backfilled': True,
+                'devices_backfilled': True,
+                'email_owner_bind': True,
+                'owner_id': oid,
+                'at': _iso(_now()),
+            },
             merge=True,
         )
         _OWNER_TENANCY_READY = True
@@ -527,10 +722,13 @@ def resolve_actor(request, db_config, firebase_auth=None):
 
     def _load_owner(cur, actor, explicit=None):
         ensure_owner_tenancy(cur)
-        oid = coerce_owner_id(explicit)
-        if not oid:
-            oid = default_mikrotik_owner_id(cur)
+        email_oid = owner_id_for_email(cur, actor.get('email'))
+        oid = pick_actor_owner_id(email_oid, explicit, default_mikrotik_owner_id(cur))
         actor['mikrotik_owner_id'] = oid
+        uid = str(actor.get('uid') or '')
+        if uid and uid != 'local-test' and email_oid and coerce_owner_id(explicit) != email_oid:
+            set_doc(cur, 'users', uid, {'mikrotik_owner_id': email_oid}, merge=True)
+        ensure_owner_site_locations(cur, oid)
         return actor
 
     remote = (request.remote_addr or '').strip()
@@ -614,12 +812,14 @@ def resolve_actor(request, db_config, firebase_auth=None):
 def bump_location_metadata(cur, location, amount, owner_id=None):
     if not location:
         return
-    existing = get_doc(cur, 'locations', location)
+    oid = coerce_owner_id(owner_id)
+    storage_id = location_storage_id_for_write(cur, location, oid)
+    existing = get_doc(cur, 'locations', storage_id)
     data = (existing or {}).get('data') or {}
     set_doc(
         cur,
         'locations',
-        location,
+        storage_id,
         {
             'metadata': {
                 'total_revenue': {SPECIAL: 'increment', 'n': float(amount or 0)},
@@ -631,12 +831,11 @@ def bump_location_metadata(cur, location, amount, owner_id=None):
         merge=True,
     )
     if not existing:
-        extra = {'type': 'main', 'auto_created': True, 'parent_location': None}
-        oid = coerce_owner_id(owner_id) or default_mikrotik_owner_id(cur)
+        extra = {'type': 'main', 'auto_created': True, 'parent_location': None, 'name': location}
         if oid:
             extra['owner_id'] = oid
         extra.update(data)
-        set_doc(cur, 'locations', location, extra, merge=True)
+        set_doc(cur, 'locations', storage_id, extra, merge=True)
 
 
 def serialize_location(doc):
@@ -651,9 +850,10 @@ def serialize_location(doc):
     if loc_type is not None:
         loc_type = str(loc_type).strip() or None
     meta = data.get('metadata')
+    public_id = public_location_id(doc)
     return {
-        'id': loc_id,
-        'name': loc_id,
+        'id': public_id,
+        'name': str(data.get('name') or public_id).strip() or public_id,
         'type': loc_type,
         'parent_location': parent,
         'owner_id': coerce_owner_id(data.get('owner_id')),
@@ -673,47 +873,54 @@ def list_locations(cur):
     return out
 
 
-def get_location(cur, loc_id):
+def get_location(cur, loc_id, owner_id=None):
     loc_id = (loc_id or '').strip()
     if not loc_id:
         return None
-    doc = get_doc(cur, 'locations', loc_id)
+    storage_id = location_storage_id(cur, loc_id, owner_id)
+    if not storage_id:
+        return None
+    doc = get_doc(cur, 'locations', storage_id)
     if not doc:
         return None
-    return serialize_location(doc)
+    loc = serialize_location(doc)
+    oid = coerce_owner_id(owner_id)
+    if oid is not None and not same_owner(oid, loc.get('owner_id')):
+        return None
+    return loc
 
 
 def create_location(cur, loc_id, loc_type=None, parent_location=None, owner_id=None):
     loc_id = (loc_id or '').strip()
     if not loc_id:
         raise ValueError('id required')
-    if get_doc(cur, 'locations', loc_id):
+    oid = coerce_owner_id(owner_id)
+    if location_storage_id(cur, loc_id, oid):
         raise ValueError('Location already exists')
+    storage_id = location_storage_id_for_write(cur, loc_id, oid)
     loc_type = (loc_type or 'main').strip().lower()
     if loc_type not in ('main', 'sublocation'):
         raise ValueError('type must be main or sublocation')
     parent = (parent_location or '').strip() or None
-    payload = {'type': loc_type, 'auto_created': False}
-    oid = coerce_owner_id(owner_id)
+    payload = {'type': loc_type, 'auto_created': False, 'name': loc_id}
     if oid:
         payload['owner_id'] = oid
     if loc_type == 'sublocation':
         if not parent:
             raise ValueError('parent_location is required for sublocations')
-        parent_doc = get_doc(cur, 'locations', parent)
-        if not parent_doc:
+        parent_loc = get_location(cur, parent, oid)
+        if not parent_loc:
             raise ValueError("Parent location '%s' does not exist" % parent)
-        parent_oid = coerce_owner_id((parent_doc.get('data') or {}).get('owner_id'))
-        if oid and parent_oid and parent_oid != oid:
-            raise ValueError("Parent location '%s' does not exist" % parent)
-        payload['parent_location'] = parent
-    set_doc(cur, 'locations', loc_id, payload, merge=False)
-    return get_location(cur, loc_id)
+        payload['parent_location'] = parent_loc.get('id') or parent
+    set_doc(cur, 'locations', storage_id, payload, merge=False)
+    return get_location(cur, loc_id, oid)
 
 
-def update_location(cur, loc_id, loc_type=None, parent_location=None, clear_parent=False):
+def update_location(cur, loc_id, loc_type=None, parent_location=None, clear_parent=False, owner_id=None):
     loc_id = (loc_id or '').strip()
-    existing = get_doc(cur, 'locations', loc_id)
+    oid = coerce_owner_id(owner_id)
+    storage_id = location_storage_id(cur, loc_id, oid)
+    existing = get_doc(cur, 'locations', storage_id) if storage_id else None
     if not existing:
         raise KeyError('not found')
     patch = {}
@@ -737,27 +944,30 @@ def update_location(cur, loc_id, loc_type=None, parent_location=None, clear_pare
         else:
             if parent == loc_id:
                 raise ValueError('Location cannot be its own parent')
-            if not get_doc(cur, 'locations', parent):
+            parent_loc = get_location(cur, parent, oid)
+            if not parent_loc:
                 raise ValueError("Parent location '%s' does not exist" % parent)
-            patch['parent_location'] = parent
+            patch['parent_location'] = parent_loc.get('id') or parent
             if 'type' not in patch:
                 patch['type'] = 'sublocation'
     if not patch:
         return serialize_location(existing)
-    set_doc(cur, 'locations', loc_id, patch, merge=True)
-    return get_location(cur, loc_id)
+    set_doc(cur, 'locations', storage_id, patch, merge=True)
+    return get_location(cur, loc_id, oid)
 
 
-def delete_location(cur, loc_id):
+def delete_location(cur, loc_id, owner_id=None):
     loc_id = (loc_id or '').strip()
     if not loc_id:
         raise ValueError('id required')
-    if not get_doc(cur, 'locations', loc_id):
+    storage_id = location_storage_id(cur, loc_id, owner_id)
+    if not storage_id or not get_doc(cur, 'locations', storage_id):
         raise KeyError('not found')
+    public_id = public_location_id(get_doc(cur, 'locations', storage_id))
     for loc in list_locations(cur):
-        if loc.get('parent_location') == loc_id:
+        if loc.get('parent_location') == public_id and same_owner(owner_id, loc.get('owner_id')):
             raise ValueError('Cannot delete location with sublocations')
-    delete_doc(cur, 'locations', loc_id)
+    delete_doc(cur, 'locations', storage_id)
     return True
 
 
@@ -819,7 +1029,11 @@ def allowed_location_ids(actor, all_locs):
 
 def filter_locations_for_actor(actor, all_locs):
     allowed = allowed_location_ids(actor, all_locs)
-    return [loc for loc in all_locs if loc.get('id') in allowed]
+    oid = (actor or {}).get('mikrotik_owner_id')
+    return [
+        loc for loc in all_locs
+        if loc.get('id') in allowed and same_owner(oid, loc.get('owner_id'))
+    ]
 
 
 def location_access_ok(actor, loc_id, all_locs):
@@ -827,13 +1041,24 @@ def location_access_ok(actor, loc_id, all_locs):
     return str(loc_id or '').strip() in allowed
 
 
-def tenant_docs_visible(actor, collection, doc, allowed_locs):
+def tenant_docs_visible(actor, collection, doc, allowed_locs, default_owner_id=None):
     data = (doc or {}).get('data') or {}
     owner_id = (actor or {}).get('mikrotik_owner_id')
+    role = str((actor or {}).get('role') or '').strip().lower()
     if collection == 'users':
         return same_owner(owner_id, data.get('mikrotik_owner_id'))
     if collection == 'locations':
         return (doc or {}).get('id') in (allowed_locs or set())
+    if collection == 'mikrotik_devices':
+        device_oid = coerce_owner_id(data.get('mikrotik_owner_id') or data.get('owner_id'))
+        if device_oid is None:
+            device_oid = coerce_owner_id(default_owner_id)
+        if not same_owner(owner_id, device_oid):
+            return False
+        if role in FULL_LOCATION_ROLES:
+            return True
+        loc = str(data.get('location') or '').strip()
+        return bool(loc) and loc in (allowed_locs or set())
     loc = data.get('location')
     if loc:
         return str(loc).strip() in (allowed_locs or set())
@@ -841,6 +1066,17 @@ def tenant_docs_visible(actor, collection, doc, allowed_locs):
     if oid is not None and collection != 'field_registrations':
         return same_owner(owner_id, oid)
     return True
+
+
+def stamp_write_owner(actor, collection, payload):
+    if payload is None:
+        return payload
+    payload = dict(payload)
+    if collection == 'mikrotik_devices':
+        payload.pop('mikrotik_owner_id', None)
+        payload.pop('owner_id', None)
+        payload['mikrotik_owner_id'] = coerce_owner_id(actor.get('mikrotik_owner_id'))
+    return payload
 
 
 def location_id_from_collection(collection, doc_id=None):
@@ -861,6 +1097,46 @@ def is_location_scoped_collection(collection):
 
 def user_by_uid(cur, uid):
     return get_doc(cur, 'users', uid)
+
+
+def user_by_email(cur, email):
+    em = (email or '').strip().lower()
+    if not em:
+        return None
+    for doc in list_docs(cur, 'users'):
+        data = doc.get('data') or {}
+        if str(data.get('email') or '').strip().lower() == em:
+            return doc
+    return None
+
+
+def _firebase_user_missing(exc):
+    msg = str(exc or '').lower()
+    name = type(exc).__name__.lower()
+    return (
+        'user_not_found' in msg
+        or 'no user record' in msg
+        or 'usernotfound' in name
+    )
+
+
+def existing_login_account(cur, email, firebase_auth=None):
+    """True if this email is already staff, an app user, or a Firebase login."""
+    em = (email or '').strip().lower()
+    if not em:
+        return False
+    if user_by_email(cur, em):
+        return True
+    if firebase_auth is None:
+        return False
+    try:
+        firebase_auth.get_user_by_email(em)
+        return True
+    except Exception as e:
+        if _firebase_user_missing(e):
+            return False
+        log.warning('existing_login_account firebase: %s', e)
+        return False
 
 
 def register_routes(app, db_config, firebase_auth=None):
@@ -907,10 +1183,11 @@ def register_routes(app, db_config, firebase_auth=None):
         order_by = payload.get('orderBy') or payload.get('order_by')
         limit = payload.get('limit')
         allowed = allowed_location_ids(actor, list_locations(cur))
+        default_oid = default_mikrotik_owner_id(cur)
         if collection == 'payments':
             return query_mysql_payments(cur, filters, order_by, limit, location_ids=allowed)
         docs = query_docs(cur, collection, filters, order_by, limit)
-        return [d for d in docs if tenant_docs_visible(actor, collection, d, allowed)]
+        return [d for d in docs if tenant_docs_visible(actor, collection, d, allowed, default_oid)]
 
     def _user_guard(cur, actor, collection, doc_id=None, payload=None, writing=False):
         if collection != 'users':
@@ -1000,7 +1277,7 @@ def register_routes(app, db_config, firebase_auth=None):
             if not doc:
                 return jsonify({'success': True, 'exists': False, 'doc': None})
             allowed = allowed_location_ids(actor, list_locations(cur))
-            if not tenant_docs_visible(actor, collection, doc, allowed):
+            if not tenant_docs_visible(actor, collection, doc, allowed, default_mikrotik_owner_id(cur)):
                 return jsonify({'success': True, 'exists': False, 'doc': None})
             return jsonify({'success': True, 'exists': True, 'doc': doc})
         finally:
@@ -1029,12 +1306,17 @@ def register_routes(app, db_config, firebase_auth=None):
             denied, payload = _user_guard(cur, actor, collection, doc_id, payload=payload, writing=True)
             if denied:
                 return denied
+            payload = stamp_write_owner(actor, collection, payload)
             if collection == 'locations' and payload is not None:
                 payload = dict(payload)
                 payload.pop('owner_id', None)
                 payload['owner_id'] = coerce_owner_id(actor.get('mikrotik_owner_id'))
             loc_name = (payload or {}).get('location')
-            if loc_name and not location_access_ok(actor, loc_name, list_locations(cur)):
+            if (
+                loc_name
+                and collection != 'mikrotik_devices'
+                and not location_access_ok(actor, loc_name, list_locations(cur))
+            ):
                 return jsonify({'success': False, 'error': 'Not allowed'}), 403
             if collection == 'payments' and request.method == 'POST':
                 cur.execute(
@@ -1119,6 +1401,7 @@ def register_routes(app, db_config, firebase_auth=None):
                 )
                 if denied:
                     return denied
+                op_data = stamp_write_owner(actor, collection, op_data)
                 if kind == 'delete':
                     delete_doc(cur, collection, doc_id)
                 else:
@@ -1343,10 +1626,10 @@ def register_routes(app, db_config, firebase_auth=None):
             return err
         conn, cur = _conn()
         try:
-            loc = get_location(cur, loc_id)
+            loc = get_location(cur, loc_id, actor.get('mikrotik_owner_id'))
             if not loc:
                 return jsonify({'success': False, 'error': 'Location not found'}), 404
-            if not location_access_ok(actor, loc_id, list_locations(cur)):
+            if not location_access_ok(actor, loc.get('id') or loc_id, list_locations(cur)):
                 return jsonify({'success': False, 'error': 'Location not found'}), 404
             return jsonify({'success': True, 'location': loc})
         finally:
@@ -1375,6 +1658,7 @@ def register_routes(app, db_config, firebase_auth=None):
                 loc_type=data.get('type'),
                 parent_location=parent,
                 clear_parent=clear_parent,
+                owner_id=actor.get('mikrotik_owner_id'),
             )
             conn.commit()
             return jsonify({'success': True, 'location': loc})
@@ -1396,7 +1680,7 @@ def register_routes(app, db_config, firebase_auth=None):
         try:
             if not location_access_ok(actor, loc_id, list_locations(cur)):
                 return jsonify({'success': False, 'error': 'Location not found'}), 404
-            delete_location(cur, loc_id)
+            delete_location(cur, loc_id, owner_id=actor.get('mikrotik_owner_id'))
             conn.commit()
             return jsonify({'success': True})
         except KeyError:

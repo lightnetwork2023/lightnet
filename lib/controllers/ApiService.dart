@@ -50,6 +50,10 @@ class ApiService {
     _cache.remove(key);
   }
 
+  static void clearLocationCatalogCache() {
+    _cache.removeWhere((key, _) => key.startsWith('all_locations'));
+  }
+
   static Future<Map<String, String>> _authHeaders({bool json = false}) async {
     final token = await FirebaseAuth.instance.currentUser?.getIdToken();
     return {
@@ -149,7 +153,10 @@ class ApiService {
       return cachedData;
     }
 
-    final response = await http.get(Uri.parse('$baseUrl/get_user_info?username=$username'));
+    final response = await http.get(
+      Uri.parse('$baseUrl/get_user_info?username=${Uri.encodeComponent(username)}'),
+      headers: await _authHeaders(),
+    );
     final result = jsonDecode(response.body);
     _cacheData(cacheKey, result);
     return result;
@@ -204,7 +211,8 @@ class ApiService {
   }
 
   static Future<List<dynamic>> fetchVouchers({String? location, int limit = 200}) async {
-    final cacheKey = 'vouchers_${location ?? 'all'}_$limit';
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? 'anon';
+    final cacheKey = 'vouchers_${uid}_${location ?? 'all'}_$limit';
     final cachedData = _getCachedData<List<dynamic>>(cacheKey);
     if (cachedData != null) {
       return cachedData;
@@ -215,7 +223,7 @@ class ApiService {
         'limit': '$limit',
         if (location != null && location.isNotEmpty) 'location': location,
       });
-      final response = await http.get(uri);
+      final response = await http.get(uri, headers: await _authHeaders());
       if (response.statusCode == 404) {
         return [];
       }
@@ -285,12 +293,16 @@ class ApiService {
   }
 
   static Future<List<dynamic>> fetchVouchersByName() async {
-    const cacheKey = 'vouchers_by_name';
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? 'anon';
+    final cacheKey = 'vouchers_by_name_$uid';
     final cachedData = _getCachedData<List<dynamic>>(cacheKey);
     if (cachedData != null) {
       return cachedData;
     }
-    final response = await http.get(Uri.parse('$baseUrl/get_vouchers_by_name'));
+    final response = await http.get(
+      Uri.parse('$baseUrl/get_vouchers_by_name'),
+      headers: await _authHeaders(),
+    );
     if (response.statusCode == 404) {
       return [];
     }
@@ -319,14 +331,18 @@ class ApiService {
   }
 
   static Future<List<dynamic>> fetchRecentVouchers() async {
-    const cacheKey = 'recent_vouchers';
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? 'anon';
+    final cacheKey = 'recent_vouchers_$uid';
     final cachedData = _getCachedData<List<dynamic>>(cacheKey);
     if (cachedData != null) {
       return cachedData;
     }
 
     try {
-      final response = await http.get(Uri.parse('$baseUrl/fetch_recent_vouchers'));
+      final response = await http.get(
+        Uri.parse('$baseUrl/fetch_recent_vouchers'),
+        headers: await _authHeaders(),
+      );
       if (response.statusCode == 404) {
         return [];
       }
@@ -589,7 +605,8 @@ class ApiService {
 
   /// Location catalog on this Flask/MySQL server (not Firestore).
   static Future<List<Map<String, dynamic>>> fetchLocationCatalog({bool useCache = false}) async {
-    const cacheKey = 'all_locations';
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? 'anon';
+    final cacheKey = 'all_locations_$uid';
     if (useCache) {
       final cachedData = _getCachedData<List<Map<String, dynamic>>>(cacheKey);
       if (cachedData != null) {
@@ -628,7 +645,7 @@ class ApiService {
       }),
     );
     final data = await _decodeJsonMap(response);
-    clearCacheKey('all_locations');
+    clearLocationCatalogCache();
     return Map<String, dynamic>.from(data['location'] as Map? ?? {'id': id});
   }
 
@@ -648,7 +665,7 @@ class ApiService {
       }),
     );
     final data = await _decodeJsonMap(response);
-    clearCacheKey('all_locations');
+    clearLocationCatalogCache();
     return Map<String, dynamic>.from(data['location'] as Map? ?? {'id': id});
   }
 
@@ -658,7 +675,7 @@ class ApiService {
       headers: await _jsonAuthHeaders(),
     );
     await _decodeJsonMap(response);
-    clearCacheKey('all_locations');
+    clearLocationCatalogCache();
   }
 
   /// Fetches location-specific data from the location table
@@ -853,7 +870,7 @@ class ApiService {
   
     final response = await http.post(
       Uri.parse('$baseUrl/insert_voucher'),
-      headers: {'Content-Type': 'application/json'},
+      headers: await _jsonAuthHeaders(),
       body: jsonEncode(body),
     );
     return jsonDecode(response.body);
@@ -862,7 +879,7 @@ class ApiService {
   static Future<Map<String, dynamic>> deleteVoucherByMac(String macAddress) async {
     final response = await http.post(
       Uri.parse('$baseUrl/delete_voucher_by_mac'),
-      headers: {'Content-Type': 'application/json'},
+      headers: await _jsonAuthHeaders(),
       body: jsonEncode({'mac_address': macAddress}),
     );
     return jsonDecode(response.body);
@@ -871,7 +888,7 @@ class ApiService {
   static Future<Map<String, dynamic>> deleteVoucherByUsername(String username) async {
     final response = await http.post(
       Uri.parse('$baseUrl/delete_voucher_by_username'),
-      headers: {'Content-Type': 'application/json'},
+      headers: await _jsonAuthHeaders(),
       body: jsonEncode({'username': username}),
     );
     return jsonDecode(response.body);
@@ -891,7 +908,7 @@ class ApiService {
     };
     final response = await http.post(
       Uri.parse('$baseUrl/update_voucher'),
-      headers: {'Content-Type': 'application/json'},
+      headers: await _jsonAuthHeaders(),
       body: jsonEncode(body),
     );
     return jsonDecode(response.body);
@@ -904,7 +921,7 @@ class ApiService {
   }) async {
     final response = await http.post(
       Uri.parse('$baseUrl/update_voucher_by_mac'),
-      headers: {'Content-Type': 'application/json'},
+      headers: await _jsonAuthHeaders(),
       body: jsonEncode({
         'mac_address': macAddress,
         'name': name ?? 'DefaultName',

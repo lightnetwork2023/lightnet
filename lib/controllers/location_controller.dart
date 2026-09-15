@@ -15,6 +15,7 @@ class LocationController extends GetxController {
   void onInit() {
     super.onInit();
     _authSub = FirebaseAuth.instance.authStateChanges().listen((user) {
+      ApiService.clearCache();
       if (user != null) {
         loadLocations();
       } else {
@@ -43,6 +44,16 @@ class LocationController extends GetxController {
       .map((loc) => loc['id']?.toString() ?? '')
       .where((id) => id.isNotEmpty)
       .toList();
+
+  String displayName(String id) {
+    for (final row in catalog) {
+      if ('${row['id']}' == id) {
+        final name = '${row['name'] ?? ''}'.trim();
+        if (name.isNotEmpty) return name;
+      }
+    }
+    return id;
+  }
 
   Future<void> loadLocations() async {
     final user = FirebaseAuth.instance.currentUser;

@@ -4,6 +4,7 @@ import 'package:get/get.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:lightnetwork/controllers/ApiService.dart';
 
 class AuthController extends GetxController {
   final FirebaseAuth _auth = FirebaseAuth.instance;
@@ -280,6 +281,7 @@ class AuthController extends GetxController {
     await prefs.remove('user_location');
     await prefs.remove('home_customer_id');
     await prefs.remove('user_locations_json');
+    ApiService.clearCache();
   }
 
   Future<void> _loadUserRoleFromPrefs() async {
