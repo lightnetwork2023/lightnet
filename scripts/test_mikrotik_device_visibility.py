@@ -146,6 +146,15 @@ class MikroTikDeviceVisibilityTest(unittest.TestCase):
     def test_owner_email_wins_over_backfilled_lightnet_staff_stamp(self):
         self.assertEqual(ad.pick_actor_owner_id(10, 13, 13), 10)
 
+    def test_staff_created_boss_stays_on_creator_tenant(self):
+        self.assertEqual(
+            ad.pick_actor_owner_id(11, 13, 13, created_by='0pVT8bHr0jao5qGA8LADnxgbQfZ2'),
+            13,
+        )
+
+    def test_owner_register_email_still_wins(self):
+        self.assertEqual(ad.pick_actor_owner_id(11, 13, 13, created_by='owner-register'), 11)
+
     def test_lightnet_staff_without_owner_email_stays_on_default(self):
         self.assertEqual(ad.pick_actor_owner_id(None, 13, 13), 13)
 

@@ -450,8 +450,16 @@ def same_owner(a, b):
     return aa is not None and aa == bb
 
 
-def pick_actor_owner_id(email_owner_id, user_owner_id, default_owner_id):
-    """Owner email wins so a registered owner is not kept on the LightNet tenant."""
+def staff_created_keeps_profile_owner(created_by):
+    """User Management staff stay on the creator tenant, even if the email is also a portal owner."""
+    cb = str(created_by or '').strip()
+    return bool(cb) and cb != 'owner-register'
+
+
+def pick_actor_owner_id(email_owner_id, user_owner_id, default_owner_id, created_by=None):
+    """Owner email wins for portal owners; staff created in the app keep the creator tenant."""
+    if staff_created_keeps_profile_owner(created_by):
+        email_owner_id = None
     return (
         coerce_owner_id(email_owner_id)
         or coerce_owner_id(user_owner_id)
@@ -615,6 +623,8 @@ def bind_users_to_owner_emails(cur):
         oid = by_email.get(em)
         if not oid:
             continue
+        if staff_created_keeps_profile_owner(data.get('created_by')):
+            continue
         if coerce_owner_id(data.get('mikrotik_owner_id')) == oid:
             continue
         set_doc(cur, 'users', doc['id'], {'mikrotik_owner_id': oid}, merge=True)
@@ -759,11 +769,23 @@ def resolve_actor(request, db_config, firebase_auth=None):
 
     def _load_owner(cur, actor, explicit=None):
         ensure_owner_tenancy(cur)
-        email_oid = owner_id_for_email(cur, actor.get('email'))
-        oid = pick_actor_owner_id(email_oid, explicit, default_mikrotik_owner_id(cur))
-        actor['mikrotik_owner_id'] = oid
         uid = str(actor.get('uid') or '')
-        if uid and uid != 'local-test' and email_oid and coerce_owner_id(explicit) != email_oid:
+        created_by = actor.get('created_by')
+        if created_by is None and uid and uid != 'local-test':
+            user = user_by_uid(cur, uid)
+            created_by = ((user or {}).get('data') or {}).get('created_by')
+        email_oid = owner_id_for_email(cur, actor.get('email'))
+        oid = pick_actor_owner_id(
+            email_oid, explicit, default_mikrotik_owner_id(cur), created_by=created_by
+        )
+        actor['mikrotik_owner_id'] = oid
+        if (
+            uid
+            and uid != 'local-test'
+            and email_oid
+            and coerce_owner_id(explicit) != email_oid
+            and not staff_created_keeps_profile_owner(created_by)
+        ):
             set_doc(cur, 'users', uid, {'mikrotik_owner_id': email_oid}, merge=True)
         ensure_owner_site_locations(cur, oid)
         return actor
@@ -837,6 +859,7 @@ def resolve_actor(request, db_config, firebase_auth=None):
                 else:
                     actor['locations'] = []
                 actor['mikrotik_owner_id'] = coerce_owner_id(data.get('mikrotik_owner_id'))
+                actor['created_by'] = data.get('created_by')
             _load_owner(cur, actor, actor.get('mikrotik_owner_id'))
             conn.commit()
         finally:
