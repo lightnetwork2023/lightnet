@@ -181,22 +181,6 @@ class ApiService {
     return data;
   }
 
-  static Future<List<dynamic>> fetchVoucherLocationCounts() async {
-    const cacheKey = 'vouchers_by_location';
-    final cachedData = _getCachedData<List<dynamic>>(cacheKey);
-    if (cachedData != null) {
-      return cachedData;
-    }
-    final response = await http.get(Uri.parse('$baseUrl/vouchers_by_location'), headers: await _authHeaders());
-    final data = jsonDecode(response.body) as Map<String, dynamic>;
-    if (data['success'] != true) {
-      throw Exception(data['error'] ?? 'vouchers_by_location failed');
-    }
-    final rows = (data['locations'] as List?) ?? [];
-    _cacheData(cacheKey, rows);
-    return rows;
-  }
-
   static Future<List<dynamic>> fetchValidUsers(String location) async {
     final cacheKey = 'valid_users_$location';
     final cachedData = _getCachedData<List<dynamic>>(cacheKey);

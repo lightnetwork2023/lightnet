@@ -5,7 +5,6 @@ import '../controllers/auth_controller.dart';
 import '../screens/GenerateUserScreen.dart';
 import '../screens/VoucherManagementScreen.dart';
 import '../screens/VouchersScreen.dart';
-import '../screens/VouchersByLocationScreen.dart';
 import '../screens/valid_users.dart';
 import '../screens/SuperAgentPaymentsScreen.dart';
 import '../screens/SuperAgentPaymentsByLocationScreen.dart';
@@ -301,13 +300,6 @@ class ModernDrawer extends StatelessWidget {
                             )
                           : const SizedBox.shrink()),
                     ],
-                  ),
-                  _buildDrawerItem(
-                    context,
-                    icon: Icons.location_on_outlined,
-                    title: 'Vouchers by Location',
-                    subtitle: 'Location-based vouchers',
-                    onTap: () => _navigateTo(context, const VouchersByLocationScreen()),
                   ),
                   // Location Analytics - Boss and MD
                   Obx(() => authController.isAdminLevel
