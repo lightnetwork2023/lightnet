@@ -405,6 +405,9 @@ OWNER_SCOPED_COLLECTIONS = frozenset({
     'technician_one_user_logs',
     'technician_one_user_daily',
     'technician_one_user_monthly',
+    'home_customers',
+    'archived_home_customers',
+    'home_clients',
 })
 OPS_BACKFILL_COLLECTIONS = (
     'expenses',
@@ -415,6 +418,9 @@ OPS_BACKFILL_COLLECTIONS = (
     'technician_one_user_logs',
     'technician_one_user_daily',
     'technician_one_user_monthly',
+    'home_customers',
+    'archived_home_customers',
+    'home_clients',
 )
 
 
@@ -683,6 +689,9 @@ def ensure_owner_tenancy(cur):
         if not marker_data.get('ops_backfilled'):
             for collection in OPS_BACKFILL_COLLECTIONS:
                 stamp_legacy_owner_collection(cur, collection, oid)
+        if not marker_data.get('home_docs_backfilled'):
+            for collection in ('home_customers', 'archived_home_customers', 'home_clients'):
+                stamp_legacy_owner_collection(cur, collection, oid)
         if not marker_data.get('email_owner_bind'):
             bind_users_to_owner_emails(cur)
         set_doc(
@@ -694,6 +703,7 @@ def ensure_owner_tenancy(cur):
                 'devices_backfilled': True,
                 'sites_backfilled': True,
                 'ops_backfilled': True,
+                'home_docs_backfilled': True,
                 'email_owner_bind': True,
                 'owner_id': oid,
                 'at': _iso(_now()),

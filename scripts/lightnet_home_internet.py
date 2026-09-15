@@ -131,11 +131,30 @@ def ensure_tables(cur) -> None:
         _widen_columns(cur)
     except Exception as e:
         log.debug('hi widen skip: %s', e)
+    _ensure_owner_column(cur)
     try:
         import lightnet_hi_billing as hb
         hb.ensure_invoice_table(cur)
     except Exception as e:
         log.debug('hi invoices skip: %s', e)
+
+
+def _ensure_owner_column(cur):
+    try:
+        cur.execute("SHOW COLUMNS FROM hi_customers LIKE 'owner_id'")
+        if not cur.fetchone():
+            cur.execute("ALTER TABLE hi_customers ADD COLUMN owner_id INT NULL")
+            cur.execute("ALTER TABLE hi_customers ADD KEY idx_hi_cust_owner (owner_id, archived)")
+    except Exception as e:
+        log.warning('hi owner column: %s', e)
+        return
+    try:
+        import lightnet_app_docs as ad
+        oid = ad.default_mikrotik_owner_id(cur)
+        if oid:
+            cur.execute("UPDATE hi_customers SET owner_id=%s WHERE owner_id IS NULL", (oid,))
+    except Exception as e:
+        log.warning('hi owner backfill: %s', e)
 
 
 def _dt(v):
@@ -223,6 +242,8 @@ def public_customer(row: dict) -> dict:
         'archived_at': _iso(row.get('archived_at')),
         'login_email': row.get('login_email'),
         'status': status,
+        'owner_id': row.get('owner_id'),
+        'mikrotik_owner_id': row.get('owner_id'),
     }
     return out
 
@@ -261,11 +282,14 @@ def get_customer(cur, customer_id, include_archived=False):
     return cur.fetchone()
 
 
-def list_customers(cur, archived=False):
-    cur.execute(
-        "SELECT * FROM hi_customers WHERE archived=%s ORDER BY created_at DESC",
-        (1 if archived else 0,),
-    )
+def list_customers(cur, archived=False, owner_id=None):
+    sql = "SELECT * FROM hi_customers WHERE archived=%s"
+    params = [1 if archived else 0]
+    if owner_id is not None:
+        sql += " AND owner_id=%s"
+        params.append(int(owner_id))
+    sql += " ORDER BY created_at DESC"
+    cur.execute(sql, params)
     return cur.fetchall() or []
 
 
@@ -279,9 +303,9 @@ def upsert_customer(cur, data: dict, archived=0):
             address, notes, created_by_uid, created_by_name, created_at, updated_at,
             updated_by_uid, updated_by_name, active, archived, archived_at,
             archived_by_uid, archived_by_name, restored_at, restored_by_uid,
-            restored_by_name, login_email, status_json, sort_key, extra_json
+            restored_by_name, login_email, status_json, sort_key, extra_json, owner_id
         ) VALUES (
-            %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s
+            %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s
         )
         ON DUPLICATE KEY UPDATE
             name=VALUES(name), phone=VALUES(phone), location=VALUES(location),
@@ -296,7 +320,8 @@ def upsert_customer(cur, data: dict, archived=0):
             archived_at=VALUES(archived_at), archived_by_uid=VALUES(archived_by_uid),
             archived_by_name=VALUES(archived_by_name), restored_at=VALUES(restored_at),
             login_email=VALUES(login_email), status_json=VALUES(status_json),
-            extra_json=VALUES(extra_json)
+            extra_json=VALUES(extra_json),
+            owner_id=IF(hi_customers.owner_id IS NULL, VALUES(owner_id), hi_customers.owner_id)
         """,
         (
             cid,
@@ -332,6 +357,7 @@ def upsert_customer(cur, data: dict, archived=0):
             _json(data.get('status')),
             data.get('sort_key'),
             _json(data.get('extra_json') or {}),
+            data.get('owner_id') or data.get('mikrotik_owner_id'),
         ),
     )
     _sync_customer_doc(cur, cid)
@@ -476,30 +502,38 @@ def list_payments(cur, customer_id, limit=50, status=None):
     return cur.fetchall() or []
 
 
-def list_pending(cur, limit=100):
-    cur.execute(
-        """
-        SELECT * FROM hi_payments
-        WHERE status='pendingApproval'
-        ORDER BY created_at DESC LIMIT %s
-        """,
-        (int(limit),),
-    )
+def list_pending(cur, limit=100, owner_id=None):
+    sql = """
+        SELECT p.* FROM hi_payments p
+        JOIN hi_customers c ON c.id=p.customer_id
+        WHERE p.status='pendingApproval'
+    """
+    params = []
+    if owner_id is not None:
+        sql += " AND c.owner_id=%s"
+        params.append(int(owner_id))
+    sql += " ORDER BY p.created_at DESC LIMIT %s"
+    params.append(int(limit))
+    cur.execute(sql, params)
     return cur.fetchall() or []
 
 
-def payments_total(cur, start, end, zone=None, customer_type=None):
+def payments_total(cur, start, end, zone=None, customer_type=None, owner_id=None):
     sql = """
-        SELECT COALESCE(SUM(amount_paid),0) AS total_amount, COUNT(*) AS count
-        FROM hi_payments
-        WHERE status='approved' AND approved_at >= %s AND approved_at < %s
+        SELECT COALESCE(SUM(p.amount_paid),0) AS total_amount, COUNT(*) AS count
+        FROM hi_payments p
+        JOIN hi_customers c ON c.id=p.customer_id
+        WHERE p.status='approved' AND p.approved_at >= %s AND p.approved_at < %s
     """
     params = [_dt(start), _dt(end)]
+    if owner_id is not None:
+        sql += " AND c.owner_id=%s"
+        params.append(int(owner_id))
     if zone:
-        sql += " AND customer_zone=%s"
+        sql += " AND p.customer_zone=%s"
         params.append(zone)
     if customer_type:
-        sql += " AND customer_type=%s"
+        sql += " AND p.customer_type=%s"
         params.append(customer_type)
     cur.execute(sql, params)
     row = cur.fetchone() or {}
@@ -648,15 +682,34 @@ def export_doc(cur, collection_path, doc_id, data):
 
 def resolve_actor(request, firebase_auth=None, db_config=None, firestore_db=None):
     """Signed-in Firebase user. Profile comes from MySQL app_docs, not Firestore."""
+    import lightnet_app_docs as ad
+
     remote = (request.remote_addr or '').strip()
     if remote in ('127.0.0.1', '::1') and request.headers.get('X-Hi-Local') == '1':
-        return {
+        actor = {
             'uid': request.headers.get('X-Hi-Uid') or 'local-test',
             'name': request.headers.get('X-Hi-Name') or 'Local Test',
             'role': (request.headers.get('X-Hi-Role') or 'boss').strip().lower(),
             'home_customer_id': request.headers.get('X-Hi-Customer') or '',
             'email': request.headers.get('X-Hi-Email') or '',
+            'mikrotik_owner_id': ad.coerce_owner_id(request.headers.get('X-Hi-Owner-Id')),
+            'created_by': None,
         }
+        if db_config:
+            try:
+                conn, cur = ad.store_connect(db_config)
+                try:
+                    email_oid = ad.owner_id_for_email(cur, actor.get('email'))
+                    actor['mikrotik_owner_id'] = ad.pick_actor_owner_id(
+                        email_oid,
+                        actor.get('mikrotik_owner_id'),
+                        ad.default_mikrotik_owner_id(cur),
+                    )
+                finally:
+                    cur.close(); conn.close()
+            except Exception as e:
+                log.warning('hi local owner: %s', e)
+        return actor
     header = request.headers.get('Authorization') or ''
     if not header.startswith('Bearer ') or firebase_auth is None:
         return None
@@ -675,19 +728,28 @@ def resolve_actor(request, firebase_auth=None, db_config=None, firestore_db=None
         'role': 'technician',
         'home_customer_id': '',
         'email': decoded.get('email') or '',
+        'mikrotik_owner_id': None,
+        'created_by': None,
     }
     if db_config and uid:
         try:
-            import lightnet_app_docs
-            conn, cur = lightnet_app_docs.store_connect(db_config)
+            conn, cur = ad.store_connect(db_config)
             try:
-                user = lightnet_app_docs.user_by_uid(cur, uid)
+                user = ad.user_by_uid(cur, uid)
                 if user:
                     data = user.get('data') or {}
                     actor['role'] = str(data.get('role') or actor['role']).strip().lower()
                     actor['name'] = data.get('name') or actor['name']
                     actor['home_customer_id'] = str(data.get('home_customer_id') or '')
                     actor['email'] = data.get('email') or actor['email']
+                    actor['created_by'] = data.get('created_by')
+                    email_oid = ad.owner_id_for_email(cur, actor.get('email'))
+                    actor['mikrotik_owner_id'] = ad.pick_actor_owner_id(
+                        email_oid,
+                        data.get('mikrotik_owner_id'),
+                        ad.default_mikrotik_owner_id(cur),
+                        created_by=data.get('created_by'),
+                    )
             finally:
                 cur.close(); conn.close()
         except Exception as e:
@@ -695,14 +757,32 @@ def resolve_actor(request, firebase_auth=None, db_config=None, firestore_db=None
     return actor
 
 
-def can_view_customer(actor, customer_id):
+HI_STAFF_ROLES = {'boss', 'admin', 'md', 'technician', 'superagent', 'agent'}
+
+
+def can_access_customer(actor, row):
+    if not actor or not row:
+        return False
+    role = str(actor.get('role') or '').strip().lower()
+    if role == 'homeuser':
+        return str(actor.get('home_customer_id') or '') == str(row.get('id') or '')
+    if role not in HI_STAFF_ROLES:
+        return False
+    try:
+        import lightnet_app_docs as ad
+        return ad.same_owner(actor.get('mikrotik_owner_id'), row.get('owner_id'))
+    except Exception:
+        return False
+
+
+def can_view_customer(actor, customer_id, row=None):
+    if row is not None:
+        return can_access_customer(actor, row)
     if not actor:
         return False
-    if actor.get('role') in ('boss', 'admin', 'technician', 'superagent', 'agent'):
-        return True
     if actor.get('role') == 'homeuser':
         return str(actor.get('home_customer_id') or '') == str(customer_id)
-    return False
+    return actor.get('role') in HI_STAFF_ROLES
 
 
 def register_hi_routes(app, db_config, firebase_auth=None, firestore_db=None):
@@ -726,6 +806,16 @@ def register_hi_routes(app, db_config, firebase_auth=None, firestore_db=None):
 
     def _body():
         return request.get_json(silent=True) or {}
+
+    def _owner_id(actor):
+        import lightnet_app_docs as ad
+        return ad.coerce_owner_id((actor or {}).get('mikrotik_owner_id'))
+
+    def _owned(cur, actor, customer_id, include_archived=True):
+        row = get_customer(cur, customer_id, include_archived=include_archived)
+        if not can_access_customer(actor, row):
+            return None
+        return row
 
     @app.route('/api/hi/config', methods=['GET'])
     def hi_get_config():
@@ -787,7 +877,7 @@ def register_hi_routes(app, db_config, firebase_auth=None, firestore_db=None):
                 cur.close(); conn.close()
         conn, cur = _conn()
         try:
-            rows = list_customers(cur, archived=archived)
+            rows = list_customers(cur, archived=archived, owner_id=_owner_id(actor))
             return jsonify({'success': True, 'customers': [public_customer(r) for r in rows]})
         finally:
             cur.close(); conn.close()
@@ -797,11 +887,9 @@ def register_hi_routes(app, db_config, firebase_auth=None, firestore_db=None):
         actor, err = _auth()
         if err:
             return err
-        if not can_view_customer(actor, customer_id):
-            return jsonify({'success': False, 'error': 'Not allowed'}), 403
         conn, cur = _conn()
         try:
-            row = get_customer(cur, customer_id, include_archived=True)
+            row = _owned(cur, actor, customer_id, include_archived=True)
             if not row:
                 return jsonify({'success': False, 'error': 'Customer not found'}), 404
             return jsonify({'success': True, 'customer': public_customer(row)})
@@ -826,6 +914,7 @@ def register_hi_routes(app, db_config, firebase_auth=None, firestore_db=None):
             payload.setdefault('created_by_name', actor.get('name'))
             payload.setdefault('created_at', data.get('created_at') or now)
             payload.setdefault('active', True)
+            payload['owner_id'] = _owner_id(actor)
             upsert_customer(cur, payload, archived=0)
             if data.get('plan_amount') is not None:
                 upsert_plan(
@@ -853,7 +942,7 @@ def register_hi_routes(app, db_config, firebase_auth=None, firestore_db=None):
         data = _body()
         conn, cur = _conn()
         try:
-            existing = get_customer(cur, customer_id, include_archived=True)
+            existing = _owned(cur, actor, customer_id, include_archived=True)
             if not existing:
                 return jsonify({'success': False, 'error': 'Customer not found'}), 404
             merged = public_customer(existing)
@@ -868,6 +957,7 @@ def register_hi_routes(app, db_config, firebase_auth=None, firestore_db=None):
             merged['updated_at'] = datetime.utcnow()
             merged['updated_by_uid'] = actor.get('uid')
             merged['updated_by_name'] = actor.get('name')
+            merged['owner_id'] = existing.get('owner_id')
             upsert_customer(cur, merged, archived=1 if existing.get('archived') else 0)
             old_amt = float(existing.get('plan_amount') or 0)
             old_cur = existing.get('currency') or 'TZS'
@@ -898,6 +988,8 @@ def register_hi_routes(app, db_config, firebase_auth=None, firestore_db=None):
             return err
         conn, cur = _conn()
         try:
+            if not _owned(cur, actor, customer_id, include_archived=True):
+                return jsonify({'success': False, 'error': 'Customer not found'}), 404
             pending = list_payments(cur, customer_id, limit=1, status='pendingApproval')
             if pending:
                 return jsonify({'success': False, 'error': 'Cannot archive: customer has pending approval payments'}), 400
@@ -915,6 +1007,9 @@ def register_hi_routes(app, db_config, firebase_auth=None, firestore_db=None):
             return err
         conn, cur = _conn()
         try:
+            existing = _owned(cur, actor, customer_id, include_archived=True)
+            if not existing:
+                return jsonify({'success': False, 'error': 'Archived customer not found'}), 404
             active = get_customer(cur, customer_id, include_archived=False)
             if active:
                 return jsonify({'success': False, 'error': 'Customer already exists in active collection'}), 400
@@ -932,6 +1027,8 @@ def register_hi_routes(app, db_config, firebase_auth=None, firestore_db=None):
             return err
         conn, cur = _conn()
         try:
+            if not _owned(cur, actor, customer_id, include_archived=True):
+                return jsonify({'success': False, 'error': 'Customer not found'}), 404
             if not delete_customer(cur, customer_id):
                 return jsonify({'success': False, 'error': 'Customer not found'}), 404
             conn.commit()
@@ -949,7 +1046,7 @@ def register_hi_routes(app, db_config, firebase_auth=None, firestore_db=None):
             return jsonify({'success': False, 'error': 'email required'}), 400
         conn, cur = _conn()
         try:
-            if not get_customer(cur, customer_id, include_archived=True):
+            if not _owned(cur, actor, customer_id, include_archived=True):
                 return jsonify({'success': False, 'error': 'Customer not found'}), 404
             set_login_email(cur, customer_id, email)
             conn.commit()
@@ -962,12 +1059,12 @@ def register_hi_routes(app, db_config, firebase_auth=None, firestore_db=None):
         actor, err = _auth()
         if err:
             return err
-        if not can_view_customer(actor, customer_id):
-            return jsonify({'success': False, 'error': 'Not allowed'}), 403
         status = request.args.get('status')
         limit = int(request.args.get('limit') or 50)
         conn, cur = _conn()
         try:
+            if not _owned(cur, actor, customer_id, include_archived=True):
+                return jsonify({'success': False, 'error': 'Customer not found'}), 404
             rows = list_payments(cur, customer_id, limit=limit, status=status)
             return jsonify({'success': True, 'payments': [public_payment(r) for r in rows]})
         finally:
@@ -978,12 +1075,10 @@ def register_hi_routes(app, db_config, firebase_auth=None, firestore_db=None):
         actor, err = _auth()
         if err:
             return err
-        if not can_view_customer(actor, customer_id):
-            return jsonify({'success': False, 'error': 'Not allowed'}), 403
         data = _body()
         conn, cur = _conn()
         try:
-            cust = get_customer(cur, customer_id, include_archived=False)
+            cust = _owned(cur, actor, customer_id, include_archived=False)
             if not cust:
                 return jsonify({'success': False, 'error': 'Customer not found'}), 404
             pid = str(data.get('id') or new_id())
@@ -1012,6 +1107,8 @@ def register_hi_routes(app, db_config, firebase_auth=None, firestore_db=None):
             return err
         conn, cur = _conn()
         try:
+            if not _owned(cur, actor, customer_id, include_archived=True):
+                return jsonify({'success': False, 'error': 'Customer not found'}), 404
             row = get_payment(cur, payment_id, customer_id)
             if not row:
                 return jsonify({'success': False, 'error': 'Payment not found'}), 404
@@ -1037,6 +1134,8 @@ def register_hi_routes(app, db_config, firebase_auth=None, firestore_db=None):
         data = _body()
         conn, cur = _conn()
         try:
+            if not _owned(cur, actor, customer_id, include_archived=True):
+                return jsonify({'success': False, 'error': 'Customer not found'}), 404
             row = get_payment(cur, payment_id, customer_id)
             if not row:
                 return jsonify({'success': False, 'error': 'Payment not found'}), 404
@@ -1064,7 +1163,7 @@ def register_hi_routes(app, db_config, firebase_auth=None, firestore_db=None):
         limit = int(request.args.get('limit') or 100)
         conn, cur = _conn()
         try:
-            rows = list_pending(cur, limit=limit)
+            rows = list_pending(cur, limit=limit, owner_id=_owner_id(actor))
             return jsonify({'success': True, 'payments': [public_payment(r) for r in rows]})
         finally:
             cur.close(); conn.close()
@@ -1074,10 +1173,10 @@ def register_hi_routes(app, db_config, firebase_auth=None, firestore_db=None):
         actor, err = _auth()
         if err:
             return err
-        if not can_view_customer(actor, customer_id):
-            return jsonify({'success': False, 'error': 'Not allowed'}), 403
         conn, cur = _conn()
         try:
+            if not _owned(cur, actor, customer_id, include_archived=True):
+                return jsonify({'success': False, 'error': 'Customer not found'}), 404
             rows = list_plans(cur, customer_id)
             return jsonify({'success': True, 'plans': [public_plan(r) for r in rows]})
         finally:
@@ -1091,7 +1190,7 @@ def register_hi_routes(app, db_config, firebase_auth=None, firestore_db=None):
         data = _body()
         conn, cur = _conn()
         try:
-            if not get_customer(cur, customer_id, include_archived=True):
+            if not _owned(cur, actor, customer_id, include_archived=True):
                 return jsonify({'success': False, 'error': 'Customer not found'}), 404
             pid = upsert_plan(
                 cur,
@@ -1115,10 +1214,10 @@ def register_hi_routes(app, db_config, firebase_auth=None, firestore_db=None):
         actor, err = _auth()
         if err:
             return err
-        if not can_view_customer(actor, customer_id):
-            return jsonify({'success': False, 'error': 'Not allowed'}), 403
         conn, cur = _conn()
         try:
+            if not _owned(cur, actor, customer_id, include_archived=True):
+                return jsonify({'success': False, 'error': 'Customer not found'}), 404
             import lightnet_hi_billing as hb
             statement = hb.materialize_customer(cur, customer_id, source='live')
             if not statement:
@@ -1133,10 +1232,10 @@ def register_hi_routes(app, db_config, firebase_auth=None, firestore_db=None):
         actor, err = _auth()
         if err:
             return err
-        if not can_view_customer(actor, customer_id):
-            return jsonify({'success': False, 'error': 'Not allowed'}), 403
         conn, cur = _conn()
         try:
+            if not _owned(cur, actor, customer_id, include_archived=True):
+                return jsonify({'success': False, 'error': 'Customer not found'}), 404
             import lightnet_hi_billing as hb
             statement = hb.materialize_customer(cur, customer_id, source='live')
             if not statement:
@@ -1186,6 +1285,7 @@ def register_hi_routes(app, db_config, firebase_auth=None, firestore_db=None):
                 end,
                 zone=request.args.get('zone'),
                 customer_type=request.args.get('customer_type'),
+                owner_id=_owner_id(actor),
             )
             return jsonify({'success': True, **result})
         finally:
