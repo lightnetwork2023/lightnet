@@ -248,7 +248,6 @@ class _LocationDataScreenState extends State<LocationDataScreen> {
                           ),
                           child: DropdownButtonHideUnderline(
                             child: DropdownButton<String>(
-                              value: _selectedLocation,
                               hint: const Text(
                                 'Choose a location',
                                 style: TextStyle(color: Colors.grey),
