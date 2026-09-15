@@ -14,7 +14,7 @@ class MikroTikMonitorScreen extends StatefulWidget {
 
 class _MikroTikMonitorScreenState extends State<MikroTikMonitorScreen> {
   String _filterStatus = 'all';
-  late Stream<QuerySnapshot> _devicesStream;
+  late Stream<QuerySnapshot<Map<String, dynamic>>> _devicesStream;
 
   @override
   void initState() {
@@ -94,7 +94,7 @@ class _MikroTikMonitorScreenState extends State<MikroTikMonitorScreen> {
   }
 
   Widget _buildDevicesBody() {
-    return StreamBuilder<QuerySnapshot>(
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: _devicesStream,
       builder: (context, snapshot) {
         if (snapshot.hasError) {
@@ -185,7 +185,7 @@ class _MikroTikMonitorScreenState extends State<MikroTikMonitorScreen> {
     );
   }
 
-  Widget _buildDevicesList(List<QueryDocumentSnapshot> devices) {
+  Widget _buildDevicesList(List<QueryDocumentSnapshot<Map<String, dynamic>>> devices) {
     var filtered = devices;
     if (_filterStatus != 'all') {
       filtered = devices.where((d) => d['status'] == _filterStatus).toList();
@@ -219,7 +219,7 @@ class _MikroTikMonitorScreenState extends State<MikroTikMonitorScreen> {
     );
   }
 
-  Widget _buildDeviceCard(QueryDocumentSnapshot doc) {
+  Widget _buildDeviceCard(QueryDocumentSnapshot<Map<String, dynamic>> doc) {
     final data = doc.data() as Map<String, dynamic>;
     final status = data['status'] ?? 'unknown';
     final name = data['name'] ?? 'Unknown';
@@ -389,8 +389,16 @@ class _MikroTikMonitorScreenState extends State<MikroTikMonitorScreen> {
     );
   }
 
-  String _formatTimestamp(Timestamp timestamp) {
-    final date = timestamp.toDate();
+  String _formatTimestamp(dynamic value) {
+    DateTime? date;
+    if (value is Timestamp) {
+      date = value.toDate();
+    } else if (value is DateTime) {
+      date = value;
+    } else if (value is String) {
+      date = DateTime.tryParse(value);
+    }
+    if (date == null) return 'N/A';
     final now = DateTime.now();
     final diff = now.difference(date);
 
@@ -512,7 +520,7 @@ class _MikroTikMonitorScreenState extends State<MikroTikMonitorScreen> {
     );
   }
 
-  void _showEditDeviceDialog(QueryDocumentSnapshot doc) {
+  void _showEditDeviceDialog(QueryDocumentSnapshot<Map<String, dynamic>> doc) {
     final data = doc.data() as Map<String, dynamic>;
     final nameCtrl = TextEditingController(text: data['name']);
     final ipCtrl = TextEditingController(text: data['ipAddress']);
@@ -654,7 +662,7 @@ class _MikroTikMonitorScreenState extends State<MikroTikMonitorScreen> {
     );
   }
 
-  void _showDeviceDetails(QueryDocumentSnapshot doc) {
+  void _showDeviceDetails(QueryDocumentSnapshot<Map<String, dynamic>> doc) {
     final data = doc.data() as Map<String, dynamic>;
     showDialog(
       context: context,

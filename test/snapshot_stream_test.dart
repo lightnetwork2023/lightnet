@@ -3,17 +3,36 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 
 Stream<T> pollStream<T>(Future<T> Function() load) {
-  return Stream<T>.multi((listener) async {
+  late StreamController<T> controller;
+  Timer? timer;
+  var inFlight = false;
+
+  Future<void> emit() async {
+    if (inFlight || controller.isClosed) return;
+    inFlight = true;
     try {
-      listener.add(await load());
-      await for (final _ in Stream<void>.periodic(const Duration(seconds: 10))) {
-        if (listener.isCanceled) return;
-        listener.add(await load());
-      }
+      final value = await load();
+      if (!controller.isClosed) controller.add(value);
     } catch (e, st) {
-      if (!listener.isCanceled) listener.addError(e, st);
+      if (!controller.isClosed) controller.addError(e, st);
+    } finally {
+      inFlight = false;
     }
-  });
+  }
+
+  controller = StreamController<T>.broadcast(
+    onListen: () {
+      emit();
+      timer ??= Timer.periodic(const Duration(seconds: 10), (_) => emit());
+    },
+    onCancel: () {
+      if (!controller.hasListener) {
+        timer?.cancel();
+        timer = null;
+      }
+    },
+  );
+  return controller.stream;
 }
 
 void main() {
@@ -27,7 +46,7 @@ void main() {
     final first = stream.first;
     final second = stream.first;
     expect(await first, 1);
-    expect(await second, 2);
+    expect(await second, 1);
   });
 
   test('a single-subscription async* stream fails the second listener', () async {

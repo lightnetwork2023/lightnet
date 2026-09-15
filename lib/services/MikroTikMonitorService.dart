@@ -74,7 +74,7 @@ class MikroTikMonitorService {
     await _firestore.collection(_collection).doc(deviceId).delete();
   }
 
-  static Stream<QuerySnapshot> getMikroTikDevices() {
+  static Stream<QuerySnapshot<Map<String, dynamic>>> getMikroTikDevices() {
     return _firestore
         .collection(_collection)
         .orderBy('location')
@@ -82,7 +82,7 @@ class MikroTikMonitorService {
         .snapshots();
   }
 
-  static Stream<QuerySnapshot> getMikroTikDevicesByStatus(String status) {
+  static Stream<QuerySnapshot<Map<String, dynamic>>> getMikroTikDevicesByStatus(String status) {
     return _firestore
         .collection(_collection)
         .where('status', isEqualTo: status)
@@ -90,12 +90,12 @@ class MikroTikMonitorService {
         .snapshots();
   }
 
-  static Stream<DocumentSnapshot> getMikroTikDevice(String deviceId) {
+  static Stream<DocumentSnapshot<Map<String, dynamic>>> getMikroTikDevice(String deviceId) {
     return _firestore.collection(_collection).doc(deviceId).snapshots();
   }
 
   // Stream a specific set of devices by their Firestore document IDs
-  static Stream<QuerySnapshot> getMikroTikDevicesByIds(List<String> ids) {
+  static Stream<QuerySnapshot<Map<String, dynamic>>> getMikroTikDevicesByIds(List<String> ids) {
     if (ids.isEmpty) {
       return const Stream.empty();
     }

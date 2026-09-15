@@ -3,7 +3,42 @@ import 'dart:convert';
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:http/http.dart' as http;
-import 'package:lightnetwork/controllers/ApiService.dart';
+
+const String _appApiBase = 'https://lightnet.lightnetwork.pro/api/app';
+const String _authApiBase = 'https://lightnet.lightnetwork.pro/api/auth';
+
+Stream<T> _pollingStream<T>(Future<T> Function() load) {
+  late StreamController<T> controller;
+  Timer? timer;
+  var inFlight = false;
+
+  Future<void> emit() async {
+    if (inFlight || controller.isClosed) return;
+    inFlight = true;
+    try {
+      final value = await load();
+      if (!controller.isClosed) controller.add(value);
+    } catch (e, st) {
+      if (!controller.isClosed) controller.addError(e, st);
+    } finally {
+      inFlight = false;
+    }
+  }
+
+  controller = StreamController<T>.broadcast(
+    onListen: () {
+      emit();
+      timer ??= Timer.periodic(const Duration(seconds: 10), (_) => emit());
+    },
+    onCancel: () {
+      if (!controller.hasListener) {
+        timer?.cancel();
+        timer = null;
+      }
+    },
+  );
+  return controller.stream;
+}
 
 class Timestamp implements Comparable<Timestamp> {
   final DateTime _date;
@@ -134,17 +169,7 @@ class DocumentReference<T extends Object?> {
   }
 
   Stream<DocumentSnapshot<T>> snapshots({bool includeMetadataChanges = false}) {
-    return Stream<DocumentSnapshot<T>>.multi((listener) async {
-      try {
-        listener.add(await get());
-        await for (final _ in Stream<void>.periodic(const Duration(seconds: 10))) {
-          if (listener.isCanceled) return;
-          listener.add(await get());
-        }
-      } catch (e, st) {
-        if (!listener.isCanceled) listener.addError(e, st);
-      }
-    });
+    return _pollingStream(() => get());
   }
 
   Future<void> set(Map<String, dynamic> data, [SetOptions? options]) async {
@@ -218,17 +243,7 @@ class Query<T extends Object?> {
   }
 
   Stream<QuerySnapshot<T>> snapshots({bool includeMetadataChanges = false}) {
-    return Stream<QuerySnapshot<T>>.multi((listener) async {
-      try {
-        listener.add(await get());
-        await for (final _ in Stream<void>.periodic(const Duration(seconds: 10))) {
-          if (listener.isCanceled) return;
-          listener.add(await get());
-        }
-      } catch (e, st) {
-        if (!listener.isCanceled) listener.addError(e, st);
-      }
-    });
+    return _pollingStream(() => get());
   }
 }
 
@@ -332,7 +347,7 @@ dynamic _hydrate(dynamic v) {
 }
 
 class _AppHttp {
-  static const _base = '${ApiService.baseUrl}/api/app';
+  static const _base = _appApiBase;
 
   static String newId() => DateTime.now().microsecondsSinceEpoch.toRadixString(16);
 
@@ -426,7 +441,7 @@ class _AppHttp {
 }
 
 class AppAuthApi {
-  static const _base = '${ApiService.baseUrl}/api/auth';
+  static const _base = _authApiBase;
 
   static Future<Map<String, String>> _headers() async {
     final token = await FirebaseAuth.instance.currentUser?.getIdToken();

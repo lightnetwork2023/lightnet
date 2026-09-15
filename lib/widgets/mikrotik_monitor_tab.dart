@@ -18,7 +18,7 @@ class MikroTikMonitorContent extends StatefulWidget {
 
 class _MikroTikMonitorContentState extends State<MikroTikMonitorContent> {
   late String _filterStatus;
-  late Stream<QuerySnapshot> _devicesStream;
+  late Stream<QuerySnapshot<Map<String, dynamic>>> _devicesStream;
 
   @override
   void initState() {
@@ -74,7 +74,7 @@ class _MikroTikMonitorContentState extends State<MikroTikMonitorContent> {
   }
 
   Widget _buildDevicesBody() {
-    return StreamBuilder<QuerySnapshot>(
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: _devicesStream,
       builder: (context, snapshot) {
         if (snapshot.hasError) {
@@ -165,7 +165,7 @@ class _MikroTikMonitorContentState extends State<MikroTikMonitorContent> {
     );
   }
 
-  Widget _buildDevicesList(List<QueryDocumentSnapshot> devices) {
+  Widget _buildDevicesList(List<QueryDocumentSnapshot<Map<String, dynamic>>> devices) {
     var filtered = devices;
     if (_filterStatus != 'all') {
       filtered = devices.where((d) => d['status'] == _filterStatus).toList();
@@ -203,7 +203,7 @@ class _MikroTikMonitorContentState extends State<MikroTikMonitorContent> {
     );
   }
 
-  Widget _buildDeviceCard(QueryDocumentSnapshot doc) {
+  Widget _buildDeviceCard(QueryDocumentSnapshot<Map<String, dynamic>> doc) {
     final data = doc.data() as Map<String, dynamic>;
     final status = data['status'] ?? 'unknown';
     final name = data['name'] ?? 'Unknown';
