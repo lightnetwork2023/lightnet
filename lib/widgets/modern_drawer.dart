@@ -138,41 +138,6 @@ class ModernDrawer extends StatelessWidget {
                           _buildSectionHeader('Management'),
                           _buildDrawerItem(
                             context,
-                            icon: Icons.person_add_outlined,
-                            title: 'Generate Users',
-                            subtitle: 'Create new user accounts',
-                            onTap: () => _navigateTo(context, GenerateUserScreen()),
-                          ),
-                          _buildDrawerItem(
-                            context,
-                            icon: Icons.vpn_key_outlined,
-                            title: 'Voucher by Mac',
-                            subtitle: 'Manage device vouchers',
-                            onTap: () => _navigateTo(context, const VoucherManagementScreen()),
-                          ),
-                          _buildDrawerItem(
-                            context,
-                            icon: Icons.admin_panel_settings_outlined,
-                            title: 'User Management',
-                            subtitle: 'Manage user accounts',
-                            onTap: () => _navigateTo(context, UserManagementScreen()),
-                          ),
-                          _buildDrawerItem(
-                            context,
-                            icon: Icons.inventory_2_outlined,
-                            title: 'Manage Bundles',
-                            subtitle: 'Configure data bundles',
-                            onTap: () => _navigateTo(context, const BundleManagementScreen()),
-                          ),
-                          _buildDrawerItem(
-                            context,
-                            icon: Icons.sim_card_outlined,
-                            title: 'Simcards',
-                            subtitle: 'Manage SIM cards',
-                            onTap: () => _navigateTo(context, const SimCardManagementScreen()),
-                          ),
-                          _buildDrawerItem(
-                            context,
                             icon: Icons.card_membership_outlined,
                             title: 'Vouchers',
                             subtitle: 'View all vouchers',
@@ -527,6 +492,55 @@ class ModernDrawer extends StatelessWidget {
                   const SizedBox(height: 16),
                   _buildSectionHeader('App Settings'),
                   const _ScanToggleTile(),
+                  Obx(() => authController.isAdminLevel
+                      ? Column(
+                          children: [
+                            const SizedBox(height: 16),
+                            _buildExpandableSection(
+                              context,
+                              title: 'Users & Bundles',
+                              icon: Icons.manage_accounts_outlined,
+                              children: [
+                                _buildDrawerItem(
+                                  context,
+                                  icon: Icons.person_add_outlined,
+                                  title: 'Generate Users',
+                                  subtitle: 'Create new user accounts',
+                                  onTap: () => _navigateTo(context, GenerateUserScreen()),
+                                ),
+                                _buildDrawerItem(
+                                  context,
+                                  icon: Icons.vpn_key_outlined,
+                                  title: 'Voucher by Mac',
+                                  subtitle: 'Manage device vouchers',
+                                  onTap: () => _navigateTo(context, const VoucherManagementScreen()),
+                                ),
+                                _buildDrawerItem(
+                                  context,
+                                  icon: Icons.admin_panel_settings_outlined,
+                                  title: 'User Management',
+                                  subtitle: 'Manage user accounts',
+                                  onTap: () => _navigateTo(context, UserManagementScreen()),
+                                ),
+                                _buildDrawerItem(
+                                  context,
+                                  icon: Icons.inventory_2_outlined,
+                                  title: 'Manage Bundles',
+                                  subtitle: 'Configure data bundles',
+                                  onTap: () => _navigateTo(context, const BundleManagementScreen()),
+                                ),
+                                _buildDrawerItem(
+                                  context,
+                                  icon: Icons.sim_card_outlined,
+                                  title: 'Simcards',
+                                  subtitle: 'Manage SIM cards',
+                                  onTap: () => _navigateTo(context, const SimCardManagementScreen()),
+                                ),
+                              ],
+                            ),
+                          ],
+                        )
+                      : const SizedBox.shrink()),
                   const SizedBox(height: 8),
                 ],
               ),
