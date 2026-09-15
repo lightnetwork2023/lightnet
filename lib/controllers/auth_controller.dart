@@ -364,9 +364,9 @@ class AuthController extends GetxController {
   Future<UserCredential?> createNewAccount(String email, String password, String role, {String? name, String? location, List<String>? locations, String? homeCustomerId, double? commissionDivisor}) async {
     print('AuthController: Starting user creation for email: $email, role: $role');
     
-    if (!isBoss) {
-      print('AuthController: Error - Only boss can create new accounts');
-      throw 'Only boss can create new accounts.';
+    if (!isAdminLevel) {
+      print('AuthController: Error - Only boss or MD can create new accounts');
+      throw 'Only boss or MD can create new accounts.';
     }
 
     try {

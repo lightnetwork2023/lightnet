@@ -14,12 +14,18 @@ class MikroTikMonitorScreen extends StatefulWidget {
 
 class _MikroTikMonitorScreenState extends State<MikroTikMonitorScreen> {
   String _filterStatus = 'all';
-  late final Stream<QuerySnapshot> _devicesStream;
+  late Stream<QuerySnapshot> _devicesStream;
 
   @override
   void initState() {
     super.initState();
     _devicesStream = MikroTikMonitorService.getMikroTikDevices();
+  }
+
+  void _reloadDevices() {
+    setState(() {
+      _devicesStream = MikroTikMonitorService.getMikroTikDevices();
+    });
   }
 
   @override
@@ -32,7 +38,7 @@ class _MikroTikMonitorScreenState extends State<MikroTikMonitorScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
-            onPressed: () => setState(() {}),
+            onPressed: _reloadDevices,
             tooltip: 'Refresh',
           ),
         ],
@@ -40,8 +46,7 @@ class _MikroTikMonitorScreenState extends State<MikroTikMonitorScreen> {
       body: Column(
         children: [
           _buildFilterChips(),
-          _buildSummaryCards(),
-          Expanded(child: _buildDevicesList()),
+          Expanded(child: _buildDevicesBody()),
         ],
       ),
       floatingActionButton: FloatingActionButton(
@@ -88,12 +93,16 @@ class _MikroTikMonitorScreenState extends State<MikroTikMonitorScreen> {
     );
   }
 
-  Widget _buildSummaryCards() {
+  Widget _buildDevicesBody() {
     return StreamBuilder<QuerySnapshot>(
       stream: _devicesStream,
       builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Center(child: Text('Error: ${snapshot.error}'));
+        }
+
         if (!snapshot.hasData) {
-          return const SizedBox(height: 80);
+          return const Center(child: CircularProgressIndicator());
         }
 
         final devices = snapshot.data!.docs;
@@ -101,40 +110,49 @@ class _MikroTikMonitorScreenState extends State<MikroTikMonitorScreen> {
         final offlineCount = devices.where((d) => d['status'] == 'offline').length;
         final unknownCount = devices.where((d) => d['status'] == 'unknown').length;
 
-        return Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          child: Row(
-            children: [
-              Expanded(
-                child: _buildSummaryCard(
-                  'Online',
-                  onlineCount.toString(),
-                  Colors.green,
-                  Icons.check_circle_outline,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _buildSummaryCard(
-                  'Offline',
-                  offlineCount.toString(),
-                  Colors.red,
-                  Icons.cancel_outlined,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _buildSummaryCard(
-                  'Unknown',
-                  unknownCount.toString(),
-                  Colors.orange,
-                  Icons.help_outline,
-                ),
-              ),
-            ],
-          ),
+        return Column(
+          children: [
+            _buildSummaryCards(onlineCount, offlineCount, unknownCount),
+            Expanded(child: _buildDevicesList(devices)),
+          ],
         );
       },
+    );
+  }
+
+  Widget _buildSummaryCards(int onlineCount, int offlineCount, int unknownCount) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: _buildSummaryCard(
+              'Online',
+              onlineCount.toString(),
+              Colors.green,
+              Icons.check_circle_outline,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: _buildSummaryCard(
+              'Offline',
+              offlineCount.toString(),
+              Colors.red,
+              Icons.cancel_outlined,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: _buildSummaryCard(
+              'Unknown',
+              unknownCount.toString(),
+              Colors.orange,
+              Icons.help_outline,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -167,50 +185,37 @@ class _MikroTikMonitorScreenState extends State<MikroTikMonitorScreen> {
     );
   }
 
-  Widget _buildDevicesList() {
-    return StreamBuilder<QuerySnapshot>(
-      stream: _devicesStream,
-      builder: (context, snapshot) {
-        if (snapshot.hasError) {
-          return Center(child: Text('Error: ${snapshot.error}'));
-        }
+  Widget _buildDevicesList(List<QueryDocumentSnapshot> devices) {
+    var filtered = devices;
+    if (_filterStatus != 'all') {
+      filtered = devices.where((d) => d['status'] == _filterStatus).toList();
+    }
 
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
-
-        var devices = snapshot.data!.docs;
-        if (_filterStatus != 'all') {
-          devices = devices.where((d) => d['status'] == _filterStatus).toList();
-        }
-
-        if (devices.isEmpty) {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.router_outlined, size: 64, color: Colors.grey[400]),
-                const SizedBox(height: 16),
-                Text(
-                  'No MikroTik devices found',
-                  style: TextStyle(fontSize: 16, color: Colors.grey[600]),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Add your first device to start monitoring',
-                  style: TextStyle(fontSize: 14, color: Colors.grey[500]),
-                ),
-              ],
+    if (filtered.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.router_outlined, size: 64, color: Colors.grey[400]),
+            const SizedBox(height: 16),
+            Text(
+              'No MikroTik devices found',
+              style: TextStyle(fontSize: 16, color: Colors.grey[600]),
             ),
-          );
-        }
+            const SizedBox(height: 8),
+            Text(
+              'Add your first device to start monitoring',
+              style: TextStyle(fontSize: 14, color: Colors.grey[500]),
+            ),
+          ],
+        ),
+      );
+    }
 
-        return ListView.builder(
-          padding: const EdgeInsets.all(16),
-          itemCount: devices.length,
-          itemBuilder: (context, index) => _buildDeviceCard(devices[index]),
-        );
-      },
+    return ListView.builder(
+      padding: const EdgeInsets.all(16),
+      itemCount: filtered.length,
+      itemBuilder: (context, index) => _buildDeviceCard(filtered[index]),
     );
   }
 

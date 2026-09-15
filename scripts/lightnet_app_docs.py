@@ -306,7 +306,7 @@ def query_docs(cur, collection, filters=None, order_by=None, limit=None):
     return rows
 
 
-def query_mysql_payments(cur, filters=None, order_by=None, limit=None):
+def query_mysql_payments(cur, filters=None, order_by=None, limit=None, location_ids=None):
     filters = filters or []
     sql = """
         SELECT id, location, amount, duration, username, timestamp, phone, payment_method
@@ -314,6 +314,12 @@ def query_mysql_payments(cur, filters=None, order_by=None, limit=None):
     """
     params = []
     leftover = []
+    if location_ids is not None:
+        ids = [str(x).strip() for x in location_ids if str(x).strip()]
+        if not ids:
+            return []
+        sql += " AND location IN (" + ",".join(["%s"] * len(ids)) + ")"
+        params.extend(ids)
     for f in filters:
         field = f.get('field')
         op = {'==': '=', '!=': '<>', '>': '>', '>=': '>=', '<': '<', '<=': '<='}.get(f.get('op'))
@@ -364,6 +370,8 @@ def store_connect(db_config):
     conn = mysql.connector.connect(**db_config)
     cur = conn.cursor(dictionary=True)
     ensure_tables(cur)
+    ensure_owner_tenancy(cur)
+    conn.commit()
     return conn, cur
 
 
@@ -384,7 +392,226 @@ def docs_list(db_config, collection):
         cur.close(); conn.close()
 
 
-def bump_location_metadata(cur, location, amount):
+DEFAULT_MIKROTIK_OWNER_EMAIL = 'lightnetwork2023@gmail.com'
+_OWNER_TENANCY_READY = False
+
+
+def coerce_owner_id(val):
+    if val is None or val == '':
+        return None
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        return None
+
+
+def default_mikrotik_owner_id(cur):
+    try:
+        cur.execute(
+            "SELECT id FROM mikrotik_owners WHERE email=%s AND status='active' LIMIT 1",
+            (DEFAULT_MIKROTIK_OWNER_EMAIL,),
+        )
+        row = cur.fetchone()
+        if row:
+            return int(row['id'] if isinstance(row, dict) else row[0])
+        cur.execute("SELECT id FROM mikrotik_owners ORDER BY id ASC LIMIT 1")
+        row = cur.fetchone()
+        if row:
+            return int(row['id'] if isinstance(row, dict) else row[0])
+    except Exception as e:
+        log.warning('default_mikrotik_owner_id: %s', e)
+    return None
+
+
+def same_owner(a, b):
+    aa, bb = coerce_owner_id(a), coerce_owner_id(b)
+    return aa is not None and aa == bb
+
+
+def ensure_owner_tenancy(cur):
+    """Stamp existing app users/locations onto the default LightNet owner once."""
+    global _OWNER_TENANCY_READY
+    if _OWNER_TENANCY_READY:
+        return
+    try:
+        marker = get_doc(cur, 'app_meta', 'owner_tenancy')
+        if marker and (marker.get('data') or {}).get('backfilled'):
+            _OWNER_TENANCY_READY = True
+            return
+        oid = default_mikrotik_owner_id(cur)
+        if not oid:
+            return
+        for doc in list_docs(cur, 'locations'):
+            data = doc.get('data') or {}
+            if coerce_owner_id(data.get('owner_id')):
+                continue
+            set_doc(cur, 'locations', doc['id'], {'owner_id': oid}, merge=True)
+        for doc in list_docs(cur, 'users'):
+            data = doc.get('data') or {}
+            if coerce_owner_id(data.get('mikrotik_owner_id')):
+                continue
+            set_doc(cur, 'users', doc['id'], {'mikrotik_owner_id': oid}, merge=True)
+        set_doc(
+            cur,
+            'app_meta',
+            'owner_tenancy',
+            {'backfilled': True, 'owner_id': oid, 'at': _iso(_now())},
+            merge=True,
+        )
+        _OWNER_TENANCY_READY = True
+    except Exception as e:
+        log.warning('ensure_owner_tenancy: %s', e)
+
+
+def provision_owner_app_boss(cur, firebase_auth, owner_id, name, email, password, phone=None):
+    """Create (or attach) a Firebase app user with role=boss for this MikroTik owner."""
+    owner_id = coerce_owner_id(owner_id)
+    app_email = (email or '').strip().lower()
+    if not app_email:
+        app_email = 'owner%s@owners.lightnetwork.pro' % owner_id
+    if firebase_auth is None or not owner_id:
+        return {'uid': None, 'email': app_email, 'created': False, 'skipped': True, 'reason': 'unavailable'}
+    uid = None
+    created = False
+    try:
+        user_record = firebase_auth.create_user(
+            email=app_email,
+            password=password,
+            display_name=name or '',
+        )
+        uid = user_record.uid
+        created = True
+    except Exception as e:
+        msg = str(e)
+        if 'EMAIL_EXISTS' in msg or 'already exists' in msg.lower():
+            try:
+                existing = firebase_auth.get_user_by_email(app_email)
+                uid = existing.uid
+            except Exception as e2:
+                log.warning('provision_owner_app_boss get existing: %s', e2)
+                return {'uid': None, 'email': app_email, 'created': False, 'error': str(e2)}
+            doc = user_by_uid(cur, uid)
+            data = (doc or {}).get('data') or {}
+            existing_owner = coerce_owner_id(data.get('mikrotik_owner_id'))
+            if existing_owner and existing_owner != owner_id:
+                return {
+                    'uid': None,
+                    'email': app_email,
+                    'created': False,
+                    'skipped': True,
+                    'reason': 'email already used',
+                }
+        else:
+            log.exception('provision_owner_app_boss firebase')
+            return {'uid': None, 'email': app_email, 'created': False, 'error': msg}
+    if not uid:
+        return {'uid': None, 'email': app_email, 'created': False, 'skipped': True}
+    profile = {
+        'email': app_email,
+        'role': 'boss',
+        'name': name or '',
+        'phone': phone or '',
+        'mikrotik_owner_id': owner_id,
+        'created_at': _iso(_now()),
+        'created_by': 'owner-register',
+    }
+    if created:
+        profile['password'] = password
+    set_doc(cur, 'users', uid, profile, merge=True)
+    return {'uid': uid, 'email': app_email, 'created': created}
+
+
+def resolve_actor(request, db_config, firebase_auth=None):
+    """Firebase (or local-test) actor, including mikrotik_owner_id."""
+    import mysql.connector
+
+    def _load_owner(cur, actor, explicit=None):
+        ensure_owner_tenancy(cur)
+        oid = coerce_owner_id(explicit)
+        if not oid:
+            oid = default_mikrotik_owner_id(cur)
+        actor['mikrotik_owner_id'] = oid
+        return actor
+
+    remote = (request.remote_addr or '').strip()
+    if remote in ('127.0.0.1', '::1') and request.headers.get('X-Hi-Local') == '1':
+        loc = (request.headers.get('X-Hi-Location') or '').strip()
+        locs_raw = (request.headers.get('X-Hi-Locations') or '').strip()
+        locs = [x.strip() for x in locs_raw.split(',') if x.strip()] if locs_raw else ([loc] if loc else [])
+        actor = {
+            'uid': request.headers.get('X-Hi-Uid') or 'local-test',
+            'role': (request.headers.get('X-Hi-Role') or 'boss').strip().lower(),
+            'name': request.headers.get('X-Hi-Name') or 'Local Test',
+            'email': request.headers.get('X-Hi-Email') or '',
+            'location': loc,
+            'locations': locs,
+            'mikrotik_owner_id': coerce_owner_id(request.headers.get('X-Hi-Owner-Id')),
+        }
+        try:
+            conn = mysql.connector.connect(**db_config)
+            cur = conn.cursor(dictionary=True)
+            try:
+                ensure_tables(cur)
+                _load_owner(cur, actor, actor.get('mikrotik_owner_id'))
+                conn.commit()
+            finally:
+                cur.close(); conn.close()
+        except Exception as e:
+            log.warning('resolve_actor local: %s', e)
+        return actor
+    header = request.headers.get('Authorization') or ''
+    if not header.startswith('Bearer ') or firebase_auth is None:
+        return None
+    token = header.split(' ', 1)[1].strip()
+    if not token:
+        return None
+    try:
+        decoded = firebase_auth.verify_id_token(token)
+    except Exception as e:
+        log.warning('app_docs token failed: %s', e)
+        return None
+    uid = decoded.get('uid')
+    actor = {
+        'uid': uid,
+        'role': 'technician',
+        'name': decoded.get('name') or '',
+        'email': decoded.get('email') or '',
+        'location': '',
+        'locations': [],
+        'mikrotik_owner_id': None,
+    }
+    try:
+        conn = mysql.connector.connect(**db_config)
+        cur = conn.cursor(dictionary=True)
+        try:
+            ensure_tables(cur)
+            ensure_owner_tenancy(cur)
+            conn.commit()
+            user = user_by_uid(cur, uid)
+            if user:
+                data = user.get('data') or {}
+                actor['role'] = str(data.get('role') or actor['role']).strip().lower()
+                actor['name'] = data.get('name') or actor['name']
+                actor['email'] = data.get('email') or actor['email']
+                actor['location'] = str(data.get('location') or '').strip()
+                locs = data.get('locations')
+                if isinstance(locs, list):
+                    actor['locations'] = [str(x).strip() for x in locs if x]
+                elif actor['location']:
+                    actor['locations'] = [actor['location']]
+                else:
+                    actor['locations'] = []
+                actor['mikrotik_owner_id'] = coerce_owner_id(data.get('mikrotik_owner_id'))
+            _load_owner(cur, actor, actor.get('mikrotik_owner_id'))
+            conn.commit()
+        finally:
+            cur.close(); conn.close()
+    except Exception as e:
+        log.warning('app_docs actor profile: %s', e)
+    return actor
+
+
+def bump_location_metadata(cur, location, amount, owner_id=None):
     if not location:
         return
     existing = get_doc(cur, 'locations', location)
@@ -405,6 +632,9 @@ def bump_location_metadata(cur, location, amount):
     )
     if not existing:
         extra = {'type': 'main', 'auto_created': True, 'parent_location': None}
+        oid = coerce_owner_id(owner_id) or default_mikrotik_owner_id(cur)
+        if oid:
+            extra['owner_id'] = oid
         extra.update(data)
         set_doc(cur, 'locations', location, extra, merge=True)
 
@@ -426,6 +656,7 @@ def serialize_location(doc):
         'name': loc_id,
         'type': loc_type,
         'parent_location': parent,
+        'owner_id': coerce_owner_id(data.get('owner_id')),
         'auto_created': bool(data.get('auto_created')),
         'metadata': meta if isinstance(meta, dict) else {},
         'created_at': (doc or {}).get('created_at'),
@@ -452,7 +683,7 @@ def get_location(cur, loc_id):
     return serialize_location(doc)
 
 
-def create_location(cur, loc_id, loc_type=None, parent_location=None):
+def create_location(cur, loc_id, loc_type=None, parent_location=None, owner_id=None):
     loc_id = (loc_id or '').strip()
     if not loc_id:
         raise ValueError('id required')
@@ -463,10 +694,17 @@ def create_location(cur, loc_id, loc_type=None, parent_location=None):
         raise ValueError('type must be main or sublocation')
     parent = (parent_location or '').strip() or None
     payload = {'type': loc_type, 'auto_created': False}
+    oid = coerce_owner_id(owner_id)
+    if oid:
+        payload['owner_id'] = oid
     if loc_type == 'sublocation':
         if not parent:
             raise ValueError('parent_location is required for sublocations')
-        if not get_doc(cur, 'locations', parent):
+        parent_doc = get_doc(cur, 'locations', parent)
+        if not parent_doc:
+            raise ValueError("Parent location '%s' does not exist" % parent)
+        parent_oid = coerce_owner_id((parent_doc.get('data') or {}).get('owner_id'))
+        if oid and parent_oid and parent_oid != oid:
             raise ValueError("Parent location '%s' does not exist" % parent)
         payload['parent_location'] = parent
     set_doc(cur, 'locations', loc_id, payload, merge=False)
@@ -523,6 +761,104 @@ def delete_location(cur, loc_id):
     return True
 
 
+FULL_LOCATION_ROLES = {'boss', 'admin', 'md'}
+LOCATION_WRITE_ROLES = {'boss', 'admin', 'md'}
+LOCATION_CREATE_SUB_ROLES = {'agent', 'superagent', 'technician'}
+
+
+def actor_assigned_location_names(actor):
+    names = set()
+    loc = str((actor or {}).get('location') or '').strip()
+    if loc:
+        names.add(loc)
+    for x in (actor or {}).get('locations') or []:
+        s = str(x).strip()
+        if s:
+            names.add(s)
+    return names
+
+
+def expand_allowed_locations(all_locs, assigned):
+    allowed = set(assigned or [])
+    if not allowed:
+        return set()
+    changed = True
+    while changed:
+        changed = False
+        for loc in all_locs:
+            loc_id = loc.get('id')
+            parent = loc.get('parent_location')
+            if loc_id and parent and parent in allowed and loc_id not in allowed:
+                allowed.add(loc_id)
+                changed = True
+    return allowed
+
+
+def owned_locations(all_locs, owner_id):
+    oid = coerce_owner_id(owner_id)
+    if oid is None:
+        return []
+    out = []
+    for loc in all_locs or []:
+        if coerce_owner_id(loc.get('owner_id')) == oid:
+            out.append(loc)
+    return out
+
+
+def allowed_location_ids(actor, all_locs):
+    owned = owned_locations(all_locs, (actor or {}).get('mikrotik_owner_id'))
+    owned_ids = {loc.get('id') for loc in owned if loc.get('id')}
+    role = str((actor or {}).get('role') or '').strip().lower()
+    if role in FULL_LOCATION_ROLES:
+        return owned_ids
+    if role == 'homeuser':
+        return set()
+    assigned = expand_allowed_locations(owned, actor_assigned_location_names(actor))
+    return set(assigned or []) & owned_ids
+
+
+def filter_locations_for_actor(actor, all_locs):
+    allowed = allowed_location_ids(actor, all_locs)
+    return [loc for loc in all_locs if loc.get('id') in allowed]
+
+
+def location_access_ok(actor, loc_id, all_locs):
+    allowed = allowed_location_ids(actor, all_locs)
+    return str(loc_id or '').strip() in allowed
+
+
+def tenant_docs_visible(actor, collection, doc, allowed_locs):
+    data = (doc or {}).get('data') or {}
+    owner_id = (actor or {}).get('mikrotik_owner_id')
+    if collection == 'users':
+        return same_owner(owner_id, data.get('mikrotik_owner_id'))
+    if collection == 'locations':
+        return (doc or {}).get('id') in (allowed_locs or set())
+    loc = data.get('location')
+    if loc:
+        return str(loc).strip() in (allowed_locs or set())
+    oid = data.get('mikrotik_owner_id')
+    if oid is not None and collection != 'field_registrations':
+        return same_owner(owner_id, oid)
+    return True
+
+
+def location_id_from_collection(collection, doc_id=None):
+    c = (collection or '').strip()
+    if c == 'locations':
+        return (doc_id or '').strip() or None
+    if c.startswith('locations/'):
+        parts = c.split('/')
+        if len(parts) >= 2 and parts[1]:
+            return parts[1]
+    return None
+
+
+def is_location_scoped_collection(collection):
+    c = (collection or '').strip()
+    return c == 'locations' or c.startswith('locations/')
+
+
 def user_by_uid(cur, uid):
     return get_doc(cur, 'users', uid)
 
@@ -535,50 +871,12 @@ def register_routes(app, db_config, firebase_auth=None):
         conn = mysql.connector.connect(**db_config)
         cur = conn.cursor(dictionary=True)
         ensure_tables(cur)
+        ensure_owner_tenancy(cur)
         conn.commit()
         return conn, cur
 
     def _actor():
-        remote = (request.remote_addr or '').strip()
-        if remote in ('127.0.0.1', '::1') and request.headers.get('X-Hi-Local') == '1':
-            return {
-                'uid': request.headers.get('X-Hi-Uid') or 'local-test',
-                'role': (request.headers.get('X-Hi-Role') or 'boss').strip().lower(),
-                'name': request.headers.get('X-Hi-Name') or 'Local Test',
-                'email': request.headers.get('X-Hi-Email') or '',
-            }
-        header = request.headers.get('Authorization') or ''
-        if not header.startswith('Bearer ') or firebase_auth is None:
-            return None
-        token = header.split(' ', 1)[1].strip()
-        if not token:
-            return None
-        try:
-            decoded = firebase_auth.verify_id_token(token)
-        except Exception as e:
-            log.warning('app_docs token failed: %s', e)
-            return None
-        uid = decoded.get('uid')
-        actor = {
-            'uid': uid,
-            'role': 'technician',
-            'name': decoded.get('name') or '',
-            'email': decoded.get('email') or '',
-        }
-        try:
-            conn, cur = _conn()
-            try:
-                user = user_by_uid(cur, uid)
-                if user:
-                    data = user.get('data') or {}
-                    actor['role'] = str(data.get('role') or actor['role']).strip().lower()
-                    actor['name'] = data.get('name') or actor['name']
-                    actor['email'] = data.get('email') or actor['email']
-            finally:
-                cur.close(); conn.close()
-        except Exception as e:
-            log.warning('app_docs actor profile: %s', e)
-        return actor
+        return resolve_actor(request, db_config, firebase_auth)
 
     def _require(roles=None):
         actor = _actor()
@@ -588,16 +886,52 @@ def register_routes(app, db_config, firebase_auth=None):
             return None, (jsonify({'success': False, 'error': 'Not allowed'}), 403)
         return actor, None
 
+    def _location_guard(cur, actor, collection, doc_id=None):
+        if not is_location_scoped_collection(collection):
+            return None
+        all_locs = list_locations(cur)
+        if collection == 'locations' and not doc_id:
+            return None
+        loc_id = location_id_from_collection(collection, doc_id)
+        if not loc_id:
+            return None
+        if location_access_ok(actor, loc_id, all_locs):
+            return None
+        return jsonify({'success': False, 'error': 'Not allowed'}), 403
+
     def _body():
         return request.get_json(silent=True) or {}
 
-    def _query_collection(cur, collection, payload):
+    def _query_collection(cur, actor, collection, payload):
         filters = payload.get('filters') or []
         order_by = payload.get('orderBy') or payload.get('order_by')
         limit = payload.get('limit')
+        allowed = allowed_location_ids(actor, list_locations(cur))
         if collection == 'payments':
-            return query_mysql_payments(cur, filters, order_by, limit)
-        return query_docs(cur, collection, filters, order_by, limit)
+            return query_mysql_payments(cur, filters, order_by, limit, location_ids=allowed)
+        docs = query_docs(cur, collection, filters, order_by, limit)
+        return [d for d in docs if tenant_docs_visible(actor, collection, d, allowed)]
+
+    def _user_guard(cur, actor, collection, doc_id=None, payload=None, writing=False):
+        if collection != 'users':
+            return None, payload
+        owner_id = coerce_owner_id(actor.get('mikrotik_owner_id'))
+        role = str(actor.get('role') or '').strip().lower()
+        if writing and payload is not None:
+            payload = dict(payload)
+            payload.pop('mikrotik_owner_id', None)
+        existing = get_doc(cur, 'users', doc_id) if doc_id else None
+        if existing:
+            existing_oid = coerce_owner_id((existing.get('data') or {}).get('mikrotik_owner_id'))
+            if existing_oid and not same_owner(owner_id, existing_oid):
+                return (jsonify({'success': False, 'error': 'Not allowed'}), 403), payload
+        elif writing:
+            if payload is None:
+                payload = {}
+            payload['mikrotik_owner_id'] = owner_id
+        if writing and doc_id and str(doc_id) != str(actor.get('uid')) and role not in ('boss', 'admin', 'md'):
+            return (jsonify({'success': False, 'error': 'Not allowed'}), 403), payload
+        return None, payload
 
     def _payment_doc(row):
         return {
@@ -626,7 +960,11 @@ def register_routes(app, db_config, firebase_auth=None):
             return jsonify({'success': False, 'error': 'collection required'}), 400
         conn, cur = _conn()
         try:
-            docs = _query_collection(cur, collection, data)
+            docs = _query_collection(cur, actor, collection, data)
+            if is_location_scoped_collection(collection) and collection != 'locations':
+                loc_id = location_id_from_collection(collection)
+                if loc_id and not location_access_ok(actor, loc_id, list_locations(cur)):
+                    return jsonify({'success': True, 'docs': []})
             return jsonify({'success': True, 'docs': docs})
         finally:
             cur.close(); conn.close()
@@ -642,14 +980,27 @@ def register_routes(app, db_config, firebase_auth=None):
             return jsonify({'success': False, 'error': 'collection and id required'}), 400
         conn, cur = _conn()
         try:
+            denied = _location_guard(cur, actor, collection, doc_id)
+            if denied:
+                return denied
+            denied, _ = _user_guard(cur, actor, collection, doc_id)
+            if denied:
+                if collection == 'users':
+                    return jsonify({'success': True, 'exists': False, 'doc': None})
+                return denied
             if collection == 'payments':
                 cur.execute("SELECT id, location, amount, duration, username, timestamp, phone, payment_method FROM payments WHERE id=%s", (doc_id,))
                 row = cur.fetchone()
                 if not row:
                     return jsonify({'success': True, 'exists': False, 'doc': None})
+                if not location_access_ok(actor, row.get('location'), list_locations(cur)):
+                    return jsonify({'success': True, 'exists': False, 'doc': None})
                 return jsonify({'success': True, 'exists': True, 'doc': _payment_doc(row)})
             doc = get_doc(cur, collection, doc_id)
             if not doc:
+                return jsonify({'success': True, 'exists': False, 'doc': None})
+            allowed = allowed_location_ids(actor, list_locations(cur))
+            if not tenant_docs_visible(actor, collection, doc, allowed):
                 return jsonify({'success': True, 'exists': False, 'doc': None})
             return jsonify({'success': True, 'exists': True, 'doc': doc})
         finally:
@@ -669,11 +1020,27 @@ def register_routes(app, db_config, firebase_auth=None):
         merge = bool(data.get('merge')) or request.method in ('PATCH',)
         conn, cur = _conn()
         try:
+            if is_location_scoped_collection(collection):
+                if collection == 'locations' and actor.get('role') not in LOCATION_WRITE_ROLES:
+                    return jsonify({'success': False, 'error': 'Not allowed'}), 403
+                denied = _location_guard(cur, actor, collection, doc_id)
+                if denied:
+                    return denied
+            denied, payload = _user_guard(cur, actor, collection, doc_id, payload=payload, writing=True)
+            if denied:
+                return denied
+            if collection == 'locations' and payload is not None:
+                payload = dict(payload)
+                payload.pop('owner_id', None)
+                payload['owner_id'] = coerce_owner_id(actor.get('mikrotik_owner_id'))
+            loc_name = (payload or {}).get('location')
+            if loc_name and not location_access_ok(actor, loc_name, list_locations(cur)):
+                return jsonify({'success': False, 'error': 'Not allowed'}), 403
             if collection == 'payments' and request.method == 'POST':
                 cur.execute(
                     """
-                    INSERT INTO payments (location, amount, duration, username, phone, payment_method)
-                    VALUES (%s,%s,%s,%s,%s,%s)
+                    INSERT INTO payments (location, amount, duration, username, phone, payment_method, owner_id)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s)
                     """,
                     (
                         payload.get('location'),
@@ -682,10 +1049,16 @@ def register_routes(app, db_config, firebase_auth=None):
                         payload.get('username') or payload.get('voucher'),
                         payload.get('phone'),
                         payload.get('payment_method'),
+                        coerce_owner_id(actor.get('mikrotik_owner_id')),
                     ),
                 )
                 doc_id = str(cur.lastrowid)
-                bump_location_metadata(cur, payload.get('location'), payload.get('amount') or 0)
+                bump_location_metadata(
+                    cur,
+                    payload.get('location'),
+                    payload.get('amount') or 0,
+                    owner_id=actor.get('mikrotik_owner_id'),
+                )
                 conn.commit()
                 return jsonify({'success': True, 'id': doc_id}), 201
             doc = set_doc(cur, collection, doc_id, payload, merge=merge)
@@ -705,6 +1078,15 @@ def register_routes(app, db_config, firebase_auth=None):
             return jsonify({'success': False, 'error': 'collection and id required'}), 400
         conn, cur = _conn()
         try:
+            if is_location_scoped_collection(collection):
+                if collection == 'locations' and actor.get('role') not in LOCATION_WRITE_ROLES:
+                    return jsonify({'success': False, 'error': 'Not allowed'}), 403
+                denied = _location_guard(cur, actor, collection, doc_id)
+                if denied:
+                    return denied
+            denied, _ = _user_guard(cur, actor, collection, doc_id, writing=True)
+            if denied:
+                return denied
             delete_doc(cur, collection, doc_id)
             conn.commit()
             return jsonify({'success': True})
@@ -724,10 +1106,23 @@ def register_routes(app, db_config, firebase_auth=None):
                 kind = op.get('op')
                 collection = op.get('collection')
                 doc_id = str(op.get('id') or new_id())
+                if is_location_scoped_collection(collection):
+                    if collection == 'locations' and actor.get('role') not in LOCATION_WRITE_ROLES:
+                        return jsonify({'success': False, 'error': 'Not allowed'}), 403
+                    denied = _location_guard(cur, actor, collection, doc_id)
+                    if denied:
+                        return denied
+                denied, op_data = _user_guard(
+                    cur, actor, collection, doc_id,
+                    payload=op.get('data') or {},
+                    writing=True,
+                )
+                if denied:
+                    return denied
                 if kind == 'delete':
                     delete_doc(cur, collection, doc_id)
                 else:
-                    set_doc(cur, collection, doc_id, op.get('data') or {}, merge=bool(op.get('merge') or kind == 'update'))
+                    set_doc(cur, collection, doc_id, op_data, merge=bool(op.get('merge') or kind == 'update'))
                 ids.append(doc_id)
             conn.commit()
             return jsonify({'success': True, 'ids': ids})
@@ -736,7 +1131,7 @@ def register_routes(app, db_config, firebase_auth=None):
 
     @app.route('/api/auth/create-user', methods=['POST'])
     def app_create_user():
-        actor, err = _require(('boss', 'admin'))
+        actor, err = _require(('boss', 'admin', 'md'))
         if err:
             return err
         data = _body()
@@ -751,15 +1146,15 @@ def register_routes(app, db_config, firebase_auth=None):
             return jsonify({'success': False, 'error': 'Password must be at least 6 characters long'}), 400
         conn, cur = _conn()
         try:
+            all_locs = list_locations(cur)
             location = (data.get('location') or '').strip()
-            locations = data.get('locations') or []
-            if role == 'agent' and location:
-                if not get_doc(cur, 'locations', location):
-                    return jsonify({'success': False, 'error': "Location '%s' does not exist in the system" % location}), 400
-            if role == 'superagent':
-                for loc in locations:
-                    if loc and not get_doc(cur, 'locations', str(loc).strip()):
-                        return jsonify({'success': False, 'error': "Location '%s' does not exist in the system" % loc}), 400
+            locations = [str(x).strip() for x in (data.get('locations') or []) if str(x).strip()]
+            check_locs = list(locations)
+            if location:
+                check_locs.append(location)
+            for loc in check_locs:
+                if loc and not location_access_ok(actor, loc, all_locs):
+                    return jsonify({'success': False, 'error': "Location '%s' does not exist in the system" % loc}), 400
             user_record = firebase_auth.create_user(email=email, password=password)
             uid = user_record.uid
             profile = {
@@ -769,6 +1164,7 @@ def register_routes(app, db_config, firebase_auth=None):
                 'password': password,
                 'created_at': _iso(_now()),
                 'created_by': actor.get('uid'),
+                'mikrotik_owner_id': coerce_owner_id(actor.get('mikrotik_owner_id')),
             }
             if role == 'agent':
                 profile['location'] = location
@@ -803,7 +1199,7 @@ def register_routes(app, db_config, firebase_auth=None):
 
     @app.route('/api/auth/delete-user', methods=['POST'])
     def app_delete_user():
-        actor, err = _require(('boss', 'admin'))
+        actor, err = _require(('boss', 'admin', 'md'))
         if err:
             return err
         data = _body()
@@ -816,6 +1212,9 @@ def register_routes(app, db_config, firebase_auth=None):
                 uid = user.uid
             if not uid:
                 return jsonify({'success': False, 'error': 'Provide uid or email'}), 400
+            denied, _ = _user_guard(cur, actor, 'users', uid)
+            if denied:
+                return jsonify({'success': False, 'error': 'Not allowed'}), 403
             try:
                 firebase_auth.delete_user(uid)
             except Exception as e:
@@ -832,7 +1231,7 @@ def register_routes(app, db_config, firebase_auth=None):
 
     @app.route('/api/auth/reset-password', methods=['POST'])
     def app_reset_password():
-        actor, err = _require(('boss', 'admin'))
+        actor, err = _require(('boss', 'admin', 'md'))
         if err:
             return err
         data = _body()
@@ -845,6 +1244,9 @@ def register_routes(app, db_config, firebase_auth=None):
         conn, cur = _conn()
         try:
             user = firebase_auth.get_user_by_email(email)
+            denied, _ = _user_guard(cur, actor, 'users', user.uid)
+            if denied:
+                return jsonify({'success': False, 'error': 'Not allowed'}), 403
             firebase_auth.update_user(user.uid, password=new_password)
             set_doc(cur, 'users', user.uid, {'password': new_password}, merge=True)
             conn.commit()
@@ -893,7 +1295,8 @@ def register_routes(app, db_config, firebase_auth=None):
             return err
         conn, cur = _conn()
         try:
-            return jsonify({'success': True, 'locations': list_locations(cur)})
+            rows = list_locations(cur)
+            return jsonify({'success': True, 'locations': filter_locations_for_actor(actor, rows)})
         finally:
             cur.close(); conn.close()
 
@@ -904,13 +1307,25 @@ def register_routes(app, db_config, firebase_auth=None):
             return err
         data = _body()
         loc_id = str(data.get('id') or data.get('name') or '').strip()
+        loc_type = (data.get('type') or 'main')
+        parent = data.get('parent_location') or data.get('parentLocation')
+        role = str(actor.get('role') or '').strip().lower()
         conn, cur = _conn()
         try:
+            all_locs = list_locations(cur)
+            if role not in FULL_LOCATION_ROLES:
+                if role not in LOCATION_CREATE_SUB_ROLES:
+                    return jsonify({'success': False, 'error': 'Not allowed'}), 403
+                if str(loc_type).strip().lower() != 'sublocation':
+                    return jsonify({'success': False, 'error': 'You can only add sublocations under your assigned locations'}), 403
+                if not location_access_ok(actor, parent, all_locs):
+                    return jsonify({'success': False, 'error': 'Not allowed'}), 403
             loc = create_location(
                 cur,
                 loc_id,
-                loc_type=data.get('type'),
-                parent_location=data.get('parent_location') or data.get('parentLocation'),
+                loc_type=loc_type,
+                parent_location=parent,
+                owner_id=actor.get('mikrotik_owner_id'),
             )
             conn.commit()
             return jsonify({'success': True, 'location': loc}), 201
@@ -931,13 +1346,15 @@ def register_routes(app, db_config, firebase_auth=None):
             loc = get_location(cur, loc_id)
             if not loc:
                 return jsonify({'success': False, 'error': 'Location not found'}), 404
+            if not location_access_ok(actor, loc_id, list_locations(cur)):
+                return jsonify({'success': False, 'error': 'Location not found'}), 404
             return jsonify({'success': True, 'location': loc})
         finally:
             cur.close(); conn.close()
 
     @app.route('/api/locations/<path:loc_id>', methods=['PATCH', 'PUT'])
     def api_locations_update(loc_id):
-        actor, err = _require()
+        actor, err = _require(tuple(LOCATION_WRITE_ROLES))
         if err:
             return err
         data = _body()
@@ -950,6 +1367,8 @@ def register_routes(app, db_config, firebase_auth=None):
                 parent = None
         conn, cur = _conn()
         try:
+            if not location_access_ok(actor, loc_id, list_locations(cur)):
+                return jsonify({'success': False, 'error': 'Location not found'}), 404
             loc = update_location(
                 cur,
                 loc_id,
@@ -970,11 +1389,13 @@ def register_routes(app, db_config, firebase_auth=None):
 
     @app.route('/api/locations/<path:loc_id>', methods=['DELETE'])
     def api_locations_delete(loc_id):
-        actor, err = _require()
+        actor, err = _require(tuple(LOCATION_WRITE_ROLES))
         if err:
             return err
         conn, cur = _conn()
         try:
+            if not location_access_ok(actor, loc_id, list_locations(cur)):
+                return jsonify({'success': False, 'error': 'Location not found'}), 404
             delete_location(cur, loc_id)
             conn.commit()
             return jsonify({'success': True})

@@ -133,9 +133,18 @@ class DocumentReference<T extends Object?> {
     return DocumentSnapshot<T>._(_collection, id, raw);
   }
 
-  Stream<DocumentSnapshot<T>> snapshots({bool includeMetadataChanges = false}) async* {
-    yield await get();
-    yield* Stream.periodic(const Duration(seconds: 10)).asyncMap((_) => get());
+  Stream<DocumentSnapshot<T>> snapshots({bool includeMetadataChanges = false}) {
+    return Stream<DocumentSnapshot<T>>.multi((listener) async {
+      try {
+        listener.add(await get());
+        await for (final _ in Stream<void>.periodic(const Duration(seconds: 10))) {
+          if (listener.isCanceled) return;
+          listener.add(await get());
+        }
+      } catch (e, st) {
+        if (!listener.isCanceled) listener.addError(e, st);
+      }
+    });
   }
 
   Future<void> set(Map<String, dynamic> data, [SetOptions? options]) async {
@@ -208,9 +217,18 @@ class Query<T extends Object?> {
     return QuerySnapshot<T>._(docs.map((d) => QueryDocumentSnapshot<T>._(d)).toList());
   }
 
-  Stream<QuerySnapshot<T>> snapshots({bool includeMetadataChanges = false}) async* {
-    yield await get();
-    yield* Stream.periodic(const Duration(seconds: 10)).asyncMap((_) => get());
+  Stream<QuerySnapshot<T>> snapshots({bool includeMetadataChanges = false}) {
+    return Stream<QuerySnapshot<T>>.multi((listener) async {
+      try {
+        listener.add(await get());
+        await for (final _ in Stream<void>.periodic(const Duration(seconds: 10))) {
+          if (listener.isCanceled) return;
+          listener.add(await get());
+        }
+      } catch (e, st) {
+        if (!listener.isCanceled) listener.addError(e, st);
+      }
+    });
   }
 }
 

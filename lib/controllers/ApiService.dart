@@ -50,12 +50,16 @@ class ApiService {
     _cache.remove(key);
   }
 
-  static Future<Map<String, String>> _jsonAuthHeaders() async {
+  static Future<Map<String, String>> _authHeaders({bool json = false}) async {
     final token = await FirebaseAuth.instance.currentUser?.getIdToken();
     return {
-      'Content-Type': 'application/json',
+      if (json) 'Content-Type': 'application/json',
       if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
     };
+  }
+
+  static Future<Map<String, String>> _jsonAuthHeaders() async {
+    return _authHeaders(json: true);
   }
 
   static Future<Map<String, dynamic>> _decodeJsonMap(http.Response response) async {
@@ -75,7 +79,7 @@ class ApiService {
   }) async {
     final response = await http.post(
       Uri.parse('$baseUrl/generate_users'),
-      headers: {'Content-Type': 'application/json'},
+      headers: await _jsonAuthHeaders(),
       body: jsonEncode({
         'num_users': numUsers,
         'num_days': numDays,
@@ -161,7 +165,7 @@ class ApiService {
     if (cachedData != null) {
       return cachedData;
     }
-    final response = await http.get(Uri.parse('$baseUrl/dashboard_stats'));
+    final response = await http.get(Uri.parse('$baseUrl/dashboard_stats'), headers: await _authHeaders());
     final data = jsonDecode(response.body) as Map<String, dynamic>;
     if (data['success'] != true) {
       throw Exception(data['error'] ?? 'dashboard_stats failed');
@@ -176,7 +180,7 @@ class ApiService {
     if (cachedData != null) {
       return cachedData;
     }
-    final response = await http.get(Uri.parse('$baseUrl/vouchers_by_location'));
+    final response = await http.get(Uri.parse('$baseUrl/vouchers_by_location'), headers: await _authHeaders());
     final data = jsonDecode(response.body) as Map<String, dynamic>;
     if (data['success'] != true) {
       throw Exception(data['error'] ?? 'vouchers_by_location failed');
@@ -193,7 +197,7 @@ class ApiService {
       return cachedData;
     }
 
-    final response = await http.get(Uri.parse('$baseUrl/valid_users?location=$location'));
+    final response = await http.get(Uri.parse('$baseUrl/valid_users?location=$location'), headers: await _authHeaders());
     final users = (jsonDecode(response.body)['users'] as List?) ?? [];
     _cacheData(cacheKey, users);
     return users;
@@ -230,7 +234,7 @@ class ApiService {
       return cachedData;
     }
     
-    final response = await http.get(Uri.parse('$baseUrl/fetch_payments_summary'));
+    final response = await http.get(Uri.parse('$baseUrl/fetch_payments_summary'), headers: await _authHeaders());
     if (response.statusCode != 200) {
       throw Exception('Failed to fetch payment summary: ${response.body}');
     }
@@ -343,7 +347,7 @@ class ApiService {
     }
 
     try {
-      final response = await http.get(Uri.parse('$baseUrl/fetch_recent_payments'));
+      final response = await http.get(Uri.parse('$baseUrl/fetch_recent_payments'), headers: await _authHeaders());
       if (response.statusCode == 404) {
         return [];
       }
@@ -381,7 +385,7 @@ class ApiService {
     }
 
     try {
-      final response = await http.get(Uri.parse('$baseUrl/fetch_vouchers_today'));
+      final response = await http.get(Uri.parse('$baseUrl/fetch_vouchers_today'), headers: await _authHeaders());
       if (response.statusCode == 404) {
         return [];
       }
@@ -403,7 +407,7 @@ class ApiService {
     }
 
     try {
-      final response = await http.get(Uri.parse('$baseUrl/fetch_payments_today'));
+      final response = await http.get(Uri.parse('$baseUrl/fetch_payments_today'), headers: await _authHeaders());
       if (response.statusCode != 200) {
         throw Exception('Failed to load today\'s total payments: ${response.body}');
       }
@@ -473,7 +477,7 @@ class ApiService {
     }
 
     try {
-      final response = await http.get(Uri.parse('$baseUrl/fetch_payments_today'));
+      final response = await http.get(Uri.parse('$baseUrl/fetch_payments_today'), headers: await _authHeaders());
       if (response.statusCode == 404) {
         return [];
       }
@@ -666,7 +670,7 @@ class ApiService {
     }
 
     try {
-      final response = await http.get(Uri.parse('$baseUrl/location_data?location=${Uri.encodeComponent(location)}'));
+      final response = await http.get(Uri.parse('$baseUrl/location_data?location=${Uri.encodeComponent(location)}'), headers: await _authHeaders());
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         final locationData = data['data'] as List<dynamic>;
