@@ -1,10 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:lightnetwork/services/app_db.dart';
-import 'package:get/get.dart';
 import '../controllers/ApiService.dart';
-import '../controllers/auth_controller.dart';
 import '../theme/app_theme.dart';
 
 class LoginDetailsScreen extends StatefulWidget {
@@ -201,6 +198,7 @@ class _LoginDetailsScreenState extends State<LoginDetailsScreen> {
                 sessions: entry.value,
               );
             }),
+          ],
         ],
       ),
     );
