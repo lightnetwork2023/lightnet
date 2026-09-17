@@ -7,7 +7,20 @@ import 'package:http/http.dart' as http;
 const String _appApiBase = 'https://lightnet.lightnetwork.pro/api/app';
 const String _authApiBase = 'https://lightnet.lightnetwork.pro/api/auth';
 
-Stream<T> _pollingStream<T>(Future<T> Function() load) {
+/// HTTP is request/response. Do not fake Firestore listeners.
+/// Most collections load once; MikroTik device status is refreshed every 5 minutes.
+Duration? watchIntervalForCollection(String collection) {
+  final root = collection.split('/').first.trim();
+  if (root == 'mikrotik_devices') {
+    return const Duration(minutes: 5);
+  }
+  return null;
+}
+
+Stream<T> watchCollectionStream<T>(
+  Future<T> Function() load, {
+  Duration? interval,
+}) {
   late StreamController<T> controller;
   Timer? timer;
   var inFlight = false;
@@ -28,7 +41,9 @@ Stream<T> _pollingStream<T>(Future<T> Function() load) {
   controller = StreamController<T>.broadcast(
     onListen: () {
       emit();
-      timer ??= Timer.periodic(const Duration(seconds: 10), (_) => emit());
+      if (interval != null && interval > Duration.zero) {
+        timer ??= Timer.periodic(interval, (_) => emit());
+      }
     },
     onCancel: () {
       if (!controller.hasListener) {
@@ -169,7 +184,10 @@ class DocumentReference<T extends Object?> {
   }
 
   Stream<DocumentSnapshot<T>> snapshots({bool includeMetadataChanges = false}) {
-    return _pollingStream(() => get());
+    return watchCollectionStream(
+      () => get(),
+      interval: watchIntervalForCollection(_collection),
+    );
   }
 
   Future<void> set(Map<String, dynamic> data, [SetOptions? options]) async {
@@ -243,7 +261,10 @@ class Query<T extends Object?> {
   }
 
   Stream<QuerySnapshot<T>> snapshots({bool includeMetadataChanges = false}) {
-    return _pollingStream(() => get());
+    return watchCollectionStream(
+      () => get(),
+      interval: watchIntervalForCollection(path),
+    );
   }
 }
 
