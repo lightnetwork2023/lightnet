@@ -37,7 +37,6 @@ def test_unstamped_ops_docs_are_hidden_from_other_owners():
         'internet_payments',
         'simcards',
         'devices',
-        'nokia_beacons',
         'debt_payables',
         'bundle_configurations',
         'sold_vouchers',

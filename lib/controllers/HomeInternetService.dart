@@ -69,11 +69,8 @@ class HomeInternetService {
     return _decode(res);
   }
 
-  static Stream<T> _poll<T>(Future<T> Function() load, {Duration every = const Duration(seconds: 12)}) async* {
-    while (true) {
-      yield await load();
-      await Future<void>.delayed(every);
-    }
+  static Stream<T> _once<T>(Future<T> Function() load) {
+    return Stream.fromFuture(load());
   }
 
   static HomeCustomer _customer(Map<String, dynamic> map) {
@@ -165,7 +162,7 @@ class HomeInternetService {
   }
 
   static Stream<List<HomeCustomer>> streamCustomers() {
-    return _poll(() async {
+    return _once(() async {
       final data = await _get('/customers');
       return (data['customers'] as List? ?? [])
           .map((e) => _customer(Map<String, dynamic>.from(e)))
@@ -174,14 +171,14 @@ class HomeInternetService {
   }
 
   static Stream<HomeCustomer?> streamCustomer(String id) {
-    return _poll(() => getCustomer(id));
+    return _once(() => getCustomer(id));
   }
 
   static Stream<List<HomeCustomer>> streamArchivedCustomers() {
     if (!_auth.isBoss) {
       return Stream.error(Exception('Only boss can view archived customers'));
     }
-    return _poll(fetchArchivedCustomers);
+    return _once(fetchArchivedCustomers);
   }
 
   static Future<List<PaymentRecord>> fetchPayments(String customerId, {int limit = 50, String? status}) async {
@@ -196,7 +193,7 @@ class HomeInternetService {
   }
 
   static Stream<List<PaymentRecord>> streamPayments(String customerId) {
-    return _poll(() => fetchPayments(customerId));
+    return _once(() => fetchPayments(customerId));
   }
 
   static Future<List<PaymentRecord>> fetchPendingApprovals() async {
@@ -207,7 +204,7 @@ class HomeInternetService {
   }
 
   static Stream<List<PaymentRecord>> streamPendingApprovalGroup() {
-    return _poll(fetchPendingApprovals);
+    return _once(fetchPendingApprovals);
   }
 
   static Future<List<PaymentRecord>> fetchPendingApprovalsFromCustomers() {
@@ -215,7 +212,7 @@ class HomeInternetService {
   }
 
   static Stream<List<PaymentRecord>> streamPendingPayments(String customerId) {
-    return _poll(() => fetchPayments(customerId, status: PaymentStatus.pendingApproval.name));
+    return _once(() => fetchPayments(customerId, status: PaymentStatus.pendingApproval.name));
   }
 
   static Future<String> generateCustomerId({int maxAttempts = 50}) async {

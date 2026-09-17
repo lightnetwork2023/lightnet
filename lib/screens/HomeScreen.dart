@@ -26,8 +26,6 @@ import '../services/SiteService.dart';
 import 'SiteOverviewScreen.dart';
 import 'dart:async';
 import 'dart:io';
-import '../services/WifiBeaconScannerService.dart';
-import 'NokiaBeaconSheetScreen.dart';
 import 'InternetPaymentsScreen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -37,7 +35,7 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
+class _HomeScreenState extends State<HomeScreen> {
   final AuthController _authController = Get.find<AuthController>();
   int activeSessionsCount = 0;
   int recentLoginsCount = 0;
@@ -60,72 +58,21 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   StreamSubscription<QuerySnapshot>? _mikrotikSub;
   final Map<String, String> _prevMikroTikStatuses = {};
   bool _mikrotikInitialized = false;
-  Timer? _wifiScanTimer;
   int _internetPaymentsDueCount = 0;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
     _loadDashboardStats();
     _loadOfflineDeviceCount();
     _startMikroTikOfflineWatch();
-    _triggerBeaconScan();
     _checkInternetPaymentsDue();
   }
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
     _mikrotikSub?.cancel();
-    _wifiScanTimer?.cancel();
     super.dispose();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      if (_wifiScanTimer == null || !_wifiScanTimer!.isActive) {
-        _triggerBeaconScan();
-      }
-    } else if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.inactive) {
-      _wifiScanTimer?.cancel();
-      _wifiScanTimer = null;
-    }
-  }
-
-  void _triggerBeaconScan() {
-    // Auth may not be ready yet — wait up to 4 s in 500 ms steps, then proceed
-    Future(() async {
-      int waited = 0;
-      while (!_authController.isDataLoaded && waited < 8) {
-        await Future.delayed(const Duration(milliseconds: 500));
-        waited++;
-      }
-      if (!mounted) return;
-
-      final role = _authController.userRole.toLowerCase();
-      final isAlwaysOn =
-          role == 'technician' || role == 'agent' || role == 'dealer';
-
-      if (isAlwaysOn) {
-        // Immediate scan with permission request, then every 30 seconds
-        WifiBeaconScannerService.scanAndReport(
-            forceEnabled: true, askPermissions: true);
-        _wifiScanTimer = Timer.periodic(const Duration(minutes: 3), (_) {
-          if (mounted) WifiBeaconScannerService.scanAndReport(forceEnabled: true);
-        });
-      } else {
-        // Others: 3-second delay then every 5 minutes
-        await Future.delayed(const Duration(seconds: 3));
-        if (!mounted) return;
-        WifiBeaconScannerService.scanAndReport();
-        _wifiScanTimer = Timer.periodic(const Duration(minutes: 5), (_) {
-          if (mounted) WifiBeaconScannerService.scanAndReport();
-        });
-      }
-    });
   }
 
   void _showTechCheckInSheet(BuildContext context) {
@@ -839,103 +786,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                 );
                               },
                             ),
-                          ),
-                        if (_authController.userRole != 'technician')
-                          const SizedBox(width: 12),
-                        Expanded(
-                          child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                            stream: FirebaseFirestore.instance
-                                .collection('nokia_beacons')
-                                .snapshots(),
-                            builder: (context, nokiaSnap) {
-                              int totalNokia = 0;
-                              int alertCount = 0;
-                              int freqCount = 0;
-
-                              if (nokiaSnap.hasData) {
-                                final docs = nokiaSnap.data!.docs;
-                                totalNokia = docs.length;
-                                final allData = docs.map((d) => d.data()).toList();
-
-                                // Channel freq-conflict detection per location
-                                final Map<String, Set<String>> locCh2 = {};
-                                final Map<String, Set<String>> locCh5 = {};
-                                for (final d in allData) {
-                                  final loc = (d['location'] ?? '').toString().toLowerCase();
-                                  final ch2 = (d['channel_2ghz'] ?? '').toString().trim();
-                                  final ch5 = (d['channel_5ghz'] ?? '').toString().trim();
-                                  if (loc.isEmpty) continue;
-                                  locCh2.putIfAbsent(loc, () => {});
-                                  locCh5.putIfAbsent(loc, () => {});
-                                  if (ch2.isNotEmpty) locCh2[loc]!.add(ch2);
-                                  if (ch5.isNotEmpty) locCh5[loc]!.add(ch5);
-                                }
-                                for (final d in allData) {
-                                  // Stale / not seen > 6h
-                                  final ts = d['last_seen'];
-                                  if (ts is Timestamp) {
-                                    final diff = DateTime.now().difference(ts.toDate()).inHours;
-                                    if (diff >= 6 || (d['status'] ?? '') == 'offline') {
-                                      alertCount++;
-                                    }
-                                  } else if ((d['status'] ?? '') == 'offline') {
-                                    alertCount++;
-                                  }
-
-                                  // Freq conflicts
-                                  final loc = (d['location'] ?? '').toString().toLowerCase();
-                                  final ch2 = (d['channel_2ghz'] ?? '').toString().trim();
-                                  final ch5 = (d['channel_5ghz'] ?? '').toString().trim();
-                                  if (loc.isNotEmpty) {
-                                    final ch2set = locCh2[loc] ?? {};
-                                    final ch5set = locCh5[loc] ?? {};
-                                    // conflict = same channel used by >1 beacon in same area
-                                    if ((ch2.isNotEmpty && ch2set.length < allData.where((x) =>
-                                        (x['location'] ?? '').toString().toLowerCase() == loc &&
-                                        (x['channel_2ghz'] ?? '').toString().trim() == ch2).length
-                                      ) || false) freqCount++;
-                                  }
-                                }
-                                // Simpler freq conflict: count beacons sharing ch in same location
-                                freqCount = 0;
-                                for (final d in allData) {
-                                  final loc = (d['location'] ?? '').toString().toLowerCase();
-                                  final ch2 = (d['channel_2ghz'] ?? '').toString().trim();
-                                  final ch5 = (d['channel_5ghz'] ?? '').toString().trim();
-                                  if (loc.isEmpty) continue;
-                                  if (ch2.isNotEmpty && allData.where((x) =>
-                                      (x['location'] ?? '').toString().toLowerCase() == loc &&
-                                      (x['channel_2ghz'] ?? '').toString().trim() == ch2).length > 1) {
-                                    freqCount++;
-                                    continue;
-                                  }
-                                  if (ch5.isNotEmpty && allData.where((x) =>
-                                      (x['location'] ?? '').toString().toLowerCase() == loc &&
-                                      (x['channel_5ghz'] ?? '').toString().trim() == ch5).length > 1) {
-                                    freqCount++;
-                                  }
-                                }
-                              }
-
-                              final hasIssues = alertCount > 0 || freqCount > 0;
-                              return StatCard(
-                                title: 'Nokia Beacons',
-                                value: totalNokia.toString(),
-                                subtitle: alertCount > 0
-                                    ? '$alertCount need check${freqCount > 0 ? " · $freqCount freq⚠" : ""}'
-                                    : freqCount > 0
-                                        ? '$freqCount freq conflict${freqCount > 1 ? "s" : ""}'
-                                        : 'All beacons',
-                                icon: Icons.cell_tower_rounded,
-                                iconColor: hasIssues ? AppTheme.errorColor : AppTheme.successColor,
-                                onTap: () => Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) => const NokiaBeaconSheetScreen(),
-                                  ),
-                                ),
-                              );
-                            },
                           ),
                         ),
                       ],

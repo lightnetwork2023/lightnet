@@ -4,7 +4,6 @@ import 'package:get/get.dart';
 import '../controllers/auth_controller.dart';
 import '../controllers/location_controller.dart';
 import '../controllers/ApiService.dart';
-import '../services/WifiBeaconScannerService.dart';
 import 'package:intl/intl.dart';
 
 import 'AgentUsersScreen.dart';
@@ -22,7 +21,6 @@ class AgentHomeScreen extends StatefulWidget {
 class _AgentHomeScreenState extends State<AgentHomeScreen> {
   final AuthController _authController = Get.find<AuthController>();
   final LocationController _locationController = Get.find<LocationController>();
-  Timer? _wifiScanTimer;
   int _validUsersCount = 0;
   bool _isLoading = true;
   bool _isGenerating = false;
@@ -71,20 +69,6 @@ class _AgentHomeScreenState extends State<AgentHomeScreen> {
       _loadData();
     }
 
-    _triggerBeaconScan();
-  }
-
-  void _triggerBeaconScan() {
-    const interval = Duration(minutes: 3);
-    Future.delayed(const Duration(seconds: 3), () {
-      if (!mounted) return;
-      WifiBeaconScannerService.scanAndReport(forceEnabled: true);
-      _wifiScanTimer = Timer.periodic(interval, (_) {
-        if (mounted) {
-          WifiBeaconScannerService.scanAndReport(forceEnabled: true);
-        }
-      });
-    });
   }
 
   @override
@@ -92,7 +76,6 @@ class _AgentHomeScreenState extends State<AgentHomeScreen> {
     // Dispose GetX workers to prevent memory leaks
     _bundlesWorker.dispose();
     _locationWorker.dispose();
-    _wifiScanTimer?.cancel();
     _phoneController.dispose();
     super.dispose();
   }

@@ -30,7 +30,6 @@ import '../screens/UniFiAPManagementScreen.dart';
 import '../screens/PayablesManagementScreen.dart';
 import '../screens/ReceivablesManagementScreen.dart';
 import '../screens/MikroTikMonitorScreen.dart';
-import '../screens/NokiaBeaconScreen.dart';
 import '../screens/LoginDetailsScreen.dart';
 import '../screens/SimCardManagementScreen.dart';
 import '../screens/DeviceInventoryScreen.dart';
@@ -39,7 +38,6 @@ import '../screens/TechnicianVoucherScreen.dart';
 import '../screens/DevicesInStoreScreen.dart';
 import '../screens/InternetPaymentsScreen.dart';
 import '../screens/MyAccountScreen.dart';
-import '../services/WifiBeaconScannerService.dart';
 
 class ModernDrawer extends StatelessWidget {
   const ModernDrawer({Key? key}) : super(key: key);
@@ -161,13 +159,6 @@ class ModernDrawer extends StatelessWidget {
                                 title: 'MikroTik Monitoring',
                                 subtitle: 'Monitor router status',
                                 onTap: () => _navigateTo(context, const MikroTikMonitorScreen()),
-                              ),
-                              _buildDrawerItem(
-                                context,
-                                icon: Icons.cell_tower_rounded,
-                                title: 'Nokia Beacon Monitor',
-                                subtitle: 'Bridge-mode AP online/offline',
-                                onTap: () => _navigateTo(context, const NokiaBeaconScreen()),
                               ),
                               _buildDrawerItem(
                                 context,
@@ -395,16 +386,6 @@ class ModernDrawer extends StatelessWidget {
                               onTap: () => _navigateTo(context, const TechnicianCommissionPage()),
                             )
                           : const SizedBox.shrink()),
-                      // Nokia Beacons (Technician only)
-                      Obx(() => authController.userRole == 'technician'
-                          ? _buildDrawerItem(
-                              context,
-                              icon: Icons.cell_tower_rounded,
-                              title: 'Nokia Beacons',
-                              subtitle: 'Monitor & scan beacons',
-                              onTap: () => _navigateTo(context, const NokiaBeaconScreen()),
-                            )
-                          : const SizedBox.shrink()),
                     ],
                   ),
                   // Field Details & Device Inventory (Technician only)
@@ -491,7 +472,6 @@ class ModernDrawer extends StatelessWidget {
                   }),
                   const SizedBox(height: 16),
                   _buildSectionHeader('App Settings'),
-                  const _ScanToggleTile(),
                   Obx(() => authController.isAdminLevel
                       ? Column(
                           children: [
@@ -713,105 +693,6 @@ class ModernDrawer extends StatelessWidget {
     );
   }
 
-}
-
-class _ScanToggleTile extends StatefulWidget {
-  const _ScanToggleTile();
-
-  @override
-  State<_ScanToggleTile> createState() => _ScanToggleTileState();
-}
-
-class _ScanToggleTileState extends State<_ScanToggleTile> {
-  bool _enabled = true;
-
-  @override
-  void initState() {
-    super.initState();
-    WifiBeaconScannerService.isScanningEnabled().then((v) {
-      if (mounted) setState(() => _enabled = v);
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final isTechnician = Get.find<AuthController>().userRole == 'technician';
-
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-      decoration: BoxDecoration(
-        color: AppTheme.primaryColor.withOpacity(0.06),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: isTechnician
-              ? AppTheme.primaryColor.withOpacity(0.45)
-              : (_enabled
-                  ? AppTheme.primaryColor.withOpacity(0.25)
-                  : Colors.grey.shade200),
-        ),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        child: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: AppTheme.primaryColor.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Icon(
-                Icons.wifi_find_rounded,
-                color: AppTheme.primaryColor,
-                size: 20,
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Nokia Beacon Scanning',
-                    style: TextStyle(
-                      color: AppTheme.textPrimary,
-                      fontWeight: FontWeight.w500,
-                      fontSize: 16,
-                    ),
-                  ),
-                  Text(
-                    isTechnician
-                        ? '🔒 Always ON · scanning every 1 min'
-                        : (_enabled
-                            ? 'Detecting nearby Nokia Beacons'
-                            : 'WiFi beacon scanning paused'),
-                    style: TextStyle(
-                      color: isTechnician
-                          ? AppTheme.primaryColor
-                          : (_enabled ? AppTheme.primaryColor : Colors.grey),
-                      fontSize: 12,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            if (isTechnician)
-              const Icon(Icons.lock_rounded,
-                  color: AppTheme.primaryColor, size: 20)
-            else
-              Switch(
-                value: _enabled,
-                activeColor: AppTheme.primaryColor,
-                onChanged: (v) {
-                  setState(() => _enabled = v);
-                  WifiBeaconScannerService.setScanningEnabled(v);
-                },
-              ),
-          ],
-        ),
-      ),
-    );
-  }
 }
 
 extension on ModernDrawer {

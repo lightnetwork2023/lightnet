@@ -403,6 +403,14 @@ def docs_list(db_config, collection):
 DEFAULT_MIKROTIK_OWNER_EMAIL = 'lightnetwork2023@gmail.com'
 _OWNER_TENANCY_READY = False
 SYSTEM_COLLECTIONS = frozenset({'app_meta'})
+REMOVED_APP_COLLECTIONS = frozenset({'nokia_beacons', 'nokia_beacons_discovered'})
+
+
+def is_removed_app_collection(collection):
+    c = (collection or '').strip()
+    if not c:
+        return False
+    return c in REMOVED_APP_COLLECTIONS or collection_root(c) in REMOVED_APP_COLLECTIONS
 
 
 def collection_root(collection):
@@ -817,7 +825,6 @@ def resolve_actor(request, db_config, firebase_auth=None):
             and not staff_created_keeps_profile_owner(created_by)
         ):
             set_doc(cur, 'users', uid, {'mikrotik_owner_id': email_oid}, merge=True)
-        ensure_owner_site_locations(cur, oid)
         return actor
 
     remote = (request.remote_addr or '').strip()
@@ -1371,6 +1378,8 @@ def register_routes(app, db_config, firebase_auth=None):
         collection = (data.get('collection') or '').strip()
         if not collection:
             return jsonify({'success': False, 'error': 'collection required'}), 400
+        if is_removed_app_collection(collection):
+            return jsonify({'success': False, 'error': 'Removed. Update the LightNet app.'}), 410
         conn, cur = _conn()
         try:
             docs = _query_collection(cur, actor, collection, data)
@@ -1391,6 +1400,8 @@ def register_routes(app, db_config, firebase_auth=None):
         doc_id = (request.args.get('id') or '').strip()
         if not collection or not doc_id:
             return jsonify({'success': False, 'error': 'collection and id required'}), 400
+        if is_removed_app_collection(collection):
+            return jsonify({'success': False, 'error': 'Removed. Update the LightNet app.'}), 410
         conn, cur = _conn()
         try:
             denied = _location_guard(cur, actor, collection, doc_id)
@@ -1428,6 +1439,8 @@ def register_routes(app, db_config, firebase_auth=None):
         collection = (data.get('collection') or '').strip()
         if not collection:
             return jsonify({'success': False, 'error': 'collection required'}), 400
+        if is_removed_app_collection(collection):
+            return jsonify({'success': False, 'error': 'Removed. Update the LightNet app.'}), 410
         doc_id = str(data.get('id') or new_id())
         payload = data.get('data') if 'data' in data else {k: v for k, v in data.items() if k not in ('collection', 'id', 'merge')}
         merge = bool(data.get('merge')) or request.method in ('PATCH',)
@@ -1499,6 +1512,8 @@ def register_routes(app, db_config, firebase_auth=None):
         doc_id = (request.args.get('id') or '').strip()
         if not collection or not doc_id:
             return jsonify({'success': False, 'error': 'collection and id required'}), 400
+        if is_removed_app_collection(collection):
+            return jsonify({'success': False, 'error': 'Removed. Update the LightNet app.'}), 410
         conn, cur = _conn()
         try:
             if is_location_scoped_collection(collection):
@@ -1531,6 +1546,8 @@ def register_routes(app, db_config, firebase_auth=None):
             for op in ops:
                 kind = op.get('op')
                 collection = op.get('collection')
+                if is_removed_app_collection(collection):
+                    return jsonify({'success': False, 'error': 'Removed. Update the LightNet app.'}), 410
                 doc_id = str(op.get('id') or new_id())
                 if is_location_scoped_collection(collection):
                     if collection == 'locations' and actor.get('role') not in LOCATION_WRITE_ROLES:
@@ -1690,32 +1707,9 @@ def register_routes(app, db_config, firebase_auth=None):
         finally:
             cur.close(); conn.close()
 
-    @app.route('/api/nokia/beacon-status', methods=['POST'])
+    @app.route('/api/nokia/beacon-status', methods=['POST', 'GET'])
     def app_nokia_beacon_status():
-        data = _body()
-        mikrotik_id = (data.get('mikrotik_id') or '').strip()
-        visible = [str(m).upper().strip() for m in (data.get('visible_macs') or [])]
-        if not mikrotik_id:
-            return jsonify({'success': False, 'error': 'mikrotik_id required'}), 400
-        conn, cur = _conn()
-        try:
-            beacons = query_docs(cur, 'nokia_beacons', [{'field': 'mikrotik_id', 'op': '==', 'value': mikrotik_id}])
-            online = offline = 0
-            now = {SPECIAL: 'serverTimestamp'}
-            for b in beacons:
-                mac = str((b.get('data') or {}).get('mac_address') or '').upper().strip()
-                visible_now = mac in visible
-                update = {'status': 'online' if visible_now else 'offline', 'last_checked': now}
-                if visible_now:
-                    update['last_seen'] = now
-                    online += 1
-                else:
-                    offline += 1
-                set_doc(cur, 'nokia_beacons', b['id'], update, merge=True)
-            conn.commit()
-            return jsonify({'success': True, 'online': online, 'offline': offline})
-        finally:
-            cur.close(); conn.close()
+        return jsonify({'success': False, 'error': 'Removed. Update the LightNet app.'}), 410
 
     @app.route('/api/locations', methods=['GET'])
     @app.route('/locations', methods=['GET'])

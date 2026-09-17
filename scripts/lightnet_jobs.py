@@ -107,37 +107,6 @@ def last_month_revenue(cur, locations):
     return _money(row.get('total'))
 
 
-def mark_stale_nokia_beacons(cur, now=None) -> dict:
-    import lightnet_app_docs as ad
-    now = now or _now()
-    stale_after = now - timedelta(hours=6)
-    offline_after = now - timedelta(hours=24)
-    beacons = ad.list_docs(cur, 'nokia_beacons')
-    changed = 0
-    skipped = 0
-    for row in beacons:
-        data = row.get('data') or {}
-        status = (data.get('status') or 'unknown').strip().lower() or 'unknown'
-        last_seen = _dt(data.get('last_seen'))
-        if last_seen is None:
-            skipped += 1
-            continue
-        new_status = status
-        if last_seen < offline_after:
-            new_status = 'offline'
-        elif last_seen < stale_after and status == 'online':
-            new_status = 'stale'
-        if new_status != status:
-            ad.set_doc(cur, 'nokia_beacons', row['id'], {'status': new_status}, merge=True)
-            changed += 1
-    return {
-        'as_of': now.isoformat(),
-        'checked': len(beacons),
-        'changed': changed,
-        'skipped': skipped,
-    }
-
-
 def monthly_sa_balance_update(cur, now=None, force=False, dry_run=False) -> dict:
     import lightnet_app_docs as ad
     now = now or _now()
@@ -225,17 +194,7 @@ def register_job_routes(app, db_config, firebase_auth=None):
 
     @app.route('/api/jobs/nokia-stale', methods=['POST', 'GET'])
     def job_nokia_stale():
-        actor, err = _auth(('boss', 'admin'))
-        if err:
-            return err
-        conn, cur = _conn()
-        try:
-            result = mark_stale_nokia_beacons(cur)
-            conn.commit()
-            return jsonify({'success': True, **result})
-        finally:
-            cur.close()
-            conn.close()
+        return jsonify({'success': False, 'error': 'Removed. Update the LightNet app.'}), 410
 
     @app.route('/api/jobs/sa-monthly-balance', methods=['POST', 'GET'])
     def job_sa_monthly_balance():

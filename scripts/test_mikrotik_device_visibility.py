@@ -148,7 +148,6 @@ class MikroTikDeviceVisibilityTest(unittest.TestCase):
             'internet_payments',
             'simcards',
             'devices',
-            'nokia_beacons',
             'debt_payables',
             'bundle_configurations',
             'sold_vouchers',
