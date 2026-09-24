@@ -40,6 +40,63 @@ def _iso(v):
     return str(v)
 
 
+def _iso_utc(v):
+    """UTC clock with a Z suffix. The app treats a bare ISO string as local time."""
+    s = _iso(v)
+    if isinstance(v, datetime) and s and not s.endswith('Z') and not s.endswith('z'):
+        return s + 'Z'
+    return s
+
+
+# Written by the server with datetime.utcnow(). Payment times stay local MySQL time.
+_UTC_CLOCK_KEYS = frozenset({
+    'lastSeen', 'lastChecked', 'clients_updated_at', 'sampled_at',
+})
+
+
+def _utc_clock_string(value):
+    if not isinstance(value, str):
+        return value
+    s = value.strip()
+    if len(s) < 19 or 'T' not in s:
+        return value
+    if s.endswith('Z') or s.endswith('z'):
+        return value
+    if len(s) > 19 and s[19] in '+-':
+        return value
+    return s + 'Z'
+
+
+def mark_utc_clocks(value):
+    if isinstance(value, dict):
+        out = {}
+        for k, v in value.items():
+            if k in _UTC_CLOCK_KEYS and isinstance(v, str):
+                out[k] = _utc_clock_string(v)
+            else:
+                out[k] = mark_utc_clocks(v)
+        return out
+    if isinstance(value, list):
+        return [mark_utc_clocks(v) for v in value]
+    return value
+
+
+def present_doc(doc):
+    if not isinstance(doc, dict):
+        return doc
+    out = dict(doc)
+    data = out.get('data')
+    if isinstance(data, dict):
+        out['data'] = mark_utc_clocks(data)
+    return out
+
+
+def present_docs(docs):
+    if not isinstance(docs, list):
+        return docs
+    return [present_doc(d) for d in docs]
+
+
 def _dt(v):
     if v is None:
         return None
@@ -91,7 +148,7 @@ def _resolve_value(v, now=None):
     if _is_special(v):
         kind = v.get(SPECIAL)
         if kind == 'serverTimestamp':
-            return _iso(now)
+            return _iso_utc(now)
         if kind == 'timestamp':
             return v.get('iso') or _iso(_dt(v.get('value')) or now)
         if kind == 'delete':
@@ -120,7 +177,7 @@ def _deep_merge(dst, src, now=None):
                 except Exception:
                     dst[k] = float(v.get('n') or 0)
             elif kind == 'serverTimestamp':
-                dst[k] = _iso(now)
+                dst[k] = _iso_utc(now)
             elif kind == 'timestamp':
                 dst[k] = v.get('iso') or _iso(_dt(v.get('value')) or now)
             else:
@@ -1387,7 +1444,7 @@ def register_routes(app, db_config, firebase_auth=None):
                 loc_id = location_id_from_collection(collection)
                 if loc_id and not location_access_ok(actor, loc_id, list_locations(cur)):
                     return jsonify({'success': True, 'docs': []})
-            return jsonify({'success': True, 'docs': docs})
+            return jsonify({'success': True, 'docs': present_docs(docs)})
         finally:
             cur.close(); conn.close()
 
@@ -1426,7 +1483,7 @@ def register_routes(app, db_config, firebase_auth=None):
             allowed = allowed_location_ids(actor, list_locations(cur))
             if not tenant_docs_visible(actor, collection, doc, allowed, default_mikrotik_owner_id(cur)):
                 return jsonify({'success': True, 'exists': False, 'doc': None})
-            return jsonify({'success': True, 'exists': True, 'doc': doc})
+            return jsonify({'success': True, 'exists': True, 'doc': present_doc(doc)})
         finally:
             cur.close(); conn.close()
 
@@ -1499,7 +1556,7 @@ def register_routes(app, db_config, firebase_auth=None):
                 return jsonify({'success': True, 'id': doc_id}), 201
             doc = set_doc(cur, collection, doc_id, payload, merge=merge)
             conn.commit()
-            return jsonify({'success': True, 'id': doc['id'], 'doc': doc})
+            return jsonify({'success': True, 'id': doc['id'], 'doc': present_doc(doc)})
         finally:
             cur.close(); conn.close()
 
