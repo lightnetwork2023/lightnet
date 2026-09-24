@@ -1,4 +1,4 @@
-"""Nokia WiFi Beacon rows from a MikroTik DHCP lease table.
+"""Nokia WiFi Beacon and Mercusys Halo rows from a MikroTik DHCP lease table.
 
 Online means the lease is bound and the router heard the beacon within
 BEACON_ONLINE_SECONDS. On the live sites a healthy beacon renews about
@@ -9,6 +9,8 @@ keyed by MAC, so a lease refresh cannot wipe them.
 from __future__ import annotations
 
 NOKIA_BEACON_OUI = 'B4:63:6F'
+# Mercusys Halo mesh nodes (sold as Mercury). They announce hostnames like halo-H30.
+MERCUSYS_HALO_OUI = '08:8A:F1'
 BEACON_ONLINE_SECONDS = 30 * 60
 
 _UNITS = {'w': 604800, 'd': 86400, 'h': 3600, 'm': 60, 's': 1}
@@ -50,7 +52,11 @@ def is_beacon_lease(lease):
     host = str(lease.get('host-name') or '').lower()
     if mac.startswith(NOKIA_BEACON_OUI):
         return True
-    return 'nokia' in host and 'beacon' in host
+    if 'nokia' in host and 'beacon' in host:
+        return True
+    if host.startswith('halo-') or 'mercusys' in host or 'mercury' in host:
+        return True
+    return mac.startswith(MERCUSYS_HALO_OUI) and ('halo' in host or 'h30' in host)
 
 
 def lease_to_point(lease):

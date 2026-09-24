@@ -30,6 +30,16 @@ def test_online_window():
     assert stale['status'] == 'offline'
     phone = {'mac-address': '12:6A:FA:50:DA:37', 'host-name': 'Pixel', 'status': 'bound', 'last-seen': '1m'}
     assert ap.is_beacon_lease(phone) is False
+    halo = ap.lease_to_point({
+        'mac-address': '08:8A:F1:B7:86:B4',
+        'host-name': 'halo-H30G',
+        'address': '192.168.88.58',
+        'status': 'bound',
+        'last-seen': '9m24s',
+    })
+    assert halo['status'] == 'online'
+    assert halo['hostname'] == 'halo-H30G'
+    assert ap.is_beacon_lease({'mac-address': '08:8A:F1:B7:8C:4C', 'host-name': 'halo-H30'}) is True
 
 
 def test_missing_lease_stays_offline():

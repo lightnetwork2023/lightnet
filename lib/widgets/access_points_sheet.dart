@@ -71,7 +71,7 @@ List<AccessPointView> accessPointsFrom(Map<String, dynamic> data) {
 String accessPointLabel(AccessPointView ap) => ap.name.isNotEmpty ? ap.name : ap.mac;
 
 String accessPointSummary(List<AccessPointView> points) {
-  if (points.isEmpty) return 'No Nokia beacons';
+  if (points.isEmpty) return 'No access points';
   final offline = points.where((p) => !p.isOnline).length;
   final online = points.length - offline;
   if (offline == 0) return '$online access points online';
@@ -226,13 +226,13 @@ class _AccessPointsSheetState extends State<AccessPointsSheet> {
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
                 child: Text(
-                  'Turn one beacon off, wait a few minutes, then tap Refresh. The one heard longest ago is the one you turned off. Tap a row to name it.',
+                  'Turn one access point off, wait a few minutes, then tap Refresh. The one heard longest ago is the one you turned off. Tap a row to name it.',
                   style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                 ),
               ),
               Expanded(
                 child: points.isEmpty
-                    ? Center(child: Text('No Nokia beacons on this router yet', style: TextStyle(color: Colors.grey[600])))
+                    ? Center(child: Text('No access points on this router yet', style: TextStyle(color: Colors.grey[600])))
                     : ListView.separated(
                         itemCount: points.length,
                         separatorBuilder: (_, __) => const Divider(height: 1),
@@ -285,7 +285,7 @@ Future<String?> _renameAccessPoint(BuildContext context, String deviceId, Access
   final saved = await showDialog<String>(
     context: context,
     builder: (ctx) => AlertDialog(
-      title: const Text('Name this beacon'),
+      title: const Text('Name this access point'),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
