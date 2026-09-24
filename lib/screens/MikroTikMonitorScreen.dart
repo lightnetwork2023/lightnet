@@ -250,7 +250,7 @@ class _MikroTikMonitorScreenState extends State<MikroTikMonitorScreen> {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
-        onTap: () => _showDeviceDetails(doc),
+        onTap: () => showAccessPointsSheet(context, doc.id, data),
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Row(
@@ -659,62 +659,6 @@ class _MikroTikMonitorScreenState extends State<MikroTikMonitorScreen> {
             },
             child: const Text('Delete'),
           ),
-        ],
-      ),
-    );
-  }
-
-  void _showDeviceDetails(QueryDocumentSnapshot<Map<String, dynamic>> doc) {
-    final data = doc.data() as Map<String, dynamic>;
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(data['name'] ?? 'Device Details'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _detailRow('IP Address', data['ipAddress'] ?? 'N/A'),
-              _detailRow('Location', data['location'] ?? 'N/A'),
-              _detailRow('VPN Interface', data['vpnInterface'] ?? 'N/A'),
-              _detailRow('Status', data['status'] ?? 'unknown'),
-              if (data['description'] != null && data['description'].toString().isNotEmpty)
-                _detailRow('Description', data['description']),
-              if (data['lastSeen'] != null)
-                _detailRow('Last Seen', _formatTimestamp(data['lastSeen'])),
-              if (data['lastChecked'] != null)
-                _detailRow('Last Checked', _formatTimestamp(data['lastChecked'])),
-              AccessPointLink(deviceId: doc.id, data: data),
-              _detailRow('WAN Interface', data['wanInterface'] ?? 'ether1'),
-              _detailRow('RouterOS User', data['username'] ?? 'admin'),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _detailRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 120,
-            child: Text(
-              label,
-              style: const TextStyle(fontWeight: FontWeight.w600),
-            ),
-          ),
-          Expanded(child: Text(value)),
         ],
       ),
     );

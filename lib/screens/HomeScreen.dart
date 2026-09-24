@@ -633,9 +633,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final role = _authController.userRole;
+    final isBoss = role == 'boss';
+    final isTechnician = role == 'technician';
     return DefaultTabController(
       length: 2,
-      initialIndex: 0, // Default to Dashboard tab
+      initialIndex: 0,
       child: Scaffold(
         backgroundColor: AppTheme.backgroundColor,
         drawer: const ModernDrawer(),
@@ -666,18 +669,22 @@ class _HomeScreenState extends State<HomeScreen> {
             labelColor: Colors.white,
             unselectedLabelColor: Colors.white70,
             tabs: [
+              if (isBoss)
+                const Tab(icon: Icon(Icons.router_rounded), text: 'MikroTik'),
               const Tab(icon: Icon(Icons.dashboard_rounded), text: 'Dashboard'),
-              Tab(
-                icon: Icon(_authController.userRole == 'technician'
-                    ? Icons.router_rounded
-                    : Icons.location_city_rounded),
-                text: _authController.userRole == 'technician' ? 'MikroTik' : 'Sites',
-              ),
+              if (!isBoss)
+                Tab(
+                  icon: Icon(isTechnician
+                      ? Icons.router_rounded
+                      : Icons.location_city_rounded),
+                  text: isTechnician ? 'MikroTik' : 'Sites',
+                ),
             ],
           ),
         ),
         body: TabBarView(
           children: [
+            if (isBoss) const MikroTikMonitorContent(),
             // Dashboard Tab
             RefreshIndicator(
               onRefresh: _refreshData,
@@ -1376,10 +1383,11 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
             
-            // Sites / MikroTik Tab (role-based)
-            _authController.userRole == 'technician'
-                ? const MikroTikMonitorContent()
-                : _buildSitesTab(),
+            // Sites stay for MD. Technician keeps MikroTik as the second tab.
+            if (!isBoss)
+              isTechnician
+                  ? const MikroTikMonitorContent()
+                  : _buildSitesTab(),
           ],
         ),
       ),
@@ -1678,10 +1686,7 @@ class _MikroTikMonitorContentState extends State<MikroTikMonitorContent> {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
-        onTap: () => Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => const MikroTikMonitorScreen()),
-        ),
+        onTap: () => showAccessPointsSheet(context, doc.id, data),
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Row(

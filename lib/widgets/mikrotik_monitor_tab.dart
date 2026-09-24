@@ -233,10 +233,7 @@ class _MikroTikMonitorContentState extends State<MikroTikMonitorContent> {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
-        onTap: () => Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => const MikroTikMonitorScreen()),
-        ),
+        onTap: () => showAccessPointsSheet(context, doc.id, data),
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Row(
