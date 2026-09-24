@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../screens/MikroTikMonitorScreen.dart';
 import '../services/MikroTikMonitorService.dart';
 import '../theme/app_theme.dart';
+import 'access_points_sheet.dart';
 
 /// MikroTik device list + summary (no AppBar). Shared by [HomeScreen] and [TechnicianHomeScreen].
 class MikroTikMonitorContent extends StatefulWidget {
@@ -304,6 +305,7 @@ class _MikroTikMonitorContentState extends State<MikroTikMonitorContent> {
                         ),
                       ],
                     ),
+                    AccessPointLink(deviceId: doc.id, data: data),
                   ],
                 ),
               ),

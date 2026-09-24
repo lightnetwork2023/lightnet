@@ -13,6 +13,7 @@ import 'OfflineDevicesScreen.dart';
 import 'VouchersScreen.dart';
 import '../theme/app_theme.dart';
 import '../widgets/modern_components.dart';
+import '../widgets/access_points_sheet.dart';
 import '../widgets/modern_drawer.dart';
 import 'HomeInternetCustomersScreen.dart';
 import 'MikroTikMonitorScreen.dart';
@@ -1749,6 +1750,7 @@ class _MikroTikMonitorContentState extends State<MikroTikMonitorContent> {
                         ),
                       ],
                     ),
+                    AccessPointLink(deviceId: doc.id, data: data),
                   ],
                 ),
               ),

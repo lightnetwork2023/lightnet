@@ -74,6 +74,20 @@ class MikroTikMonitorService {
     await _firestore.collection(_collection).doc(deviceId).delete();
   }
 
+  /// Name is stored by MAC and is not touched by the DHCP refresh.
+  static Future<void> setAccessPointName({
+    required String deviceId,
+    required String mac,
+    required String name,
+  }) async {
+    final trimmed = name.trim();
+    await _firestore.collection(_collection).doc(deviceId).update({
+      'access_point_names': {
+        mac: trimmed.isEmpty ? FieldValue.delete() : trimmed,
+      },
+    });
+  }
+
   static Stream<QuerySnapshot<Map<String, dynamic>>> getMikroTikDevices() {
     return _firestore
         .collection(_collection)

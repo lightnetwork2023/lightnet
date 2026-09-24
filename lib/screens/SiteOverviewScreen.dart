@@ -5,6 +5,7 @@ import '../controllers/ApiService.dart';
 import '../services/SiteService.dart';
 import '../services/MikroTikMonitorService.dart';
 import '../theme/app_theme.dart';
+import '../widgets/access_points_sheet.dart';
 import 'SiteRegistrationScreen.dart';
 import 'FieldDetailsScreen.dart';
 
@@ -249,6 +250,7 @@ class _SiteOverviewScreenState extends State<SiteOverviewScreen> {
                                             ),
                                           ),
                                         ]),
+                                        AccessPointLink(deviceId: doc.id, data: d),
                                       ],
                                     ),
                                   ),

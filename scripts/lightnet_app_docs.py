@@ -51,6 +51,7 @@ def _iso_utc(v):
 # Written by the server with datetime.utcnow(). Payment times stay local MySQL time.
 _UTC_CLOCK_KEYS = frozenset({
     'lastSeen', 'lastChecked', 'clients_updated_at', 'sampled_at',
+    'access_points_updated_at',
 })
 
 

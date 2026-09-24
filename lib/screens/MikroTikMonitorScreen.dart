@@ -4,6 +4,7 @@ import 'package:lightnetwork/services/app_db.dart';
 import 'package:intl/intl.dart';
 import '../services/MikroTikMonitorService.dart';
 import '../theme/app_theme.dart';
+import '../widgets/access_points_sheet.dart';
 
 class MikroTikMonitorScreen extends StatefulWidget {
   const MikroTikMonitorScreen({Key? key}) : super(key: key);
@@ -318,6 +319,7 @@ class _MikroTikMonitorScreenState extends State<MikroTikMonitorScreen> {
                         ),
                       ],
                     ),
+                    AccessPointLink(deviceId: doc.id, data: data),
                     if (lastSeen != null) ...[
                       const SizedBox(height: 2),
                       Row(
@@ -683,6 +685,7 @@ class _MikroTikMonitorScreenState extends State<MikroTikMonitorScreen> {
                 _detailRow('Last Seen', _formatTimestamp(data['lastSeen'])),
               if (data['lastChecked'] != null)
                 _detailRow('Last Checked', _formatTimestamp(data['lastChecked'])),
+              AccessPointLink(deviceId: doc.id, data: data),
               _detailRow('WAN Interface', data['wanInterface'] ?? 'ether1'),
               _detailRow('RouterOS User', data['username'] ?? 'admin'),
             ],
