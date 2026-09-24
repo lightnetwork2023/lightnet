@@ -10,6 +10,7 @@ class AccessPointView {
   final String hostname;
   final String status;
   final String lastSeen;
+  final int lastSeenSeconds;
   final bool present;
   final String name;
 
@@ -19,6 +20,7 @@ class AccessPointView {
     required this.hostname,
     required this.status,
     required this.lastSeen,
+    required this.lastSeenSeconds,
     required this.present,
     required this.name,
   });
@@ -49,15 +51,19 @@ List<AccessPointView> accessPointsFrom(Map<String, dynamic> data) {
       hostname: '${item['hostname'] ?? ''}',
       status: '${item['status'] ?? 'offline'}',
       lastSeen: '${item['last_seen'] ?? ''}',
+      lastSeenSeconds: int.tryParse('${item['last_seen_seconds'] ?? ''}') ?? -1,
       present: item['present'] != false,
       name: custom == null ? '' : '$custom'.trim(),
     ));
   }
   points.sort((a, b) {
-    if (a.isOnline != b.isOnline) return a.isOnline ? 1 : -1;
-    final an = a.name.isEmpty ? a.mac : a.name;
-    final bn = b.name.isEmpty ? b.mac : b.name;
-    return an.compareTo(bn);
+    int rank(AccessPointView ap) {
+      if (!ap.present || ap.lastSeenSeconds < 0) return 1 << 30;
+      return ap.lastSeenSeconds;
+    }
+    final byAge = rank(b).compareTo(rank(a));
+    if (byAge != 0) return byAge;
+    return accessPointLabel(a).compareTo(accessPointLabel(b));
   });
   return points;
 }
@@ -119,11 +125,55 @@ void showAccessPointsSheet(BuildContext context, String deviceId, Map<String, dy
   );
 }
 
-class AccessPointsSheet extends StatelessWidget {
+bool _quieterThanTheOthers(AccessPointView ap, List<AccessPointView> points) {
+  final ages = [
+    for (final point in points)
+      if (point.present && point.lastSeenSeconds >= 0) point.lastSeenSeconds,
+  ];
+  if (ages.length < 2 || !ap.present || ap.lastSeenSeconds < 0) return false;
+  var freshest = ages.first;
+  for (final age in ages) {
+    if (age < freshest) freshest = age;
+  }
+  return ap.lastSeenSeconds >= freshest + 8 * 60;
+}
+
+class AccessPointsSheet extends StatefulWidget {
   final String deviceId;
   final String deviceName;
 
   const AccessPointsSheet({super.key, required this.deviceId, required this.deviceName});
+
+  @override
+  State<AccessPointsSheet> createState() => _AccessPointsSheetState();
+}
+
+class _AccessPointsSheetState extends State<AccessPointsSheet> {
+  Map<String, dynamic>? _fresh;
+  bool _refreshing = false;
+
+  Future<void> _refresh() async {
+    if (_refreshing) return;
+    setState(() => _refreshing = true);
+    try {
+      final result = await MikroTikMonitorService.refreshAccessPoints(widget.deviceId);
+      if (!mounted) return;
+      setState(() {
+        _fresh = {
+          'access_points': result['access_points'] ?? const [],
+          'access_point_names': result['access_point_names'] ?? const {},
+        };
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not refresh: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _refreshing = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -135,9 +185,9 @@ class AccessPointsSheet extends StatelessWidget {
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
       child: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-        stream: MikroTikMonitorService.getMikroTikDevice(deviceId),
+        stream: MikroTikMonitorService.getMikroTikDevice(widget.deviceId),
         builder: (context, snap) {
-          final data = snap.data?.data() ?? const <String, dynamic>{};
+          final data = _fresh ?? snap.data?.data() ?? const <String, dynamic>{};
           final points = accessPointsFrom(data);
           return Column(
             children: [
@@ -148,16 +198,27 @@ class AccessPointsSheet extends StatelessWidget {
                 decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(4)),
               ),
               Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
                 child: Row(
                   children: [
                     const Icon(Icons.wifi_tethering, color: AppTheme.primaryColor),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        'Access points · $deviceName',
+                        'Access points · ${widget.deviceName}',
                         style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
                       ),
+                    ),
+                    TextButton.icon(
+                      onPressed: _refreshing ? null : _refresh,
+                      icon: _refreshing
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.refresh, size: 18),
+                      label: const Text('Refresh'),
                     ),
                   ],
                 ),
@@ -165,7 +226,7 @@ class AccessPointsSheet extends StatelessWidget {
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
                 child: Text(
-                  'Online means this router heard the beacon in the last 30 minutes. Tap a row to name it. The name stays on the MAC.',
+                  'Turn one beacon off, wait a few minutes, then tap Refresh. The one heard longest ago is the one you turned off. Tap a row to name it.',
                   style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                 ),
               ),
@@ -177,19 +238,36 @@ class AccessPointsSheet extends StatelessWidget {
                         separatorBuilder: (_, __) => const Divider(height: 1),
                         itemBuilder: (context, index) {
                           final ap = points[index];
-                          final color = ap.isOnline ? Colors.green : Colors.red;
+                          final quiet = _quieterThanTheOthers(ap, points);
+                          final color = !ap.isOnline || quiet ? Colors.red : Colors.green;
                           final heard = !ap.present
                               ? 'No DHCP lease'
                               : ap.lastSeen.isEmpty
                                   ? 'No last-seen from the router'
-                                  : 'Heard ${ap.lastSeen} ago';
+                                  : quiet
+                                      ? 'Heard ${ap.lastSeen} ago — this is the quiet one'
+                                      : 'Heard ${ap.lastSeen} ago';
                           return ListTile(
-                            leading: Icon(ap.isOnline ? Icons.wifi : Icons.wifi_off, color: color),
+                            leading: Icon(ap.isOnline && !quiet ? Icons.wifi : Icons.wifi_off, color: color),
                             title: Text(accessPointLabel(ap), style: const TextStyle(fontWeight: FontWeight.w600)),
                             subtitle: Text('$heard\n${ap.mac}${ap.ip.isEmpty ? '' : ' · ${ap.ip}'}'),
                             isThreeLine: true,
                             trailing: const Icon(Icons.edit_outlined, size: 18),
-                            onTap: () => _renameAccessPoint(context, deviceId, ap),
+                            onTap: () async {
+                              final saved = await _renameAccessPoint(context, widget.deviceId, ap);
+                              if (saved == null || !mounted) return;
+                              setState(() {
+                                final base = Map<String, dynamic>.from(data);
+                                final names = Map<String, dynamic>.from(base['access_point_names'] ?? {});
+                                if (saved.trim().isEmpty) {
+                                  names.remove(ap.mac);
+                                } else {
+                                  names[ap.mac] = saved.trim();
+                                }
+                                base['access_point_names'] = names;
+                                _fresh = base;
+                              });
+                            },
                           );
                         },
                       ),
@@ -202,7 +280,7 @@ class AccessPointsSheet extends StatelessWidget {
   }
 }
 
-Future<void> _renameAccessPoint(BuildContext context, String deviceId, AccessPointView ap) async {
+Future<String?> _renameAccessPoint(BuildContext context, String deviceId, AccessPointView ap) async {
   final ctrl = TextEditingController(text: ap.name);
   final saved = await showDialog<String>(
     context: context,
@@ -234,16 +312,18 @@ Future<void> _renameAccessPoint(BuildContext context, String deviceId, AccessPoi
     ),
   );
   ctrl.dispose();
-  if (saved == null || !context.mounted) return;
+  if (saved == null || !context.mounted) return null;
   try {
     await MikroTikMonitorService.setAccessPointName(
       deviceId: deviceId,
       mac: ap.mac,
       name: saved,
     );
+    return saved;
   } catch (e) {
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not save name: $e')));
     }
+    return null;
   }
 }

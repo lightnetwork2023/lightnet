@@ -1,3 +1,7 @@
+import 'dart:convert';
+
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:http/http.dart' as http;
 import 'package:lightnetwork/services/app_db.dart';
 
 class MikroTikMonitorService {
@@ -72,6 +76,25 @@ class MikroTikMonitorService {
 
   static Future<void> deleteMikroTikDevice(String deviceId) async {
     await _firestore.collection(_collection).doc(deviceId).delete();
+  }
+
+  /// Read this router's Nokia beacon leases now, instead of waiting for the 5-minute check.
+  static Future<Map<String, dynamic>> refreshAccessPoints(String deviceId) async {
+    final token = await FirebaseAuth.instance.currentUser?.getIdToken();
+    final res = await http.post(
+      Uri.parse('https://lightnet.lightnetwork.pro/api/mikrotik/refresh-access-points'),
+      headers: {
+        'Content-Type': 'application/json',
+        if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
+      },
+      body: jsonEncode({'deviceId': deviceId}),
+    );
+    final raw = res.body.isEmpty ? <String, dynamic>{} : jsonDecode(res.body);
+    final map = raw is Map ? Map<String, dynamic>.from(raw) : <String, dynamic>{};
+    if (res.statusCode >= 400) {
+      throw Exception(map['error']?.toString() ?? 'Refresh failed');
+    }
+    return map;
   }
 
   /// Name is stored by MAC and is not touched by the DHCP refresh.
