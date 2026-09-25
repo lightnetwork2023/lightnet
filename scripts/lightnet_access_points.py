@@ -1,8 +1,7 @@
 """Nokia WiFi Beacon and Mercusys Halo rows from a MikroTik DHCP lease table.
 
-Online means the lease is bound and the router heard the beacon within
-BEACON_ONLINE_SECONDS. On the live sites a healthy beacon renews about
-every 11–15 minutes, so a 5-minute cutoff marks working beacons offline.
+A current DHCP lease means online. No lease means offline.
+Refresh can still mark a leased unit offline when the router ping fails.
 Names are not stored here. The app keeps those on access_point_names,
 keyed by MAC, so a lease refresh cannot wipe them.
 """
@@ -11,7 +10,6 @@ from __future__ import annotations
 NOKIA_BEACON_OUI = 'B4:63:6F'
 # Mercusys Halo mesh nodes (sold as Mercury). They announce hostnames like halo-H30.
 MERCUSYS_HALO_OUI = '08:8A:F1'
-BEACON_ONLINE_SECONDS = 30 * 60
 
 _UNITS = {'w': 604800, 'd': 86400, 'h': 3600, 'm': 60, 's': 1}
 
@@ -105,29 +103,26 @@ def ping_rows_reached(rows, ip, mac):
 
 
 def note_ping(point, replied):
-    """A reply means the unit is up now. No reply leaves the heard-time color."""
+    """Refresh only. A failed ping is offline even when the DHCP lease is still there."""
     row = dict(point or {})
     ip = str(row.get('ip') or '').strip()
-    if not ip:
-        row['ping'] = 'no-ip'
+    if not ip or not replied:
+        row['ping'] = 'no-ip' if not ip else 'no-reply'
+        row['status'] = 'offline'
         return row
-    if replied:
-        row['ping'] = 'replied'
-        row['status'] = 'online'
-        return row
-    row['ping'] = 'no-reply'
+    row['ping'] = 'replied'
+    row['status'] = 'online'
     return row
 
 
 def lease_to_point(lease):
     seconds = routeros_duration_seconds(lease.get('last-seen'))
     bound = str(lease.get('status') or '').lower() == 'bound'
-    online = bound and seconds is not None and seconds <= BEACON_ONLINE_SECONDS
     return {
         'mac': _mac(lease),
         'ip': lease.get('active-address') or lease.get('address') or '',
         'hostname': lease.get('host-name') or '',
-        'status': 'online' if online else 'offline',
+        'status': 'online' if bound else 'offline',
         'last_seen': lease.get('last-seen') or '',
         'last_seen_seconds': seconds if seconds is not None else -1,
         'present': True,

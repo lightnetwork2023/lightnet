@@ -27,7 +27,7 @@ def test_online_window():
         'status': 'bound',
         'last-seen': '2h35m58s',
     })
-    assert stale['status'] == 'offline'
+    assert stale['status'] == 'online'
     phone = {'mac-address': '12:6A:FA:50:DA:37', 'host-name': 'Pixel', 'status': 'bound', 'last-seen': '1m'}
     assert ap.is_beacon_lease(phone) is False
     halo = ap.lease_to_point({
@@ -73,7 +73,7 @@ def test_ping_match():
     assert ap.note_ping(quiet, True)['status'] == 'online'
     assert ap.note_ping(quiet, True)['ping'] == 'replied'
     fresh = {'mac': mac, 'ip': ip, 'status': 'online', 'last_seen_seconds': 60}
-    assert ap.note_ping(fresh, False)['status'] == 'online'
+    assert ap.note_ping(fresh, False)['status'] == 'offline'
     assert ap.note_ping(fresh, False)['ping'] == 'no-reply'
     assert ap.lan_interface_for_ip(
         [{'address': '192.168.88.1/23', 'interface': 'bridgelan'}],

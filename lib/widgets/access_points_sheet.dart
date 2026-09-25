@@ -284,7 +284,7 @@ class _AccessPointsSheetState extends State<AccessPointsSheet> {
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
                 child: Text(
-                  'Turn one access point off and tap Refresh. Replied means it answered the router. No reply with an old heard time is the one you turned off. Tap a row to name it.',
+                  'A DHCP lease means online. Tap Refresh to ping: no reply turns it offline even if the lease is still there. Tap a row to name it.',
                   style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                 ),
               ),
