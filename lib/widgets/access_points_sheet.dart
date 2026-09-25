@@ -70,13 +70,27 @@ List<AccessPointView> accessPointsFrom(Map<String, dynamic> data) {
 
 String accessPointLabel(AccessPointView ap) => ap.name.isNotEmpty ? ap.name : ap.mac;
 
-String accessPointSummary(List<AccessPointView> points) {
-  if (points.isEmpty) return 'No access points';
-  final offline = points.where((p) => !p.isOnline).length;
-  final online = points.length - offline;
-  if (offline == 0) return '$online access points online';
-  if (online == 0) return '$offline access points offline';
-  return '$online online · $offline offline';
+Widget _accessPointCountLabel(int online, int offline, bool empty) {
+  const size = TextStyle(fontSize: 12);
+  if (empty) {
+    return const Text('No access points', style: TextStyle(fontSize: 12, color: Colors.grey));
+  }
+  if (offline == 0) {
+    return Text('$online access points online', style: size.copyWith(color: Colors.green));
+  }
+  if (online == 0) {
+    return Text('$offline access points offline', style: size.copyWith(color: Colors.red));
+  }
+  return Text.rich(
+    TextSpan(
+      style: size,
+      children: [
+        TextSpan(text: '$online online', style: const TextStyle(color: Colors.green, fontSize: 12)),
+        const TextSpan(text: ' · ', style: TextStyle(color: Colors.grey, fontSize: 12)),
+        TextSpan(text: '$offline offline', style: const TextStyle(color: Colors.red, fontSize: 12)),
+      ],
+    ),
+  );
 }
 
 class AccessPointLink extends StatelessWidget {
@@ -90,11 +104,12 @@ class AccessPointLink extends StatelessWidget {
     if (data['access_points'] is! List) return const SizedBox.shrink();
     final points = accessPointsFrom(data);
     final offline = points.where((p) => !p.isOnline).length;
-    final color = points.isEmpty
+    final online = points.length - offline;
+    final iconColor = points.isEmpty
         ? Colors.grey
-        : offline > 0
-            ? Colors.red
-            : Colors.green;
+        : online > 0
+            ? Colors.green
+            : Colors.red;
     return Align(
       alignment: Alignment.centerLeft,
       child: TextButton.icon(
@@ -103,13 +118,9 @@ class AccessPointLink extends StatelessWidget {
           padding: EdgeInsets.zero,
           minimumSize: const Size(0, 28),
           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          foregroundColor: color,
         ),
-        icon: const Icon(Icons.wifi_tethering, size: 14),
-        label: Text(
-          accessPointSummary(points),
-          style: const TextStyle(fontSize: 12),
-        ),
+        icon: Icon(Icons.wifi_tethering, size: 14, color: iconColor),
+        label: _accessPointCountLabel(online, offline, points.isEmpty),
       ),
     );
   }
@@ -123,19 +134,6 @@ void showAccessPointsSheet(BuildContext context, String deviceId, Map<String, dy
     backgroundColor: Colors.transparent,
     builder: (_) => AccessPointsSheet(deviceId: deviceId, deviceName: name),
   );
-}
-
-bool _quieterThanTheOthers(AccessPointView ap, List<AccessPointView> points) {
-  final ages = [
-    for (final point in points)
-      if (point.present && point.lastSeenSeconds >= 0) point.lastSeenSeconds,
-  ];
-  if (ages.length < 2 || !ap.present || ap.lastSeenSeconds < 0) return false;
-  var freshest = ages.first;
-  for (final age in ages) {
-    if (age < freshest) freshest = age;
-  }
-  return ap.lastSeenSeconds >= freshest + 8 * 60;
 }
 
 class AccessPointsSheet extends StatefulWidget {
@@ -238,17 +236,14 @@ class _AccessPointsSheetState extends State<AccessPointsSheet> {
                         separatorBuilder: (_, __) => const Divider(height: 1),
                         itemBuilder: (context, index) {
                           final ap = points[index];
-                          final quiet = _quieterThanTheOthers(ap, points);
-                          final color = !ap.isOnline || quiet ? Colors.red : Colors.green;
+                          final color = ap.isOnline ? Colors.green : Colors.red;
                           final heard = !ap.present
                               ? 'No DHCP lease'
                               : ap.lastSeen.isEmpty
                                   ? 'No last-seen from the router'
-                                  : quiet
-                                      ? 'Heard ${ap.lastSeen} ago — this is the quiet one'
-                                      : 'Heard ${ap.lastSeen} ago';
+                                  : 'Heard ${ap.lastSeen} ago';
                           return ListTile(
-                            leading: Icon(ap.isOnline && !quiet ? Icons.wifi : Icons.wifi_off, color: color),
+                            leading: Icon(ap.isOnline ? Icons.wifi : Icons.wifi_off, color: color),
                             title: Text(accessPointLabel(ap), style: const TextStyle(fontWeight: FontWeight.w600)),
                             subtitle: Text('$heard\n${ap.mac}${ap.ip.isEmpty ? '' : ' · ${ap.ip}'}'),
                             isThreeLine: true,
