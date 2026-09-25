@@ -250,7 +250,7 @@ class _SiteOverviewScreenState extends State<SiteOverviewScreen> {
                                             ),
                                           ),
                                         ]),
-                                        AccessPointLink(deviceId: doc.id, data: d),
+                                        AccessPointLink(key: ValueKey(doc.id), deviceId: doc.id, data: d),
                                       ],
                                     ),
                                   ),

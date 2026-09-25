@@ -319,7 +319,7 @@ class _MikroTikMonitorScreenState extends State<MikroTikMonitorScreen> {
                         ),
                       ],
                     ),
-                    AccessPointLink(deviceId: doc.id, data: data),
+                    AccessPointLink(key: ValueKey(doc.id), deviceId: doc.id, data: data),
                     if (lastSeen != null) ...[
                       const SizedBox(height: 2),
                       Row(

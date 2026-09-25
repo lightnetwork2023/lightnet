@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:lightnetwork/services/app_db.dart';
 
@@ -96,14 +98,66 @@ Widget _accessPointCountLabel(int online, int offline, bool empty) {
   );
 }
 
-class AccessPointLink extends StatelessWidget {
+class AccessPointRefreshBus {
+  static final latest = <String, Map<String, dynamic>>{};
+  static final _ticks = StreamController<String>.broadcast();
+
+  static Stream<String> watch(String deviceId) => _ticks.stream.where((id) => id == deviceId);
+
+  static void publish(String deviceId, Map<String, dynamic> patch) {
+    latest[deviceId] = patch;
+    _ticks.add(deviceId);
+  }
+}
+
+class AccessPointLink extends StatefulWidget {
   final String deviceId;
   final Map<String, dynamic> data;
 
   const AccessPointLink({super.key, required this.deviceId, required this.data});
 
   @override
+  State<AccessPointLink> createState() => _AccessPointLinkState();
+}
+
+class _AccessPointLinkState extends State<AccessPointLink> {
+  StreamSubscription<String>? _updates;
+
+  @override
+  void initState() {
+    super.initState();
+    _updates = AccessPointRefreshBus.watch(widget.deviceId).listen((_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void didUpdateWidget(AccessPointLink oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.deviceId != oldWidget.deviceId) {
+      _updates?.cancel();
+      _updates = AccessPointRefreshBus.watch(widget.deviceId).listen((_) {
+        if (mounted) setState(() {});
+      });
+    } else if (_countStamp(widget.data) != _countStamp(oldWidget.data)) {
+      AccessPointRefreshBus.latest.remove(widget.deviceId);
+    }
+  }
+
+  @override
+  void dispose() {
+    _updates?.cancel();
+    super.dispose();
+  }
+
+  String _countStamp(Map<String, dynamic> data) {
+    return '${data['access_points_updated_at']}|${data['access_points_offline']}|${data['access_points_count']}';
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final patch = AccessPointRefreshBus.latest[widget.deviceId];
+    final data = patch == null ? widget.data : {...widget.data, ...patch};
     if (data['access_points'] is! List) return const SizedBox.shrink();
     final points = accessPointsFrom(data);
     final offline = points.where((p) => !p.isOnline).length;
@@ -116,7 +170,7 @@ class AccessPointLink extends StatelessWidget {
     return Align(
       alignment: Alignment.centerLeft,
       child: TextButton.icon(
-        onPressed: () => showAccessPointsSheet(context, deviceId, data),
+        onPressed: () => showAccessPointsSheet(context, widget.deviceId, data),
         style: TextButton.styleFrom(
           padding: EdgeInsets.zero,
           minimumSize: const Size(0, 28),
@@ -159,12 +213,15 @@ class _AccessPointsSheetState extends State<AccessPointsSheet> {
     try {
       final result = await MikroTikMonitorService.refreshAccessPoints(widget.deviceId);
       if (!mounted) return;
-      setState(() {
-        _fresh = {
-          'access_points': result['access_points'] ?? const [],
-          'access_point_names': result['access_point_names'] ?? const {},
-        };
-      });
+      final fresh = {
+        'access_points': result['access_points'] ?? const [],
+        'access_point_names': result['access_point_names'] ?? const {},
+        'access_points_count': result['access_points_count'],
+        'access_points_offline': result['access_points_offline'],
+        'access_points_updated_at': result['access_points_updated_at'],
+      };
+      AccessPointRefreshBus.publish(widget.deviceId, fresh);
+      setState(() => _fresh = fresh);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

@@ -302,7 +302,7 @@ class _MikroTikMonitorContentState extends State<MikroTikMonitorContent> {
                         ),
                       ],
                     ),
-                    AccessPointLink(deviceId: doc.id, data: data),
+                    AccessPointLink(key: ValueKey(doc.id), deviceId: doc.id, data: data),
                   ],
                 ),
               ),
