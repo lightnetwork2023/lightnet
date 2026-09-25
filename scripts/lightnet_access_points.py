@@ -59,6 +59,66 @@ def is_beacon_lease(lease):
     return mac.startswith(MERCUSYS_HALO_OUI) and ('halo' in host or 'h30' in host)
 
 
+def lan_interface_for_ip(addresses, ip):
+    """Interface whose own subnet contains this access-point address."""
+    import ipaddress
+    try:
+        host = ipaddress.ip_address(str(ip or '').strip())
+    except ValueError:
+        return None
+    for row in addresses or []:
+        if not isinstance(row, dict):
+            continue
+        cidr = str(row.get('address') or '').strip()
+        iface = str(row.get('interface') or '').strip()
+        if not cidr or not iface:
+            continue
+        try:
+            if host in ipaddress.ip_interface(cidr).network:
+                return iface
+        except ValueError:
+            continue
+    return None
+
+
+def ping_rows_reached(rows, ip, mac):
+    """True only when the ping answer is this access point, not another gateway."""
+    expect_mac = str(mac or '').strip().upper()
+    expect_ip = str(ip or '').strip().upper()
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        try:
+            received = int(row.get('received') or 0)
+        except (TypeError, ValueError):
+            received = 0
+        if received <= 0:
+            continue
+        if str(row.get('status') or '').lower() == 'timeout':
+            continue
+        host = str(row.get('host') or '').strip().upper()
+        if expect_mac and host == expect_mac:
+            return True
+        if expect_ip and host == expect_ip and row.get('time'):
+            return True
+    return False
+
+
+def note_ping(point, replied):
+    """A reply means the unit is up now. No reply leaves the heard-time color."""
+    row = dict(point or {})
+    ip = str(row.get('ip') or '').strip()
+    if not ip:
+        row['ping'] = 'no-ip'
+        return row
+    if replied:
+        row['ping'] = 'replied'
+        row['status'] = 'online'
+        return row
+    row['ping'] = 'no-reply'
+    return row
+
+
 def lease_to_point(lease):
     seconds = routeros_duration_seconds(lease.get('last-seen'))
     bound = str(lease.get('status') or '').lower() == 'bound'

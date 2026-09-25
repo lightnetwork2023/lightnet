@@ -58,8 +58,32 @@ def test_missing_lease_stays_offline():
     assert 'name' not in merged[0]
 
 
+def test_ping_match():
+    mac = '08:8A:F1:B7:8C:4C'
+    ip = '192.168.88.70'
+    arp_ok = [{'host': mac, 'received': 1, 'time': '2ms'}]
+    assert ap.ping_rows_reached(arp_ok, ip, mac) is True
+    other = [{'host': '34:BA:9A:C7:54:B8', 'received': 1, 'time': '29ms'}]
+    assert ap.ping_rows_reached(other, ip, mac) is False
+    timeout = [{'host': ip, 'status': 'timeout', 'received': 0}]
+    assert ap.ping_rows_reached(timeout, ip, mac) is False
+    icmp = [{'host': ip, 'received': 1, 'time': '1ms'}]
+    assert ap.ping_rows_reached(icmp, ip, mac) is True
+    quiet = {'mac': mac, 'ip': ip, 'status': 'offline', 'last_seen_seconds': 7200}
+    assert ap.note_ping(quiet, True)['status'] == 'online'
+    assert ap.note_ping(quiet, True)['ping'] == 'replied'
+    fresh = {'mac': mac, 'ip': ip, 'status': 'online', 'last_seen_seconds': 60}
+    assert ap.note_ping(fresh, False)['status'] == 'online'
+    assert ap.note_ping(fresh, False)['ping'] == 'no-reply'
+    assert ap.lan_interface_for_ip(
+        [{'address': '192.168.88.1/23', 'interface': 'bridgelan'}],
+        '192.168.88.70',
+    ) == 'bridgelan'
+
+
 if __name__ == '__main__':
     test_duration()
     test_online_window()
     test_missing_lease_stays_offline()
+    test_ping_match()
     print('ok')

@@ -13,6 +13,7 @@ class AccessPointView {
   final int lastSeenSeconds;
   final bool present;
   final String name;
+  final String ping;
 
   const AccessPointView({
     required this.mac,
@@ -23,6 +24,7 @@ class AccessPointView {
     required this.lastSeenSeconds,
     required this.present,
     required this.name,
+    this.ping = '',
   });
 
   bool get isOnline => status == 'online';
@@ -54,6 +56,7 @@ List<AccessPointView> accessPointsFrom(Map<String, dynamic> data) {
       lastSeenSeconds: int.tryParse('${item['last_seen_seconds'] ?? ''}') ?? -1,
       present: item['present'] != false,
       name: custom == null ? '' : '$custom'.trim(),
+      ping: '${item['ping'] ?? ''}',
     ));
   }
   points.sort((a, b) {
@@ -224,7 +227,7 @@ class _AccessPointsSheetState extends State<AccessPointsSheet> {
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
                 child: Text(
-                  'Turn one access point off, wait a few minutes, then tap Refresh. The one heard longest ago is the one you turned off. Tap a row to name it.',
+                  'Turn one access point off and tap Refresh. Replied means it answered the router. No reply with an old heard time is the one you turned off. Tap a row to name it.',
                   style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                 ),
               ),
@@ -237,11 +240,16 @@ class _AccessPointsSheetState extends State<AccessPointsSheet> {
                         itemBuilder: (context, index) {
                           final ap = points[index];
                           final color = ap.isOnline ? Colors.green : Colors.red;
+                          final pingNote = ap.ping == 'replied'
+                              ? ' · Replied'
+                              : ap.ping == 'no-reply'
+                                  ? ' · No reply'
+                                  : '';
                           final heard = !ap.present
                               ? 'No DHCP lease'
                               : ap.lastSeen.isEmpty
-                                  ? 'No last-seen from the router'
-                                  : 'Heard ${ap.lastSeen} ago';
+                                  ? 'No last-seen from the router$pingNote'
+                                  : 'Heard ${ap.lastSeen} ago$pingNote';
                           return ListTile(
                             leading: Icon(ap.isOnline ? Icons.wifi : Icons.wifi_off, color: color),
                             title: Text(accessPointLabel(ap), style: const TextStyle(fontWeight: FontWeight.w600)),
