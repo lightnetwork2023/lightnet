@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="sw">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#071018" />
+  <title>Wi-Fi</title>
+  <style>
+    :root {
+      --green: #6d8f3a;
+      --green-dark: #5d7c30;
+      --lime: #e4f56a;
+      --pack: #d7e7ae;
+      --navy: #1e3a8a;
+      --price: #1d4ed8;
+      --ink: #1f2937;
+      --muted: #6b7280;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      font-family: "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      color: var(--ink);
+      background: #071018;
+      background-image:
+        radial-gradient(1.2px 1.2px at 12% 18%, #fff 50%, transparent 52%),
+        radial-gradient(1px 1px at 28% 72%, rgba(255,255,255,.8) 50%, transparent 52%),
+        radial-gradient(1.4px 1.4px at 46% 30%, #fff 50%, transparent 52%),
+        radial-gradient(1px 1px at 63% 58%, rgba(255,255,255,.7) 50%, transparent 52%),
+        radial-gradient(1.2px 1.2px at 78% 22%, #fff 50%, transparent 52%),
+        radial-gradient(1px 1px at 88% 76%, rgba(255,255,255,.75) 50%, transparent 52%),
+        radial-gradient(1px 1px at 8% 88%, rgba(255,255,255,.6) 50%, transparent 52%),
+        linear-gradient(118deg, transparent 0 42%, rgba(201,162,74,.28) 42.4%, transparent 43%),
+        linear-gradient(118deg, transparent 0 62%, rgba(201,162,74,.18) 62.3%, transparent 62.8%),
+        linear-gradient(64deg, transparent 0 18%, rgba(201,162,74,.16) 18.3%, transparent 18.8%);
+      background-size: 100% 100%;
+    }
+    .page { max-width: 430px; margin: 0 auto; padding: 14px 12px 28px; }
+    .hero {
+      background: #fff; border-radius: 18px; overflow: hidden;
+      box-shadow: 0 10px 28px rgba(0,0,0,.28);
+    }
+    .brand {
+      position: relative; background: linear-gradient(180deg, #7ea24a, var(--green) 40%, var(--green-dark));
+      color: #fff; text-align: center; padding: 16px 14px 14px;
+    }
+    .lang {
+      position: absolute; top: 12px; right: 12px; border: 0; border-radius: 8px;
+      background: #1d4ed8; color: #fff; font-weight: 800; font-size: 13px;
+      padding: 7px 10px; display: flex; align-items: center; gap: 4px; cursor: pointer;
+    }
+    .brand-name {
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      font-size: 22px; font-weight: 800; letter-spacing: .04em;
+    }
+    .brand svg { display: block; }
+    .nets-label { margin-top: 8px; font-size: 13px; font-weight: 700; opacity: .95; }
+    .nets {
+      margin-top: 8px; display: flex; flex-wrap: wrap; justify-content: center;
+      align-items: center; gap: 8px 10px;
+    }
+    .net { font-weight: 800; font-size: 11px; line-height: 1; letter-spacing: -.02em; white-space: nowrap; }
+    .net small { display: block; font-weight: 700; font-size: 8px; letter-spacing: 0; }
+    .mixx { color: #1d4ed8; font-style: italic; font-size: 16px; }
+    .mpesa { color: #e11d48; }
+    .tigo { color: #f5c518; text-shadow: 0 0 0 #111; }
+    .tpesa { color: #facc15; }
+    .airtel { color: #ef4444; }
+    .halo { color: #84cc16; }
+    .steps {
+      display: flex; justify-content: center; gap: 8px; align-items: center;
+      padding: 12px 10px; font-size: 13px; font-weight: 700; color: #374151;
+      background: #fff;
+    }
+    .steps span { display: inline-flex; align-items: center; gap: 4px; }
+    .dot { color: #9ca3af; }
+    .help {
+      margin: 0 12px 12px; background: var(--lime); color: #1f2937; border-radius: 12px;
+      text-align: center; font-weight: 800; padding: 10px 12px; font-size: 15px;
+    }
+    .help a { color: inherit; text-decoration: none; }
+    .section-title {
+      display: flex; align-items: center; gap: 8px; color: #fff; margin: 16px 4px 8px;
+      font-size: 18px; font-weight: 800;
+    }
+    .packs {
+      background: var(--pack); border-radius: 22px; padding: 12px;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.35);
+    }
+    .plan {
+      display: flex; align-items: center; gap: 8px; background: #fff; border-radius: 14px;
+      padding: 12px 12px; margin-bottom: 10px; box-shadow: 0 1px 2px rgba(0,0,0,.06);
+    }
+    .plan:last-child { margin-bottom: 0; }
+    .plan-main { flex: 1; min-width: 0; }
+    .plan-name {
+      font-weight: 800; letter-spacing: .06em; font-size: 14px; text-transform: uppercase;
+    }
+    .plan-meta { margin-top: 4px; color: #6b7280; font-size: 12px; display: flex; align-items: center; gap: 4px; }
+    .plan-price { color: var(--price); font-weight: 800; font-size: 20px; white-space: nowrap; }
+    .plan-price small { font-size: 12px; margin-left: 2px; }
+    .buy {
+      border: 0; background: var(--navy); color: #fff; font-weight: 800; letter-spacing: .04em;
+      border-radius: 10px; padding: 10px 12px; min-width: 74px; cursor: pointer; font-size: 13px;
+    }
+    .buy:active { filter: brightness(1.1); }
+    .msg { text-align: center; color: #e5e7eb; min-height: 1.2em; margin: 10px 4px 0; font-size: 14px; }
+    .err { text-align: center; color: #fecaca; margin: 6px 4px 0; font-size: 14px; }
+    .code-link {
+      display: block; margin: 14px auto 0; background: transparent; border: 0; color: #fde68a;
+      font-weight: 700; text-decoration: underline; cursor: pointer; font-size: 14px;
+    }
+    .empty { text-align: center; color: #365314; font-weight: 700; padding: 18px 8px; }
+    .modal {
+      position: fixed; inset: 0; background: rgba(15, 23, 42, .45);
+      display: none; align-items: center; justify-content: center; padding: 18px; z-index: 20;
+    }
+    .modal.open { display: flex; }
+    .dialog {
+      width: min(100%, 380px); background: #fff; border-radius: 22px; padding: 22px 18px 18px;
+      text-align: center; box-shadow: 0 20px 50px rgba(0,0,0,.3);
+    }
+    .bubble {
+      width: 64px; height: 64px; margin: 0 auto 12px; border-radius: 50%; background: #2563eb;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .dialog h2 { margin: 0; font-size: 20px; }
+    .dialog p { margin: 6px 0 14px; color: #4b5563; font-size: 14px; }
+    .field { text-align: left; }
+    .field label { display: block; font-size: 13px; font-weight: 700; margin-bottom: 6px; }
+    .field input {
+      width: 100%; border: 2px solid #d6b15e; border-radius: 12px; min-height: 48px;
+      padding: 10px 12px 10px 36px; font-size: 16px;
+    }
+    .field-wrap { position: relative; }
+    .field-wrap svg { position: absolute; left: 10px; top: 14px; }
+    .actions { display: flex; gap: 10px; margin-top: 14px; }
+    .actions button {
+      flex: 1; border: 0; border-radius: 12px; min-height: 46px; color: #fff; font-weight: 800;
+      cursor: pointer; font-size: 15px;
+    }
+    .pay { background: var(--navy); }
+    .cancel { background: var(--navy); }
+    .pay:disabled { opacity: .6; cursor: wait; }
+    .dialog .err { color: #b91c1c; }
+    .spin { display: none; width: 22px; height: 22px; margin: 8px auto 0; border: 3px solid #dbeafe; border-top-color: var(--navy); border-radius: 50%; animation: spin .8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="hero">
+      <div class="brand">
+        <button type="button" class="lang" id="langBtn" aria-label="Language">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.8 2.5 15.2 0 18M12 3c-2.5 2.8-2.5 15.2 0 18"/></svg>
+          <span id="langCode">SW</span>
+        </button>
+        <div class="brand-name">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M5 12.5a7 7 0 0 1 14 0"/><path d="M8.5 12.5a3.5 3.5 0 0 1 7 0"/><circle cx="12" cy="16" r="1" fill="#fff"/></svg>
+          <span id="brandName">LIGHTNET</span>
+        </div>
+        <div class="nets-label" id="netsLabel">Supported Mobile Networks</div>
+        <div class="nets" aria-hidden="true">
+          <span class="net mixx">Mixx</span>
+          <span class="net mpesa">M-Pesa</span>
+          <span class="net tigo">tigo</span>
+          <span class="net tpesa">T-PESA</span>
+          <span class="net airtel">airtel<small>money</small></span>
+          <span class="net halo">halopesa</span>
+        </div>
+      </div>
+      <div class="steps" id="steps"></div>
+      <div class="help">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#111" stroke-width="2" style="vertical-align:-2px"><path d="M6 4h4l2 5-3 2a12 12 0 0 0 6 6l2-3 5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 4 6a2 2 0 0 1 2-2z"/></svg>
+        <span id="helpLabel">Msaada:</span>
+        <a id="helpPhone" href="tel:"></a>
+      </div>
+    </div>
+    <h2 class="section-title">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M21 8l-9-5-9 5 9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8"/></svg>
+      <span id="packsTitle">Vifurushi</span>
+    </h2>
+    <div class="packs" id="packs"></div>
+    <p class="msg" id="statusMsg"></p>
+    <p class="err" id="errorMessage"></p>
+    <button type="button" class="code-link" id="codeLink">Tayari nina Code? Ingia</button>
+  </div>
+
+  <div class="modal" id="modal">
+    <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <div class="bubble">
+        <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/></svg>
+      </div>
+      <h2 id="modalTitle">Weka Nambari ya Simu</h2>
+      <p id="modalSub">Weka nambari yako ya simu ya Tanzania</p>
+      <div class="field">
+        <label id="phoneLabel" for="phone">Nambari ya Simu</label>
+        <div class="field-wrap">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6b7280" stroke-width="2"><path d="M6 4h4l2 5-3 2a12 12 0 0 0 6 6l2-3 5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 4 6a2 2 0 0 1 2-2z"/></svg>
+          <input id="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="Nambari ya Simu" />
+        </div>
+      </div>
+      <div class="spin" id="spin"></div>
+      <p class="err" id="modalErr"></p>
+      <div class="actions">
+        <button type="button" class="pay" id="payBtn">Lipa Sasa</button>
+        <button type="button" class="cancel" id="cancelBtn">Ghairi</button>
+      </div>
+    </div>
+  </div>
+  <script>
+    var LANG = "sw";
+    var PLANS = [];
+    var SELECTED = null;
+    var OWNER = "";
+    var SITE = "";
+    var MAC = "";
+    var POLL_MS = 3000;
+    var MAX_POLLS = 40;
+    var pollTimer = null;
+    var pollCount = 0;
+    var pollDone = false;
+    var COPY = {
+      sw: {
+        nets: "Supported Mobile Networks",
+        choose: "Chagua", pay: "Lipa", connect: "Unganisha",
+        help: "Msaada:", packs: "Vifurushi", buy: "NUNUA",
+        unlimited: "Bila Kikomo",
+        title: "Weka Nambari ya Simu",
+        sub: "Weka nambari yako ya simu ya Tanzania",
+        phone: "Nambari ya Simu",
+        lipa: "Lipa Sasa", cancel: "Ghairi",
+        code: "Tayari nina Code? Ingia",
+        empty: "Hakuna vifurushi kwa sasa.",
+        sending: "Inatuma ombi…",
+        wait: "Thibitisha malipo kwenye simu…",
+        paid: "Imelipwa — inakuunganisha kwenye Wi-Fi…",
+        again: "Bado inasubiri. Kama umelipa, bonyeza Angalia tena.",
+        check: "Angalia tena",
+        fail: "Malipo yameisha muda au yameshindikana. Jaribu tena.",
+        badPhone: "Weka nambari sahihi ya simu",
+        loadFail: "Imeshindikana kupakia vifurushi"
+      },
+      en: {
+        nets: "Supported Mobile Networks",
+        choose: "Choose", pay: "Pay", connect: "Connect",
+        help: "Help:", packs: "Packages", buy: "BUY",
+        unlimited: "Unlimited",
+        title: "Enter phone number",
+        sub: "Enter your Tanzania phone number",
+        phone: "Phone number",
+        lipa: "Pay now", cancel: "Cancel",
+        code: "I already have a code",
+        empty: "No packages right now.",
+        sending: "Sending request…",
+        wait: "Confirm the payment on your phone…",
+        paid: "Paid — connecting to Wi-Fi…",
+        again: "Still waiting. If you paid, tap Check again.",
+        check: "Check again",
+        fail: "Payment timed out or failed. Try again.",
+        badPhone: "Enter a valid phone number",
+        loadFail: "Could not load packages"
+      }
+    };
+    function t(k) { return COPY[LANG][k]; }
+    function qs(n) {
+      try { return (new URL(location.href).searchParams.get(n) || "").trim(); }
+      catch (e) { return ""; }
+    }
+    function localPhone(p) {
+      var d = String(p || "").replace(/\D/g, "");
+      if (d.indexOf("255") === 0) d = "0" + d.slice(3);
+      return d;
+    }
+    function showErr(msg) { document.getElementById("errorMessage").textContent = msg || ""; }
+    function setStatus(msg) { document.getElementById("statusMsg").textContent = msg || ""; }
+    function durationBit(mins) {
+      var m = Number(mins || 0);
+      if (m >= 60 && m < 2880 && m % 60 === 0) return (m / 60) + " Hrs";
+      if (m >= 1440 && m % 1440 === 0) return (m / 1440) + " Days";
+      if (m >= 60 && m % 60 === 0) return (m / 60) + " Hrs";
+      return m + " Min";
+    }
+    function applyLang() {
+      document.getElementById("langCode").textContent = LANG === "sw" ? "SW" : "EN";
+      document.documentElement.lang = LANG === "sw" ? "sw" : "en";
+      document.getElementById("netsLabel").textContent = t("nets");
+      document.getElementById("helpLabel").textContent = t("help");
+      document.getElementById("packsTitle").textContent = t("packs");
+      document.getElementById("modalTitle").textContent = t("title");
+      document.getElementById("modalSub").textContent = t("sub");
+      document.getElementById("phoneLabel").textContent = t("phone");
+      document.getElementById("phone").placeholder = t("phone");
+      document.getElementById("payBtn").textContent = t("lipa");
+      document.getElementById("cancelBtn").textContent = t("cancel");
+      document.getElementById("codeLink").textContent = t("code");
+      document.getElementById("steps").innerHTML =
+        "<span>" + t("choose") + "</span><span class='dot'>•</span><span>" + t("pay") + "</span><span class='dot'>•</span><span>" + t("connect") + "</span>";
+      renderPlans();
+    }
+    function renderPlans() {
+      var box = document.getElementById("packs");
+      box.innerHTML = "";
+      if (!PLANS.length) {
+        box.innerHTML = "<div class='empty'>" + t("empty") + "</div>";
+        return;
+      }
+      PLANS.forEach(function (p) {
+        var row = document.createElement("div");
+        row.className = "plan";
+        var meta = durationBit(p.duration_minutes) + " • " + t("unlimited");
+        row.innerHTML =
+          "<div class='plan-main'><div class='plan-name'></div><div class='plan-meta'></div></div>" +
+          "<div class='plan-price'></div><button type='button' class='buy'></button>";
+        row.querySelector(".plan-name").textContent = p.name || "";
+        row.querySelector(".plan-meta").textContent = meta;
+        row.querySelector(".plan-price").innerHTML = String(p.price_tzs) + " <small>TSH</small>";
+        row.querySelector(".buy").textContent = t("buy");
+        row.querySelector(".buy").onclick = function () { openModal(p); };
+        box.appendChild(row);
+      });
+    }
+    function openModal(plan) {
+      SELECTED = plan;
+      document.getElementById("modalErr").textContent = "";
+      document.getElementById("modal").classList.add("open");
+      document.getElementById("phone").focus();
+    }
+    function closeModal() {
+      document.getElementById("modal").classList.remove("open");
+      document.getElementById("spin").style.display = "none";
+      document.getElementById("payBtn").disabled = false;
+    }
+    function phoneOk(v) {
+      var d = String(v || "").replace(/\D/g, "");
+      if (d.indexOf("255") === 0) d = "0" + d.slice(3);
+      return d.length >= 10 && d.charAt(0) === "0";
+    }
+    function startStatusPoll(paymentId) {
+      pollDone = false;
+      pollCount = 0;
+      setStatus(t("wait"));
+      pollOnce(paymentId);
+    }
+    function schedulePoll(paymentId) {
+      if (pollDone) return;
+      if (pollTimer) clearTimeout(pollTimer);
+      pollTimer = setTimeout(function () { pollOnce(paymentId); }, POLL_MS);
+    }
+    async function pollOnce(paymentId) {
+      if (pollDone) return;
+      pollCount += 1;
+      try {
+        var r = await fetch("/api/buy/status/" + paymentId, { cache: "no-store" });
+        var data = await r.json();
+        if (!data.success || !data.payment) {
+          schedulePoll(paymentId);
+          return;
+        }
+        var p = data.payment;
+        if (p.status === "paid" && p.voucher) {
+          pollDone = true;
+          document.getElementById("spin").style.display = "none";
+          closeModal();
+          setStatus(t("paid"));
+          var href = p.hotspot_login || ("http://192.168.88.1/login?username=" + encodeURIComponent(p.voucher));
+          setTimeout(function () { location.replace(href); }, 1200);
+          return;
+        }
+        if (p.status === "pending") {
+          setStatus(t("wait"));
+          if (pollCount < MAX_POLLS) { schedulePoll(paymentId); return; }
+          pollDone = true;
+          document.getElementById("spin").style.display = "none";
+          document.getElementById("payBtn").disabled = false;
+          document.getElementById("payBtn").textContent = t("check");
+          document.getElementById("payBtn").onclick = function () { startStatusPoll(paymentId); };
+          setStatus(t("again"));
+          return;
+        }
+        pollDone = true;
+        document.getElementById("spin").style.display = "none";
+        document.getElementById("payBtn").disabled = false;
+        document.getElementById("modalErr").textContent = t("fail");
+      } catch (e) {
+        schedulePoll(paymentId);
+      }
+    }
+    async function payNow() {
+      var phone = document.getElementById("phone").value.trim();
+      document.getElementById("modalErr").textContent = "";
+      if (!phoneOk(phone) || !SELECTED) {
+        document.getElementById("modalErr").textContent = t("badPhone");
+        return;
+      }
+      document.getElementById("payBtn").disabled = true;
+      document.getElementById("spin").style.display = "block";
+      setStatus(t("sending"));
+      try {
+        var r = await fetch("/api/buy", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            owner_id: Number(OWNER),
+            site_id: Number(SITE || 0),
+            plan_id: Number(SELECTED.id),
+            phone: phone,
+            client_mac: MAC
+          })
+        });
+        var data = await r.json();
+        if (!data.success) throw new Error(data.error || t("fail"));
+        startStatusPoll(data.payment_id);
+      } catch (err) {
+        document.getElementById("spin").style.display = "none";
+        document.getElementById("payBtn").disabled = false;
+        document.getElementById("modalErr").textContent = err.message || t("fail");
+        setStatus("");
+      }
+    }
+    async function boot() {
+      OWNER = qs("owner");
+      SITE = qs("site");
+      MAC = qs("mac");
+      if (MAC.indexOf("$(") === 0) MAC = "";
+      applyLang();
+      document.getElementById("langBtn").onclick = function () {
+        LANG = LANG === "sw" ? "en" : "sw";
+        applyLang();
+      };
+      document.getElementById("cancelBtn").onclick = closeModal;
+      document.getElementById("payBtn").onclick = payNow;
+      document.getElementById("modal").addEventListener("click", function (ev) {
+        if (ev.target.id === "modal") closeModal();
+      });
+      document.getElementById("codeLink").onclick = function () {
+        location.href = "http://192.168.88.1/login?stay=1";
+      };
+      if (!OWNER && !SITE) {
+        showErr(t("loadFail"));
+        return;
+      }
+      try {
+        var r = await fetch("/api/buy/bootstrap?owner=" + encodeURIComponent(OWNER) + "&site=" + encodeURIComponent(SITE), { cache: "no-store" });
+        var data = await r.json();
+        if (!data.success) {
+          showErr(data.error || t("loadFail"));
+          return;
+        }
+        OWNER = data.owner.id;
+        if (data.site) SITE = data.site.id;
+        var brand = (data.site && (data.site.ssid || data.site.name)) || data.owner.name || "LIGHTNET";
+        document.getElementById("brandName").textContent = brand;
+        document.title = brand;
+        var ph = localPhone(data.owner.phone || "");
+        var a = document.getElementById("helpPhone");
+        a.textContent = ph;
+        a.href = ph ? ("tel:" + ph) : "tel:";
+        PLANS = data.plans || [];
+        renderPlans();
+      } catch (e) {
+        showErr(t("loadFail"));
+      }
+    }
+    boot();
+  </script>
+</body>
+</html>
