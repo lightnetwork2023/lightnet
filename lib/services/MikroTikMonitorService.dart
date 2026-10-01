@@ -97,29 +97,6 @@ class MikroTikMonitorService {
     return map;
   }
 
-  /// DHCP block-access for a link radio. Unblock sends blocked: false.
-  static Future<Map<String, dynamic>> setLinkDhcpBlock({
-    required String deviceId,
-    required String mac,
-    required bool blocked,
-  }) async {
-    final token = await FirebaseAuth.instance.currentUser?.getIdToken();
-    final res = await http.post(
-      Uri.parse('https://lightnet.lightnetwork.pro/api/mikrotik/block-link'),
-      headers: {
-        'Content-Type': 'application/json',
-        if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
-      },
-      body: jsonEncode({'deviceId': deviceId, 'mac': mac, 'blocked': blocked}),
-    );
-    final raw = res.body.isEmpty ? <String, dynamic>{} : jsonDecode(res.body);
-    final map = raw is Map ? Map<String, dynamic>.from(raw) : <String, dynamic>{};
-    if (res.statusCode >= 400) {
-      throw Exception(map['error']?.toString() ?? 'Could not update the link');
-    }
-    return map;
-  }
-
   /// Name is stored by MAC and is not touched by the DHCP refresh.
   static Future<void> setAccessPointName({
     required String deviceId,

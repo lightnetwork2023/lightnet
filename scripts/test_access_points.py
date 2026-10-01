@@ -90,22 +90,20 @@ def test_models_and_links():
     })
     assert nokia['kind'] == 'access_point'
     assert nokia['model'] == 'Nokia beacon'
-    assert nokia['blocked'] is False
     link = ap.lease_to_point(
         {
             'mac-address': '58:C1:7A:47:02:85',
             'host-name': 'cambium-office',
+            'address': '192.168.88.19',
             'status': 'bound',
             'last-seen': '1m',
-            'block-access': 'true',
             'server': 'dhcp1',
         },
         {'identity': 'cambium-office', 'board': '5G Force 200 (ROW)'},
     )
     assert link['kind'] == 'link'
     assert link['model'] == 'Cambium Force 200'
-    assert link['blocked'] is True
-    assert link['status'] == 'offline'
+    assert link['status'] == 'online'
     m5 = ap.classify_lease({
         'mac-address': '80:2A:A8:26:35:F4',
         'host-name': 'm5-zakhem hospital',
@@ -115,7 +113,7 @@ def test_models_and_links():
     phone = ap.classify_lease({'mac-address': '12:6A:FA:50:DA:37', 'host-name': 'Pixel', 'status': 'bound'})
     assert phone == ('', '')
     pinged = ap.note_ping(dict(link), True)
-    assert pinged['status'] == 'offline'
+    assert pinged['status'] == 'online'
 
 
 def test_merge_keeps_model():
@@ -125,7 +123,6 @@ def test_merge_keeps_model():
         'hostname': 'AP -ZAKHEM',
         'model': 'PowerBeam M5',
         'kind': 'link',
-        'blocked': False,
         'status': 'online',
         'present': True,
     }]
@@ -135,85 +132,6 @@ def test_merge_keeps_model():
     assert merged[0]['status'] == 'offline'
 
 
-class _FakeRouter:
-    def __init__(self):
-        self.leases = [{
-            '.id': '*1',
-            'mac-address': 'DC:9F:DB:24:96:BA',
-            'address': '192.168.90.7',
-            'server': 'dhcp-lan',
-            'dynamic': True,
-            'blocked': False,
-        }]
-        self.bridge = []
-        self.firewall = [{'.id': '*F', 'chain': 'forward', 'action': 'jump'}]
-        self.calls = []
-        self._seq = 10
-
-    def __call__(self, cmd, **kwargs):
-        self.calls.append(cmd)
-        if cmd == '/ip/dhcp-server/lease/print':
-            return iter(dict(row) for row in self.leases)
-        if cmd == '/ip/dhcp-server/print':
-            return iter([{'name': 'dhcp-lan'}])
-        if cmd == '/interface/bridge/filter/print':
-            return iter(dict(row) for row in self.bridge)
-        if cmd == '/ip/firewall/filter/print':
-            return iter(dict(row) for row in self.firewall)
-        if cmd == '/ip/dhcp-server/lease/make-static':
-            for lease in self.leases:
-                if lease['.id'] == kwargs['.id']:
-                    lease['dynamic'] = False
-            return iter(())
-        if cmd == '/ip/dhcp-server/lease/set':
-            for lease in self.leases:
-                if lease['.id'] == kwargs['.id']:
-                    if 'block-access' in kwargs:
-                        lease['blocked'] = str(kwargs['block-access']).lower() in ('yes', 'true')
-                        lease['block-access'] = lease['blocked']
-                    if 'comment' in kwargs:
-                        lease['comment'] = kwargs['comment']
-            return iter(())
-        if cmd == '/interface/bridge/filter/add':
-            self._seq += 1
-            self.bridge.append({'.id': '*%s' % self._seq, **kwargs})
-            return iter(())
-        if cmd == '/ip/firewall/filter/add':
-            self._seq += 1
-            self.firewall.append({'.id': '*%s' % self._seq, **kwargs})
-            return iter(())
-        if cmd.endswith('/remove'):
-            target = self.bridge if 'bridge' in cmd else self.firewall
-            if 'lease' in cmd:
-                target = self.leases
-            kept = [row for row in target if row['.id'] != kwargs['.id']]
-            target[:] = kept
-            return iter(())
-        raise AssertionError(cmd)
-
-
-def test_block_stays_until_unblock():
-    router = _FakeRouter()
-    ap.install_link_block(router, 'dc:9f:db:24:96:ba', server_name='dhcp-lan', address='192.168.90.7')
-    assert '/ip/dhcp-server/lease/make-static' in router.calls
-    assert '/ip/dhcp-server/lease/set' in router.calls
-    assert router.leases[0]['dynamic'] is False
-    assert router.leases[0]['blocked'] is True
-    assert len(router.bridge) == 2
-    assert len(router.firewall) == 2
-    ap.install_link_block(router, 'DC:9F:DB:24:96:BA')
-    assert len(router.bridge) == 2
-    rows = ap.mark_blocked(
-        [{'mac': 'DC:9F:DB:24:96:BA', 'status': 'online', 'blocked': False, 'kind': 'link'}],
-        ['DC:9F:DB:24:96:BA'],
-    )
-    assert rows[0]['status'] == 'offline'
-    assert rows[0]['blocked'] is True
-    ap.clear_link_block(router, 'DC:9F:DB:24:96:BA')
-    assert router.bridge == []
-    assert router.leases[0]['blocked'] is False
-
-
 if __name__ == '__main__':
     test_duration()
     test_online_window()
@@ -221,5 +139,4 @@ if __name__ == '__main__':
     test_ping_match()
     test_models_and_links()
     test_merge_keeps_model()
-    test_block_stays_until_unblock()
     print('ok')

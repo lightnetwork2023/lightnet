@@ -3,8 +3,6 @@
 Nokia beacons and Mercusys Halo nodes are access points.
 Cambium and Ubiquiti airMax units (NanoStation, PowerBeam, LiteBeam) are links.
 A current DHCP lease means online. No lease means offline.
-A blocked link stays offline until Unblock. The block is a bridge rule plus a
-static DHCP lease, and a later poll puts that rule back if the router drops it.
 Refresh can still mark a leased unit offline when the router ping fails.
 Names are not stored here. The app keeps those on access_point_names,
 keyed by MAC, so a lease refresh cannot wipe them.
@@ -144,13 +142,6 @@ def neighbor_for(mac, hostname, neighbors):
     return named or exact
 
 
-def lease_blocked(lease):
-    for key in ('block-access', 'blocked'):
-        if str((lease or {}).get(key) or '').lower() in ('true', 'yes'):
-            return True
-    return False
-
-
 def lan_interface_for_ip(addresses, ip):
     """Interface whose own subnet contains this access-point address."""
     import ipaddress
@@ -200,8 +191,8 @@ def note_ping(point, replied):
     """Refresh only. A failed ping is offline even when the DHCP lease is still there."""
     row = dict(point or {})
     ip = str(row.get('ip') or '').strip()
-    if row.get('blocked') or not ip or not replied:
-        row['ping'] = 'no-ip' if not ip else ('blocked' if row.get('blocked') else 'no-reply')
+    if not ip or not replied:
+        row['ping'] = 'no-ip' if not ip else 'no-reply'
         row['status'] = 'offline'
         return row
     row['ping'] = 'replied'
@@ -212,7 +203,6 @@ def note_ping(point, replied):
 def lease_to_point(lease, neighbor=None):
     seconds = routeros_duration_seconds(lease.get('last-seen'))
     bound = str(lease.get('status') or '').lower() == 'bound'
-    blocked = lease_blocked(lease)
     kind, model = classify_lease(lease, neighbor)
     if not model:
         model = radio_model(_text(lease, neighbor))
@@ -223,8 +213,7 @@ def lease_to_point(lease, neighbor=None):
         'model': model,
         'kind': kind or 'access_point',
         'server': lease.get('server') or lease.get('active-server') or '',
-        'blocked': blocked,
-        'status': 'offline' if blocked or not bound else 'online',
+        'status': 'online' if bound else 'offline',
         'last_seen': lease.get('last-seen') or '',
         'last_seen_seconds': seconds if seconds is not None else -1,
         'present': True,
@@ -247,7 +236,6 @@ def _kept_offline(item, mac):
         'model': model,
         'kind': kind,
         'server': item.get('server') or '',
-        'blocked': bool(item.get('blocked')),
         'status': 'offline',
         'last_seen': '',
         'last_seen_seconds': -1,
@@ -283,197 +271,3 @@ def merge_points(previous, current):
     rows = list(by_mac.values())
     rows.sort(key=lambda r: (0 if r.get('status') != 'online' else 1, r.get('mac') or ''))
     return rows
-
-
-def block_comment(mac):
-    compact = ''.join(ch for ch in str(mac or '').upper() if ch in '0123456789ABCDEF')
-    return 'lightnet-block-' + compact
-
-
-def blocked_macs(data):
-    """MACs the app has blocked. The lease table is not the source of this list."""
-    found = []
-    for item in (data or {}).get('blocked_links') or []:
-        raw = item if isinstance(item, str) else (item or {}).get('mac')
-        mac = _mac({'mac-address': raw})
-        if mac and mac not in found:
-            found.append(mac)
-    return found
-
-
-def mark_blocked(rows, macs):
-    """A saved block stays offline even when the lease flag or a ping says otherwise."""
-    want = set(blocked_macs({'blocked_links': list(macs or [])}))
-    if not want:
-        return list(rows or [])
-    out = []
-    seen = set()
-    for row in rows or []:
-        item = dict(row)
-        mac = str(item.get('mac') or '').upper()
-        seen.add(mac)
-        if mac in want:
-            item['blocked'] = True
-            item['status'] = 'offline'
-            if not item.get('kind'):
-                item['kind'] = 'link'
-        out.append(item)
-    for mac in sorted(want - seen):
-        out.append({
-            'mac': mac,
-            'ip': '',
-            'hostname': '',
-            'model': '',
-            'kind': 'link',
-            'server': '',
-            'blocked': True,
-            'status': 'offline',
-            'last_seen': '',
-            'last_seen_seconds': -1,
-            'present': False,
-        })
-    out.sort(key=lambda r: (0 if r.get('status') != 'online' else 1, r.get('mac') or ''))
-    return out
-
-
-def _call(api, cmd, **kwargs):
-    """RouterOS calls return a generator. It has to be read or the command is never sent."""
-    return list(api(cmd, **kwargs))
-
-
-def _dynamic(lease):
-    return str((lease or {}).get('dynamic')).lower() in ('true', 'yes')
-
-
-def _same_mac(value, mac):
-    return str(value or '').upper().split('/')[0] == mac
-
-
-def _mac_mask(mac):
-    """Bridge and firewall MAC matchers require an explicit mask."""
-    return mac + '/FF:FF:FF:FF:FF:FF'
-
-
-def _has_drop(rules, comment, field, mac):
-    for rule in rules or []:
-        if rule.get('comment') != comment:
-            continue
-        if _same_mac(rule.get(field), mac):
-            return True
-    return False
-
-
-def _place_before(rules):
-    for rule in rules or []:
-        if rule.get('chain') != 'forward':
-            continue
-        if str(rule.get('comment') or '').startswith('lightnet-block-'):
-            continue
-        return rule.get('.id')
-    return None
-
-
-def _ensure_drop(api, path, rules, mac, comment, field, place=False, masked=False):
-    if _has_drop(rules, comment, field, mac):
-        return
-    kwargs = {
-        'chain': 'forward',
-        'action': 'drop',
-        field: _mac_mask(mac) if masked else mac,
-        'comment': comment,
-    }
-    if place:
-        before = _place_before(rules)
-        if before:
-            kwargs['place-before'] = before
-    _call(api, path + '/add', **kwargs)
-
-
-def _ensure_drop_rules(api, mac, comment):
-    bridge = _call(api, '/interface/bridge/filter/print')
-    firewall = _call(api, '/ip/firewall/filter/print')
-    _ensure_drop(api, '/interface/bridge/filter', bridge, mac, comment, 'src-mac-address', masked=True)
-    _ensure_drop(api, '/interface/bridge/filter', bridge, mac, comment, 'dst-mac-address', masked=True)
-    _ensure_drop(api, '/ip/firewall/filter', firewall, mac, comment, 'src-mac-address', place=True)
-    bridge = _call(api, '/interface/bridge/filter/print')
-    firewall = _call(api, '/ip/firewall/filter/print')
-    if not _has_drop(bridge, comment, 'src-mac-address', mac):
-        raise RuntimeError('router did not keep the bridge block')
-    if not _has_drop(firewall, comment, 'src-mac-address', mac):
-        raise RuntimeError('router did not keep the firewall block')
-
-
-def _leases_for(api, mac):
-    return [lease for lease in _call(api, '/ip/dhcp-server/lease/print') if _mac(lease) == mac]
-
-
-def _ensure_static_blocked_lease(api, mac, comment, server_name='', address=''):
-    matches = _leases_for(api, mac)
-    chosen = next((lease for lease in matches if not _dynamic(lease)), None)
-    if chosen is None and matches:
-        current = matches[0]
-        address = address or current.get('address') or current.get('active-address') or ''
-        server_name = server_name or current.get('server') or current.get('active-server') or ''
-        if _dynamic(current):
-            _call(api, '/ip/dhcp-server/lease/make-static', **{'.id': current.get('.id')})
-            matches = _leases_for(api, mac)
-            chosen = next((lease for lease in matches if not _dynamic(lease)), None)
-        if chosen is None and matches and _dynamic(matches[0]):
-            _call(api, '/ip/dhcp-server/lease/remove', **{'.id': matches[0].get('.id')})
-            chosen = None
-    if chosen is None:
-        if not server_name:
-            servers = _call(api, '/ip/dhcp-server/print')
-            server_name = (servers[0].get('name') if servers else '') or ''
-        kwargs = {'mac-address': mac, 'block-access': 'yes', 'comment': comment}
-        if server_name:
-            kwargs['server'] = server_name
-        if address:
-            kwargs['address'] = address
-        _call(api, '/ip/dhcp-server/lease/add', **kwargs)
-    elif not lease_blocked(chosen):
-        fields = {'.id': chosen.get('.id'), 'block-access': 'yes'}
-        if not chosen.get('comment'):
-            fields['comment'] = comment
-        _call(api, '/ip/dhcp-server/lease/set', **fields)
-    held = _leases_for(api, mac)
-    if not any(lease_blocked(lease) for lease in held):
-        raise RuntimeError('router did not keep the DHCP block')
-
-
-def install_link_block(api, mac, server_name='', address=''):
-    """Drop this MAC on the bridge until clear_link_block. Also freeze its DHCP lease."""
-    mac = _mac({'mac-address': mac})
-    if not mac:
-        raise RuntimeError('mac is required')
-    comment = block_comment(mac)
-    _ensure_drop_rules(api, mac, comment)
-    _ensure_static_blocked_lease(api, mac, comment, server_name, address)
-
-
-def clear_link_block(api, mac):
-    """Remove the drop rules and turn DHCP block-access off. The lease itself stays."""
-    mac = _mac({'mac-address': mac})
-    comment = block_comment(mac)
-    for path in ('/interface/bridge/filter', '/ip/firewall/filter'):
-        for rule in _call(api, path + '/print'):
-            if rule.get('comment') == comment:
-                _call(api, path + '/remove', **{'.id': rule.get('.id')})
-    for lease in _leases_for(api, mac):
-        if not lease_blocked(lease) and lease.get('comment') != comment:
-            continue
-        fields = {'.id': lease.get('.id'), 'block-access': 'no'}
-        if lease.get('comment') == comment:
-            fields['comment'] = ''
-        _call(api, '/ip/dhcp-server/lease/set', **fields)
-
-
-def reassert_link_blocks(api, macs):
-    """Put a saved block back. One radio failing does not stop the others."""
-    errors = []
-    for mac in blocked_macs({'blocked_links': list(macs or [])}):
-        try:
-            install_link_block(api, mac)
-        except Exception as exc:
-            errors.append((mac, exc))
-    return errors

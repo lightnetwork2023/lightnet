@@ -18,7 +18,6 @@ class AccessPointView {
   final String ping;
   final String model;
   final String kind;
-  final bool blocked;
 
   const AccessPointView({
     required this.mac,
@@ -32,7 +31,6 @@ class AccessPointView {
     this.ping = '',
     this.model = '',
     this.kind = 'access_point',
-    this.blocked = false,
   });
 
   bool get isOnline => status == 'online';
@@ -67,7 +65,6 @@ List<AccessPointView> accessPointsFrom(Map<String, dynamic> data) {
       ping: '${item['ping'] ?? ''}',
       model: '${item['model'] ?? ''}'.trim(),
       kind: '${item['kind'] ?? 'access_point'}',
-      blocked: item['blocked'] == true,
     ));
   }
   points.sort((a, b) {
@@ -215,7 +212,6 @@ class AccessPointsSheet extends StatefulWidget {
 class _AccessPointsSheetState extends State<AccessPointsSheet> {
   Map<String, dynamic>? _fresh;
   bool _refreshing = false;
-  String _blockingMac = '';
 
   Future<void> _refresh() async {
     if (_refreshing) return;
@@ -240,36 +236,6 @@ class _AccessPointsSheetState extends State<AccessPointsSheet> {
       }
     } finally {
       if (mounted) setState(() => _refreshing = false);
-    }
-  }
-
-  Future<void> _toggleBlock(AccessPointView ap) async {
-    if (_blockingMac.isNotEmpty) return;
-    setState(() => _blockingMac = ap.mac);
-    try {
-      final result = await MikroTikMonitorService.setLinkDhcpBlock(
-        deviceId: widget.deviceId,
-        mac: ap.mac,
-        blocked: !ap.blocked,
-      );
-      if (!mounted) return;
-      final fresh = {
-        'access_points': result['access_points'] ?? const [],
-        'access_point_names': result['access_point_names'] ?? const {},
-        'access_points_count': result['access_points_count'],
-        'access_points_offline': result['access_points_offline'],
-        'access_points_updated_at': result['access_points_updated_at'],
-      };
-      AccessPointRefreshBus.publish(widget.deviceId, fresh);
-      setState(() => _fresh = fresh);
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not update the link: $e')),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _blockingMac = '');
     }
   }
 
@@ -324,7 +290,7 @@ class _AccessPointsSheetState extends State<AccessPointsSheet> {
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
                 child: Text(
-                  'Offline radios are listed first. A name and the model, such as Nokia beacon, show when we know them. Block on a link stays until you tap Unblock.',
+                  'Offline radios are listed first. A name and the model, such as Nokia beacon, show when we know them.',
                   style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                 ),
               ),
@@ -342,13 +308,11 @@ class _AccessPointsSheetState extends State<AccessPointsSheet> {
                               : ap.ping == 'no-reply'
                                   ? ' · No reply'
                                   : '';
-                          final heard = ap.blocked
-                              ? 'Blocked until Unblock'
-                              : !ap.present
-                                  ? 'No DHCP lease'
-                                  : ap.lastSeen.isEmpty
-                                      ? 'No last-seen from the router$pingNote'
-                                      : 'Heard ${ap.lastSeen} ago$pingNote';
+                          final heard = !ap.present
+                              ? 'No DHCP lease'
+                              : ap.lastSeen.isEmpty
+                                  ? 'No last-seen from the router$pingNote'
+                                  : 'Heard ${ap.lastSeen} ago$pingNote';
                           final showModel = ap.model.isNotEmpty && ap.name.isNotEmpty;
                           final detail = '${showModel ? '${ap.model}\n' : ''}$heard\n${ap.mac}${ap.ip.isEmpty ? '' : ' · ${ap.ip}'}';
                           return ListTile(
@@ -356,16 +320,7 @@ class _AccessPointsSheetState extends State<AccessPointsSheet> {
                             title: Text(accessPointLabel(ap), style: const TextStyle(fontWeight: FontWeight.w600)),
                             subtitle: Text(detail),
                             isThreeLine: true,
-                            trailing: ap.kind == 'link'
-                                ? TextButton(
-                                    onPressed: _blockingMac.isEmpty ? () => _toggleBlock(ap) : null,
-                                    child: Text(_blockingMac == ap.mac
-                                        ? '...'
-                                        : ap.blocked
-                                            ? 'Unblock'
-                                            : 'Block'),
-                                  )
-                                : const Icon(Icons.edit_outlined, size: 18),
+                            trailing: const Icon(Icons.edit_outlined, size: 18),
                             onTap: () async {
                               final saved = await _renameAccessPoint(context, widget.deviceId, ap);
                               if (saved == null || !mounted) return;
