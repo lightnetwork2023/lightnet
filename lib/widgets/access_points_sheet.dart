@@ -16,6 +16,9 @@ class AccessPointView {
   final bool present;
   final String name;
   final String ping;
+  final String model;
+  final String kind;
+  final bool blocked;
 
   const AccessPointView({
     required this.mac,
@@ -27,6 +30,9 @@ class AccessPointView {
     required this.present,
     required this.name,
     this.ping = '',
+    this.model = '',
+    this.kind = 'access_point',
+    this.blocked = false,
   });
 
   bool get isOnline => status == 'online';
@@ -59,21 +65,24 @@ List<AccessPointView> accessPointsFrom(Map<String, dynamic> data) {
       present: item['present'] != false,
       name: custom == null ? '' : '$custom'.trim(),
       ping: '${item['ping'] ?? ''}',
+      model: '${item['model'] ?? ''}'.trim(),
+      kind: '${item['kind'] ?? 'access_point'}',
+      blocked: item['blocked'] == true,
     ));
   }
   points.sort((a, b) {
-    int rank(AccessPointView ap) {
-      if (!ap.present || ap.lastSeenSeconds < 0) return 1 << 30;
-      return ap.lastSeenSeconds;
-    }
-    final byAge = rank(b).compareTo(rank(a));
-    if (byAge != 0) return byAge;
+    final byOffline = (a.isOnline ? 1 : 0).compareTo(b.isOnline ? 1 : 0);
+    if (byOffline != 0) return byOffline;
     return accessPointLabel(a).compareTo(accessPointLabel(b));
   });
   return points;
 }
 
-String accessPointLabel(AccessPointView ap) => ap.name.isNotEmpty ? ap.name : ap.mac;
+String accessPointLabel(AccessPointView ap) {
+  if (ap.name.isNotEmpty) return ap.name;
+  if (ap.model.isNotEmpty) return ap.model;
+  return ap.mac;
+}
 
 Widget _accessPointCountLabel(int online, int offline, bool empty) {
   const size = TextStyle(fontSize: 12);
@@ -206,6 +215,7 @@ class AccessPointsSheet extends StatefulWidget {
 class _AccessPointsSheetState extends State<AccessPointsSheet> {
   Map<String, dynamic>? _fresh;
   bool _refreshing = false;
+  String _blockingMac = '';
 
   Future<void> _refresh() async {
     if (_refreshing) return;
@@ -230,6 +240,36 @@ class _AccessPointsSheetState extends State<AccessPointsSheet> {
       }
     } finally {
       if (mounted) setState(() => _refreshing = false);
+    }
+  }
+
+  Future<void> _toggleBlock(AccessPointView ap) async {
+    if (_blockingMac.isNotEmpty) return;
+    setState(() => _blockingMac = ap.mac);
+    try {
+      final result = await MikroTikMonitorService.setLinkDhcpBlock(
+        deviceId: widget.deviceId,
+        mac: ap.mac,
+        blocked: !ap.blocked,
+      );
+      if (!mounted) return;
+      final fresh = {
+        'access_points': result['access_points'] ?? const [],
+        'access_point_names': result['access_point_names'] ?? const {},
+        'access_points_count': result['access_points_count'],
+        'access_points_offline': result['access_points_offline'],
+        'access_points_updated_at': result['access_points_updated_at'],
+      };
+      AccessPointRefreshBus.publish(widget.deviceId, fresh);
+      setState(() => _fresh = fresh);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not update the link: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _blockingMac = '');
     }
   }
 
@@ -284,7 +324,7 @@ class _AccessPointsSheetState extends State<AccessPointsSheet> {
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
                 child: Text(
-                  'A DHCP lease means online. Tap Refresh to ping: no reply turns it offline even if the lease is still there. Tap a row to name it.',
+                  'Offline radios are listed first. A name and the model, such as Nokia beacon, show when we know them. Block and Unblock are only for link radios.',
                   style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                 ),
               ),
@@ -302,17 +342,30 @@ class _AccessPointsSheetState extends State<AccessPointsSheet> {
                               : ap.ping == 'no-reply'
                                   ? ' · No reply'
                                   : '';
-                          final heard = !ap.present
-                              ? 'No DHCP lease'
-                              : ap.lastSeen.isEmpty
-                                  ? 'No last-seen from the router$pingNote'
-                                  : 'Heard ${ap.lastSeen} ago$pingNote';
+                          final heard = ap.blocked
+                              ? 'DHCP blocked'
+                              : !ap.present
+                                  ? 'No DHCP lease'
+                                  : ap.lastSeen.isEmpty
+                                      ? 'No last-seen from the router$pingNote'
+                                      : 'Heard ${ap.lastSeen} ago$pingNote';
+                          final showModel = ap.model.isNotEmpty && ap.name.isNotEmpty;
+                          final detail = '${showModel ? '${ap.model}\n' : ''}$heard\n${ap.mac}${ap.ip.isEmpty ? '' : ' · ${ap.ip}'}';
                           return ListTile(
                             leading: Icon(ap.isOnline ? Icons.wifi : Icons.wifi_off, color: color),
                             title: Text(accessPointLabel(ap), style: const TextStyle(fontWeight: FontWeight.w600)),
-                            subtitle: Text('$heard\n${ap.mac}${ap.ip.isEmpty ? '' : ' · ${ap.ip}'}'),
+                            subtitle: Text(detail),
                             isThreeLine: true,
-                            trailing: const Icon(Icons.edit_outlined, size: 18),
+                            trailing: ap.kind == 'link'
+                                ? TextButton(
+                                    onPressed: _blockingMac.isEmpty ? () => _toggleBlock(ap) : null,
+                                    child: Text(_blockingMac == ap.mac
+                                        ? '...'
+                                        : ap.blocked
+                                            ? 'Unblock'
+                                            : 'Block'),
+                                  )
+                                : const Icon(Icons.edit_outlined, size: 18),
                             onTap: () async {
                               final saved = await _renameAccessPoint(context, widget.deviceId, ap);
                               if (saved == null || !mounted) return;

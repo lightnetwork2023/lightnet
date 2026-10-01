@@ -81,9 +81,65 @@ def test_ping_match():
     ) == 'bridgelan'
 
 
+def test_models_and_links():
+    nokia = ap.lease_to_point({
+        'mac-address': 'B4:63:6F:95:DA:81',
+        'host-name': 'Nokia WiFi Beacon 1.1',
+        'status': 'bound',
+        'last-seen': '1m',
+    })
+    assert nokia['kind'] == 'access_point'
+    assert nokia['model'] == 'Nokia beacon'
+    assert nokia['blocked'] is False
+    link = ap.lease_to_point(
+        {
+            'mac-address': '58:C1:7A:47:02:85',
+            'host-name': 'cambium-office',
+            'status': 'bound',
+            'last-seen': '1m',
+            'block-access': 'true',
+            'server': 'dhcp1',
+        },
+        {'identity': 'cambium-office', 'board': '5G Force 200 (ROW)'},
+    )
+    assert link['kind'] == 'link'
+    assert link['model'] == 'Cambium Force 200'
+    assert link['blocked'] is True
+    assert link['status'] == 'offline'
+    m5 = ap.classify_lease({
+        'mac-address': '80:2A:A8:26:35:F4',
+        'host-name': 'm5-zakhem hospital',
+        'status': 'bound',
+    })
+    assert m5 == ('link', 'NanoStation M5')
+    phone = ap.classify_lease({'mac-address': '12:6A:FA:50:DA:37', 'host-name': 'Pixel', 'status': 'bound'})
+    assert phone == ('', '')
+    pinged = ap.note_ping(dict(link), True)
+    assert pinged['status'] == 'offline'
+
+
+def test_merge_keeps_model():
+    previous = [{
+        'mac': '24:A4:3C:E6:20:BB',
+        'ip': '192.168.88.18',
+        'hostname': 'AP -ZAKHEM',
+        'model': 'PowerBeam M5',
+        'kind': 'link',
+        'blocked': False,
+        'status': 'online',
+        'present': True,
+    }]
+    merged = ap.merge_points(previous, [])
+    assert merged[0]['model'] == 'PowerBeam M5'
+    assert merged[0]['kind'] == 'link'
+    assert merged[0]['status'] == 'offline'
+
+
 if __name__ == '__main__':
     test_duration()
     test_online_window()
     test_missing_lease_stays_offline()
     test_ping_match()
+    test_models_and_links()
+    test_merge_keeps_model()
     print('ok')
