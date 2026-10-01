@@ -1,7 +1,9 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:get/get.dart';
 import 'package:lightnetwork/services/app_db.dart';
 import 'package:intl/intl.dart';
+import '../controllers/auth_controller.dart';
 import '../services/MikroTikMonitorService.dart';
 import '../theme/app_theme.dart';
 import '../widgets/access_points_sheet.dart';
@@ -16,6 +18,11 @@ class MikroTikMonitorScreen extends StatefulWidget {
 class _MikroTikMonitorScreenState extends State<MikroTikMonitorScreen> {
   String _filterStatus = 'all';
   late Stream<QuerySnapshot<Map<String, dynamic>>> _devicesStream;
+
+  bool get _canManageDevices {
+    final role = Get.find<AuthController>().userRole;
+    return role == 'boss' || role == 'admin' || role == 'md';
+  }
 
   @override
   void initState() {
@@ -50,11 +57,13 @@ class _MikroTikMonitorScreenState extends State<MikroTikMonitorScreen> {
           Expanded(child: _buildDevicesBody()),
         ],
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _showAddDeviceDialog,
-        backgroundColor: AppTheme.primaryColor,
-        child: const Icon(Icons.add, color: Colors.white),
-      ),
+      floatingActionButton: _canManageDevices
+          ? FloatingActionButton(
+              onPressed: _showAddDeviceDialog,
+              backgroundColor: AppTheme.primaryColor,
+              child: const Icon(Icons.add, color: Colors.white),
+            )
+          : null,
     );
   }
 
@@ -336,9 +345,10 @@ class _MikroTikMonitorScreenState extends State<MikroTikMonitorScreen> {
                   ],
                 ),
               ),
-              PopupMenuButton(
-                icon: const Icon(Icons.more_vert, color: AppTheme.textSecondary),
-                itemBuilder: (context) => [
+              if (_canManageDevices)
+                PopupMenuButton(
+                  icon: const Icon(Icons.more_vert, color: AppTheme.textSecondary),
+                  itemBuilder: (context) => [
                   const PopupMenuItem(
                     value: 'edit',
                     child: Row(
@@ -369,21 +379,23 @@ class _MikroTikMonitorScreenState extends State<MikroTikMonitorScreen> {
                       ],
                     ),
                   ),
-                ],
-                onSelected: (value) {
-                  switch (value) {
-                    case 'edit':
-                      _showEditDeviceDialog(doc);
-                      break;
-                    case 'ping':
-                      _checkDeviceStatus(doc.id, ipAddress);
-                      break;
-                    case 'delete':
-                      _confirmDelete(doc.id, name);
-                      break;
-                  }
-                },
-              ),
+                  ],
+                  onSelected: (value) {
+                    switch (value) {
+                      case 'edit':
+                        _showEditDeviceDialog(doc);
+                        break;
+                      case 'ping':
+                        _checkDeviceStatus(doc.id, ipAddress);
+                        break;
+                      case 'delete':
+                        _confirmDelete(doc.id, name);
+                        break;
+                    }
+                  },
+                )
+              else
+                const Icon(Icons.chevron_right, color: AppTheme.textSecondary),
             ],
           ),
         ),

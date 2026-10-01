@@ -1,7 +1,6 @@
 import 'package:lightnetwork/services/app_db.dart';
 import 'package:flutter/material.dart';
 
-import '../screens/MikroTikMonitorScreen.dart';
 import '../services/MikroTikMonitorService.dart';
 import '../theme/app_theme.dart';
 import 'access_points_sheet.dart';
@@ -182,15 +181,6 @@ class _MikroTikMonitorContentState extends State<MikroTikMonitorContent> {
             Text(
               'No MikroTik devices found',
               style: TextStyle(fontSize: 16, color: Colors.grey[600]),
-            ),
-            const SizedBox(height: 8),
-            ElevatedButton.icon(
-              onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const MikroTikMonitorScreen()),
-              ),
-              icon: const Icon(Icons.add),
-              label: const Text('Add Device'),
             ),
           ],
         ),

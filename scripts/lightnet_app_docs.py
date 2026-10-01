@@ -1128,6 +1128,26 @@ def delete_location(cur, loc_id, owner_id=None):
 
 FULL_LOCATION_ROLES = {'boss', 'admin', 'md'}
 LOCATION_WRITE_ROLES = {'boss', 'admin', 'md'}
+
+
+def technician_mikrotik_write_allowed(existing, payload, merge, deleting=False):
+    """Technicians may rename access points, but cannot manage router documents."""
+    if deleting or not existing or not merge or not isinstance(payload, dict):
+        return False
+    if set(payload) != {'access_point_names'}:
+        return False
+    names = payload.get('access_point_names')
+    if not isinstance(names, dict) or not names:
+        return False
+    for mac, value in names.items():
+        if not str(mac or '').strip():
+            return False
+        if isinstance(value, str) and value.strip():
+            continue
+        return False
+    return True
+
+
 LOCATION_CREATE_SUB_ROLES = {'agent', 'superagent', 'technician'}
 
 
@@ -1241,6 +1261,8 @@ def tenant_docs_visible(actor, collection, doc, allowed_locs, default_owner_id=N
         return True
     if not same_owner(owner_id, doc_owner_id(data, default_owner_id, collection=c)):
         return False
+    if c == 'mikrotik_devices' and role == 'technician':
+        return True
     if role in FULL_LOCATION_ROLES:
         return True
     loc = doc_location_name(c, data)
@@ -1504,6 +1526,10 @@ def register_routes(app, db_config, firebase_auth=None):
         merge = bool(data.get('merge')) or request.method in ('PATCH',)
         conn, cur = _conn()
         try:
+            if collection == 'mikrotik_devices' and str(actor.get('role') or '').lower() == 'technician':
+                existing = get_doc(cur, collection, doc_id)
+                if not technician_mikrotik_write_allowed(existing, payload, merge):
+                    return jsonify({'success': False, 'error': 'Technicians may only rename access points'}), 403
             if is_location_scoped_collection(collection):
                 if collection == 'locations' and actor.get('role') not in LOCATION_WRITE_ROLES:
                     return jsonify({'success': False, 'error': 'Not allowed'}), 403
@@ -1574,6 +1600,8 @@ def register_routes(app, db_config, firebase_auth=None):
             return jsonify({'success': False, 'error': 'Removed. Update the LightNet app.'}), 410
         conn, cur = _conn()
         try:
+            if collection == 'mikrotik_devices' and str(actor.get('role') or '').lower() == 'technician':
+                return jsonify({'success': False, 'error': 'Technicians cannot delete MikroTik devices'}), 403
             if is_location_scoped_collection(collection):
                 if collection == 'locations' and actor.get('role') not in LOCATION_WRITE_ROLES:
                     return jsonify({'success': False, 'error': 'Not allowed'}), 403
@@ -1607,6 +1635,13 @@ def register_routes(app, db_config, firebase_auth=None):
                 if is_removed_app_collection(collection):
                     return jsonify({'success': False, 'error': 'Removed. Update the LightNet app.'}), 410
                 doc_id = str(op.get('id') or new_id())
+                if collection == 'mikrotik_devices' and str(actor.get('role') or '').lower() == 'technician':
+                    existing = get_doc(cur, collection, doc_id)
+                    merge = bool(op.get('merge') or kind == 'update')
+                    if kind == 'delete' or not technician_mikrotik_write_allowed(
+                        existing, op.get('data') or {}, merge, deleting=kind == 'delete',
+                    ):
+                        return jsonify({'success': False, 'error': 'Technicians may only rename access points'}), 403
                 if is_location_scoped_collection(collection):
                     if collection == 'locations' and actor.get('role') not in LOCATION_WRITE_ROLES:
                         return jsonify({'success': False, 'error': 'Not allowed'}), 403

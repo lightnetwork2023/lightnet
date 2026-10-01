@@ -55,6 +55,31 @@ class MikroTikDeviceVisibilityTest(unittest.TestCase):
         self.assertTrue(ad.tenant_docs_visible(actor, 'mikrotik_devices', visible, allowed, 13))
         self.assertFalse(ad.tenant_docs_visible(actor, 'mikrotik_devices', hidden, allowed, 13))
 
+    def test_technician_sees_all_owner_devices_like_boss(self):
+        actor = {'role': 'technician', 'mikrotik_owner_id': 13}
+        self.assertTrue(
+            ad.tenant_docs_visible(actor, 'mikrotik_devices', device('CHALINZE', 13), set(), 13)
+        )
+        self.assertFalse(
+            ad.tenant_docs_visible(actor, 'mikrotik_devices', device('BABUU', 10), set(), 13)
+        )
+
+    def test_technician_can_only_rename_access_points(self):
+        existing = device('CHALINZE', 13)
+        rename = {'access_point_names': {'DC:9F:DB:24:96:BA': 'Kibanda'}}
+        clear_name = {'access_point_names': {'DC:9F:DB:24:96:BA': {'__fv': 'delete'}}}
+        self.assertTrue(ad.technician_mikrotik_write_allowed(existing, rename, True))
+        self.assertFalse(ad.technician_mikrotik_write_allowed(existing, clear_name, True))
+        self.assertFalse(
+            ad.technician_mikrotik_write_allowed(
+                existing, {'access_point_names': {'DC:9F:DB:24:96:BA': ''}}, True
+            )
+        )
+        self.assertFalse(ad.technician_mikrotik_write_allowed(existing, {'name': 'Changed'}, True))
+        self.assertFalse(ad.technician_mikrotik_write_allowed(existing, rename, False))
+        self.assertFalse(ad.technician_mikrotik_write_allowed(None, rename, True))
+        self.assertFalse(ad.technician_mikrotik_write_allowed(existing, rename, True, deleting=True))
+
     def test_write_stamps_actor_owner_and_ignores_client_owner(self):
         payload = ad.stamp_write_owner(
             {'mikrotik_owner_id': 13},

@@ -1,8 +1,10 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:get/get.dart';
 import 'package:lightnetwork/services/app_db.dart';
 
+import '../controllers/auth_controller.dart';
 import '../services/MikroTikMonitorService.dart';
 import '../theme/app_theme.dart';
 
@@ -350,6 +352,7 @@ class _AccessPointsSheetState extends State<AccessPointsSheet> {
 
 Future<String?> _renameAccessPoint(BuildContext context, String deviceId, AccessPointView ap) async {
   final ctrl = TextEditingController(text: ap.name);
+  final canClear = Get.find<AuthController>().userRole != 'technician';
   final saved = await showDialog<String>(
     context: context,
     builder: (ctx) => AlertDialog(
@@ -374,7 +377,8 @@ Future<String?> _renameAccessPoint(BuildContext context, String deviceId, Access
       ),
       actions: [
         TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-        TextButton(onPressed: () => Navigator.pop(ctx, ''), child: const Text('Clear')),
+        if (canClear)
+          TextButton(onPressed: () => Navigator.pop(ctx, ''), child: const Text('Clear')),
         FilledButton(onPressed: () => Navigator.pop(ctx, ctrl.text), child: const Text('Save')),
       ],
     ),

@@ -636,6 +636,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final role = _authController.userRole;
     final isBoss = role == 'boss';
     final isTechnician = role == 'technician';
+    final hasMikroTikTab = isBoss || isTechnician;
     return DefaultTabController(
       length: 2,
       initialIndex: 0,
@@ -669,22 +670,17 @@ class _HomeScreenState extends State<HomeScreen> {
             labelColor: Colors.white,
             unselectedLabelColor: Colors.white70,
             tabs: [
-              if (isBoss)
+              if (hasMikroTikTab)
                 const Tab(icon: Icon(Icons.router_rounded), text: 'MikroTik'),
               const Tab(icon: Icon(Icons.dashboard_rounded), text: 'Dashboard'),
-              if (!isBoss)
-                Tab(
-                  icon: Icon(isTechnician
-                      ? Icons.router_rounded
-                      : Icons.location_city_rounded),
-                  text: isTechnician ? 'MikroTik' : 'Sites',
-                ),
+              if (!hasMikroTikTab)
+                const Tab(icon: Icon(Icons.location_city_rounded), text: 'Sites'),
             ],
           ),
         ),
         body: TabBarView(
           children: [
-            if (isBoss) const MikroTikMonitorContent(),
+            if (hasMikroTikTab) const MikroTikMonitorContent(),
             // Dashboard Tab
             RefreshIndicator(
               onRefresh: _refreshData,
@@ -1383,11 +1379,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
             
-            // Sites stay for MD. Technician keeps MikroTik as the second tab.
-            if (!isBoss)
-              isTechnician
-                  ? const MikroTikMonitorContent()
-                  : _buildSitesTab(),
+            if (!hasMikroTikTab) _buildSitesTab(),
           ],
         ),
       ),
@@ -1635,14 +1627,15 @@ class _MikroTikMonitorContentState extends State<MikroTikMonitorContent> {
                   style: TextStyle(fontSize: 16, color: Colors.grey[600]),
                 ),
                 const SizedBox(height: 8),
-                ElevatedButton.icon(
-                  onPressed: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const MikroTikMonitorScreen()),
+                if (Get.find<AuthController>().userRole != 'technician')
+                  ElevatedButton.icon(
+                    onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const MikroTikMonitorScreen()),
+                    ),
+                    icon: const Icon(Icons.add),
+                    label: const Text('Add Device'),
                   ),
-                  icon: const Icon(Icons.add),
-                  label: const Text('Add Device'),
-                ),
               ],
             ),
           );
