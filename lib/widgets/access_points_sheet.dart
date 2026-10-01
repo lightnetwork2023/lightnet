@@ -324,7 +324,7 @@ class _AccessPointsSheetState extends State<AccessPointsSheet> {
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
                 child: Text(
-                  'Offline radios are listed first. A name and the model, such as Nokia beacon, show when we know them. Block and Unblock are only for link radios.',
+                  'Offline radios are listed first. A name and the model, such as Nokia beacon, show when we know them. Block on a link stays until you tap Unblock.',
                   style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                 ),
               ),
@@ -343,7 +343,7 @@ class _AccessPointsSheetState extends State<AccessPointsSheet> {
                                   ? ' · No reply'
                                   : '';
                           final heard = ap.blocked
-                              ? 'DHCP blocked'
+                              ? 'Blocked until Unblock'
                               : !ap.present
                                   ? 'No DHCP lease'
                                   : ap.lastSeen.isEmpty
