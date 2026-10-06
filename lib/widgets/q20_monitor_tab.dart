@@ -13,7 +13,7 @@ class Q20MonitorContent extends StatefulWidget {
 }
 
 class _Q20MonitorContentState extends State<Q20MonitorContent> {
-  String _filter = 'offline';
+  String _filter = 'all';
   String _query = '';
   bool _loading = true;
   String? _error;
@@ -21,6 +21,7 @@ class _Q20MonitorContentState extends State<Q20MonitorContent> {
   int _online = 0;
   int _offline = 0;
   int _pendingAdopt = 0;
+  int _meshDown = 0;
 
   @override
   void initState() {
@@ -45,6 +46,8 @@ class _Q20MonitorContentState extends State<Q20MonitorContent> {
         _offline = data['offline'] as int? ?? routers.where((r) => r['online'] != true).length;
         _pendingAdopt = data['pending_adopt'] as int? ??
             routers.where((r) => r['needs_adopt'] == true).length;
+        _meshDown = data['mesh_down'] as int? ??
+            routers.where((r) => (r['mesh_offline'] as int? ?? 0) > 0).length;
         _loading = false;
       });
     } catch (e) {
@@ -57,13 +60,15 @@ class _Q20MonitorContentState extends State<Q20MonitorContent> {
   }
 
   List<Map<String, dynamic>> get _filtered {
-    var list = _routers;
+    var list = List<Map<String, dynamic>>.from(_routers);
     if (_filter == 'online') {
       list = list.where((r) => r['online'] == true).toList();
     } else if (_filter == 'offline') {
       list = list.where((r) => r['online'] != true).toList();
     } else if (_filter == 'adopt') {
       list = list.where((r) => r['needs_adopt'] == true).toList();
+    } else if (_filter == 'mesh_down') {
+      list = list.where((r) => _meshOfflineCount(r) > 0).toList();
     }
     final q = _query.trim().toLowerCase();
     if (q.isNotEmpty) {
@@ -75,11 +80,44 @@ class _Q20MonitorContentState extends State<Q20MonitorContent> {
           r['wg_ip'],
           r['site_name'],
           r['owner_email'],
+          ..._meshOfflineNames(r),
         ].map((e) => (e ?? '').toString().toLowerCase()).join(' ');
         return hay.contains(q);
       }).toList();
     }
+    list.sort((a, b) {
+      final aMesh = _meshOfflineCount(a);
+      final bMesh = _meshOfflineCount(b);
+      if (aMesh != bMesh) return bMesh.compareTo(aMesh);
+      final aOff = a['online'] == true ? 1 : 0;
+      final bOff = b['online'] == true ? 1 : 0;
+      if (aOff != bOff) return aOff.compareTo(bOff);
+      return (a['name'] ?? '').toString().compareTo((b['name'] ?? '').toString());
+    });
     return list;
+  }
+
+  int _meshOfflineCount(Map<String, dynamic> r) {
+    return r['mesh_offline'] as int? ?? _meshOfflineNames(r).length;
+  }
+
+  List<String> _meshOfflineNames(Map<String, dynamic> r) {
+    final named = r['mesh_offline_names'];
+    if (named is List) {
+      return named.map((e) => e.toString()).where((e) => e.trim().isNotEmpty).toList();
+    }
+    final mesh = r['mesh'] ?? r['satellites'] ?? r['topology'];
+    if (mesh is! List) return const [];
+    final names = <String>[];
+    for (final item in mesh) {
+      if (item is! Map) continue;
+      if (item['role'] == 'main') continue;
+      final online = item['online'] == true || item['online'] == 1;
+      if (online) continue;
+      final label = (item['name'] ?? item['hostname'] ?? item['mac'] ?? 'AP').toString();
+      if (label.trim().isNotEmpty) names.add(label);
+    }
+    return names;
   }
 
   @override
@@ -124,6 +162,8 @@ class _Q20MonitorContentState extends State<Q20MonitorContent> {
                 _chip('Online', 'online'),
                 const SizedBox(width: 8),
                 _chip('Offline', 'offline'),
+                const SizedBox(width: 8),
+                _chip('Mesh down', 'mesh_down'),
                 const SizedBox(width: 8),
                 _chip('Needs adopt', 'adopt'),
               ],
@@ -182,7 +222,7 @@ class _Q20MonitorContentState extends State<Q20MonitorContent> {
             const SizedBox(width: 8),
             _summary('Offline', _offline.toString(), Colors.red, Icons.cancel_outlined),
             const SizedBox(width: 8),
-            _summary('Adopt', _pendingAdopt.toString(), AppTheme.warningColor, Icons.add_link),
+            _summary('Mesh down', _meshDown.toString(), Colors.red, Icons.device_hub_outlined),
           ],
         ),
         const SizedBox(height: 12),
@@ -228,8 +268,6 @@ class _Q20MonitorContentState extends State<Q20MonitorContent> {
     final online = r['online'] == true;
     final statusColor = online ? Colors.green : Colors.red;
     final name = r['name']?.toString() ?? r['hostname']?.toString() ?? 'Q20';
-    final meshTotal = r['mesh_total'] as int? ?? (r['satellites'] is List ? (r['satellites'] as List).length : 0);
-    final meshOnline = r['mesh_online'] as int? ?? 0;
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       elevation: 2,
@@ -290,15 +328,14 @@ class _Q20MonitorContentState extends State<Q20MonitorContent> {
                       style: TextStyle(fontSize: 13, color: Colors.grey[600]),
                     ),
                     const SizedBox(height: 4),
-                    Text(
-                      '${r['clients'] ?? 0} clients  ·  mesh $meshOnline/$meshTotal'
-                      '${r['needs_adopt'] == true ? '  ·  adopt available' : ''}',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: r['needs_adopt'] == true ? AppTheme.warningColor : AppTheme.textSecondary,
-                        fontWeight: r['needs_adopt'] == true ? FontWeight.w600 : FontWeight.normal,
+                    _meshStatusLine(r),
+                    if (r['needs_adopt'] == true) ...[
+                      const SizedBox(height: 2),
+                      const Text(
+                        'Adopt available',
+                        style: TextStyle(fontSize: 12, color: AppTheme.warningColor, fontWeight: FontWeight.w600),
                       ),
-                    ),
+                    ],
                   ],
                 ),
               ),
@@ -307,6 +344,59 @@ class _Q20MonitorContentState extends State<Q20MonitorContent> {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _meshStatusLine(Map<String, dynamic> r) {
+    final total = r['mesh_total'] as int? ?? 0;
+    final meshOnline = r['mesh_online'] as int? ?? 0;
+    final offlineNames = _meshOfflineNames(r);
+    final offline = r['mesh_offline'] as int? ?? offlineNames.length;
+    if (total == 0 && offlineNames.isEmpty) {
+      return const Text('No meshed access points', style: TextStyle(fontSize: 12, color: Colors.grey));
+    }
+    const size = TextStyle(fontSize: 12);
+    Widget count;
+    if (offline == 0) {
+      count = Text(
+        meshOnline == 1 ? '1 meshed AP online' : '$meshOnline meshed APs online',
+        style: size.copyWith(color: Colors.green, fontWeight: FontWeight.w600),
+      );
+    } else if (meshOnline == 0) {
+      count = Text(
+        offline == 1 ? '1 meshed AP offline' : '$offline meshed APs offline',
+        style: size.copyWith(color: Colors.red, fontWeight: FontWeight.w700),
+      );
+    } else {
+      count = Text.rich(
+        TextSpan(
+          style: size,
+          children: [
+            TextSpan(text: '$meshOnline online', style: const TextStyle(color: Colors.green, fontSize: 12, fontWeight: FontWeight.w600)),
+            const TextSpan(text: ' · ', style: TextStyle(color: Colors.grey, fontSize: 12)),
+            TextSpan(text: '$offline offline', style: const TextStyle(color: Colors.red, fontSize: 12, fontWeight: FontWeight.w700)),
+          ],
+        ),
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(Icons.device_hub, size: 14, color: offline > 0 ? Colors.red : Colors.green),
+            const SizedBox(width: 4),
+            Expanded(child: count),
+          ],
+        ),
+        if (offlineNames.isNotEmpty) ...[
+          const SizedBox(height: 2),
+          Text(
+            offlineNames.map((n) => '$n offline').join(' · '),
+            style: const TextStyle(fontSize: 12, color: Colors.red, fontWeight: FontWeight.w600),
+          ),
+        ],
+      ],
     );
   }
 }

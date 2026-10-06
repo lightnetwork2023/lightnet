@@ -309,6 +309,13 @@ class _Q20DeviceScreenState extends State<Q20DeviceScreen> {
                   'Last seen ${_when(_router['last_seen'])}',
                   style: const TextStyle(fontSize: 12, color: AppTheme.textTertiary),
                 ),
+                if ((_router['mesh_offline'] as int? ?? 0) > 0) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    '${((_router['mesh_offline_names'] as List?) ?? []).join(', ')} offline',
+                    style: const TextStyle(fontSize: 12, color: Colors.red, fontWeight: FontWeight.w700),
+                  ),
+                ],
               ],
             ),
           ),
