@@ -8,6 +8,7 @@ import '../theme/app_theme.dart';
 import '../widgets/mikrotik_monitor_tab.dart';
 import '../widgets/modern_components.dart';
 import '../widgets/modern_drawer.dart';
+import '../widgets/q20_monitor_tab.dart';
 import 'HomeInternetCustomersScreen.dart';
 import 'NetworkDevicesScreen.dart';
 import 'OfflineDevicesScreen.dart';
@@ -72,7 +73,7 @@ class _TechnicianHomeScreenState extends State<TechnicianHomeScreen> {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 2,
+      length: 3,
       initialIndex: 1, // Open MikroTik tab first (same as boss home)
       child: Scaffold(
         backgroundColor: AppTheme.backgroundColor,
@@ -101,9 +102,11 @@ class _TechnicianHomeScreenState extends State<TechnicianHomeScreen> {
             indicatorColor: Colors.white,
             labelColor: Colors.white,
             unselectedLabelColor: Colors.white70,
+            isScrollable: true,
             tabs: [
               Tab(icon: Icon(Icons.dashboard_rounded), text: 'Dashboard'),
               Tab(icon: Icon(Icons.router_rounded), text: 'MikroTik'),
+              Tab(icon: Icon(Icons.hub_outlined), text: 'Q20'),
             ],
           ),
         ),
@@ -300,6 +303,7 @@ class _TechnicianHomeScreenState extends State<TechnicianHomeScreen> {
               ),
             ),
             const MikroTikMonitorContent(),
+            const Q20MonitorContent(),
           ],
         ),
       ),

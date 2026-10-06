@@ -15,6 +15,7 @@ import '../theme/app_theme.dart';
 import '../widgets/modern_components.dart';
 import '../widgets/access_points_sheet.dart';
 import '../widgets/modern_drawer.dart';
+import '../widgets/q20_monitor_tab.dart';
 import 'HomeInternetCustomersScreen.dart';
 import 'MikroTikMonitorScreen.dart';
 import 'RecentTechActivitiesScreen.dart';
@@ -636,9 +637,12 @@ class _HomeScreenState extends State<HomeScreen> {
     final role = _authController.userRole;
     final isBoss = role == 'boss';
     final isTechnician = role == 'technician';
+    final isMD = role == 'md';
     final hasMikroTikTab = isBoss || isTechnician;
+    final hasQ20Tab = isBoss || isTechnician || isMD;
+    final tabCount = 1 + (hasMikroTikTab ? 1 : 0) + (hasQ20Tab ? 1 : 0) + (!hasMikroTikTab ? 1 : 0);
     return DefaultTabController(
-      length: 2,
+      length: tabCount,
       initialIndex: 0,
       child: Scaffold(
         backgroundColor: AppTheme.backgroundColor,
@@ -669,9 +673,12 @@ class _HomeScreenState extends State<HomeScreen> {
             indicatorColor: Colors.white,
             labelColor: Colors.white,
             unselectedLabelColor: Colors.white70,
+            isScrollable: tabCount > 2,
             tabs: [
               if (hasMikroTikTab)
                 const Tab(icon: Icon(Icons.router_rounded), text: 'MikroTik'),
+              if (hasQ20Tab)
+                const Tab(icon: Icon(Icons.hub_outlined), text: 'Q20'),
               const Tab(icon: Icon(Icons.dashboard_rounded), text: 'Dashboard'),
               if (!hasMikroTikTab)
                 const Tab(icon: Icon(Icons.location_city_rounded), text: 'Sites'),
@@ -681,6 +688,7 @@ class _HomeScreenState extends State<HomeScreen> {
         body: TabBarView(
           children: [
             if (hasMikroTikTab) const MikroTikMonitorContent(),
+            if (hasQ20Tab) const Q20MonitorContent(),
             // Dashboard Tab
             RefreshIndicator(
               onRefresh: _refreshData,

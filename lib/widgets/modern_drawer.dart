@@ -30,6 +30,7 @@ import '../screens/UniFiAPManagementScreen.dart';
 import '../screens/PayablesManagementScreen.dart';
 import '../screens/ReceivablesManagementScreen.dart';
 import '../screens/MikroTikMonitorScreen.dart';
+import '../screens/Q20MonitorScreen.dart';
 import '../screens/LoginDetailsScreen.dart';
 import '../screens/SimCardManagementScreen.dart';
 import '../screens/DeviceInventoryScreen.dart';
@@ -159,6 +160,13 @@ class ModernDrawer extends StatelessWidget {
                                 title: 'MikroTik Monitoring',
                                 subtitle: 'Monitor router status',
                                 onTap: () => _navigateTo(context, const MikroTikMonitorScreen()),
+                              ),
+                              _buildDrawerItem(
+                                context,
+                                icon: Icons.hub_outlined,
+                                title: 'LightNet Q20',
+                                subtitle: 'Mesh status, adopt, login',
+                                onTap: () => _navigateTo(context, const Q20MonitorScreen()),
                               ),
                               _buildDrawerItem(
                                 context,
@@ -319,12 +327,24 @@ class ModernDrawer extends StatelessWidget {
                   // Boss and Technician items
                   Obx(() {
                     if (authController.isBoss || authController.userRole == 'technician') {
-                      return _buildDrawerItem(
-                        context,
-                        icon: Icons.shopping_cart_outlined,
-                        title: 'Purchase for Agent',
-                        subtitle: 'Agent purchase management',
-                        onTap: () => _navigateTo(context, const PurchaseForAgentScreen()),
+                      return Column(
+                        children: [
+                          _buildDrawerItem(
+                            context,
+                            icon: Icons.shopping_cart_outlined,
+                            title: 'Purchase for Agent',
+                            subtitle: 'Agent purchase management',
+                            onTap: () => _navigateTo(context, const PurchaseForAgentScreen()),
+                          ),
+                          if (authController.userRole == 'technician')
+                            _buildDrawerItem(
+                              context,
+                              icon: Icons.hub_outlined,
+                              title: 'LightNet Q20',
+                              subtitle: 'Mesh status, adopt, login',
+                              onTap: () => _navigateTo(context, const Q20MonitorScreen()),
+                            ),
+                        ],
                       );
                     }
                     return const SizedBox.shrink();
