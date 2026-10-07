@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../screens/Q20DeviceScreen.dart';
@@ -30,6 +32,7 @@ class Q20MonitorContentState extends State<Q20MonitorContent>
   String? _latestLabelText;
   String? _promptedBuild;
   bool _upgradeBusy = false;
+  Timer? _poll;
 
   static bool flag(dynamic v) => Q20MonitorService.flag(v);
 
@@ -37,6 +40,15 @@ class Q20MonitorContentState extends State<Q20MonitorContent>
   void initState() {
     super.initState();
     _load(prompt: true);
+    _poll = Timer.periodic(const Duration(seconds: 20), (_) {
+      if (mounted) _load();
+    });
+  }
+
+  @override
+  void dispose() {
+    _poll?.cancel();
+    super.dispose();
   }
 
   Future<void> _load({bool prompt = false}) async {

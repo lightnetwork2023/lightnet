@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -23,6 +25,7 @@ class _Q20DeviceScreenState extends State<Q20DeviceScreen> {
   Map<String, dynamic> _login = {};
   List<dynamic> _events = [];
   bool _busy = false;
+  Timer? _poll;
 
   @override
   void initState() {
@@ -31,6 +34,15 @@ class _Q20DeviceScreenState extends State<Q20DeviceScreen> {
       _router = Map<String, dynamic>.from(widget.initial!);
     }
     _load();
+    _poll = Timer.periodic(const Duration(seconds: 20), (_) {
+      if (mounted && !_busy) _load();
+    });
+  }
+
+  @override
+  void dispose() {
+    _poll?.cancel();
+    super.dispose();
   }
 
   Future<void> _load() async {
