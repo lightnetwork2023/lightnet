@@ -512,6 +512,143 @@ class _Q20DeviceScreenState extends State<Q20DeviceScreen> {
     );
   }
 
+  List<Map<String, dynamic>> _usersOf(Map<String, dynamic> node) {
+    final raw = node['users'];
+    if (raw is List) {
+      return raw.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    }
+    return const [];
+  }
+
+  String _bytes(dynamic n) {
+    final v = (n is num) ? n.toDouble() : double.tryParse('$n') ?? 0;
+    if (v >= 1e9) return '${(v / 1e9).toStringAsFixed(1)} GB';
+    if (v >= 1e6) return '${(v / 1e6).toStringAsFixed(1)} MB';
+    if (v >= 1e3) return '${(v / 1e3).toStringAsFixed(0)} KB';
+    return '${v.toInt()} B';
+  }
+
+  String _secs(dynamic n) {
+    final s = (n is num) ? n.toInt() : int.tryParse('$n') ?? 0;
+    if (s >= 3600) return '${s ~/ 3600}h ${(s % 3600) ~/ 60}m';
+    if (s >= 60) return '${s ~/ 60}m ${s % 60}s';
+    return '${s}s';
+  }
+
+  String _userLabel(Map<String, dynamic> u) {
+    final voucher = u['voucher']?.toString() ?? '';
+    final name = u['voucher_name']?.toString() ?? '';
+    final user = u['username']?.toString() ?? '';
+    if (name.isNotEmpty) return name;
+    if (voucher.isNotEmpty) return voucher;
+    if (user.isNotEmpty && !RegExp(r'^[0-9a-fA-F]{2}([:\-][0-9a-fA-F]{2}){5}$').hasMatch(user)) {
+      return user;
+    }
+    return u['mac']?.toString() ?? 'Client';
+  }
+
+  void _openApUsers(Map<String, dynamic> node) {
+    final title = (node['name']?.toString().isNotEmpty == true)
+        ? node['name'].toString()
+        : (node['hostname'] ?? node['mac'] ?? 'AP').toString();
+    final users = _usersOf(node);
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+              Text(
+                users.isEmpty ? 'No users on this AP' : '${users.length} user${users.length == 1 ? '' : 's'} connected',
+                style: const TextStyle(color: AppTheme.textSecondary),
+              ),
+              const SizedBox(height: 12),
+              if (users.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 24),
+                  child: Center(child: Text('No Wi-Fi clients on this access point')),
+                )
+              else
+                ...users.map((u) {
+                  final authed = u['authenticated'] == true || u['authenticated'] == 1;
+                  return ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(authed ? Icons.person : Icons.person_outline,
+                        color: authed ? AppTheme.primaryColor : AppTheme.textSecondary),
+                    title: Text(_userLabel(u), style: const TextStyle(fontWeight: FontWeight.w700)),
+                    subtitle: Text(
+                      [
+                        u['mac'],
+                        if ((u['ip'] ?? '').toString().isNotEmpty) u['ip'],
+                        authed ? 'online' : (u['state'] ?? 'wifi'),
+                      ].join(' · '),
+                    ),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      _openUserDetail(title, u);
+                    },
+                  );
+                }),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _openUserDetail(String apName, Map<String, dynamic> u) {
+    final authed = u['authenticated'] == true || u['authenticated'] == 1;
+    final rows = <List<String>>[
+      ['Access point', apName],
+      ['Name / voucher', _userLabel(u)],
+      if ((u['voucher'] ?? '').toString().isNotEmpty) ['Voucher', u['voucher'].toString()],
+      ['MAC', u['mac']?.toString() ?? '—'],
+      ['IP', (u['ip'] ?? '—').toString()],
+      ['Status', authed ? 'Authenticated' : (u['state']?.toString() ?? 'Wi-Fi only')],
+      ['Session', _secs(u['session_s'])],
+      ['Idle', _secs(u['idle_s'])],
+      ['Download', _bytes(u['rx'])],
+      ['Upload', _bytes(u['tx'])],
+      if ((u['started_at'] ?? '').toString().isNotEmpty) ['Started', _when(u['started_at'])],
+      if ((u['expire_time'] ?? '').toString().isNotEmpty) ['Expires', _when(u['expire_time'])],
+      if ((u['location'] ?? '').toString().isNotEmpty) ['Location', u['location'].toString()],
+    ];
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(_userLabel(u)),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: rows
+                .map((r) => Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          SizedBox(
+                            width: 110,
+                            child: Text(r[0], style: const TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
+                          ),
+                          Expanded(child: Text(r[1], style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13))),
+                        ],
+                      ),
+                    ))
+                .toList(),
+          ),
+        ),
+        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close'))],
+      ),
+    );
+  }
+
   Widget _topoCard(Map<String, dynamic> node) {
     final online = node['online'] == true || node['online'] == 1;
     final mac = node['mac']?.toString() ?? '';
@@ -520,18 +657,21 @@ class _Q20DeviceScreenState extends State<Q20DeviceScreen> {
         ? node['name'].toString()
         : (node['hostname'] ?? mac).toString();
     final isMain = role == 'main';
+    final users = _usersOf(node);
+    final userCount = node['user_count'] is num ? (node['user_count'] as num).toInt() : users.length;
     return Card(
       margin: const EdgeInsets.only(bottom: 10),
       child: ListTile(
+        onTap: () => _openApUsers(node),
         leading: Icon(isMain ? Icons.hub_outlined : Icons.device_hub_outlined,
             color: online ? Colors.green : Colors.red),
         title: Text(title),
         subtitle: Text(
           [
             role,
+            '$userCount user${userCount == 1 ? '' : 's'}',
             mac,
             node['path']?.toString() ?? '',
-            if (node['ip'] != null) node['ip'].toString(),
             if (node['mesh_signal_dbm'] != null) '${node['mesh_signal_dbm']} dBm',
           ].where((e) => e.toString().trim().isNotEmpty).join(' · '),
         ),
@@ -565,12 +705,18 @@ class _Q20DeviceScreenState extends State<Q20DeviceScreen> {
     final title = (node['name']?.toString().isNotEmpty == true)
         ? node['name'].toString()
         : (node['hostname'] ?? mac).toString();
+    final n = node['user_count'] is num ? (node['user_count'] as num).toInt() : _usersOf(node).length;
     return Card(
       margin: const EdgeInsets.only(bottom: 10),
       child: ListTile(
+        onTap: () => _openApUsers(node),
         leading: Icon(Icons.device_hub_outlined, color: online ? Colors.green : Colors.red),
         title: Text(title),
-        subtitle: Text([mac, node['fw_build'] ?? ''].where((e) => e.toString().isNotEmpty).join(' · ')),
+        subtitle: Text(
+          [mac, '$n user${n == 1 ? '' : 's'}', node['fw_build'] ?? '']
+              .where((e) => e.toString().isNotEmpty)
+              .join(' · '),
+        ),
         trailing: Text(online ? 'ONLINE' : 'OFFLINE',
             style: TextStyle(color: online ? Colors.green : Colors.red, fontSize: 11, fontWeight: FontWeight.w700)),
       ),
