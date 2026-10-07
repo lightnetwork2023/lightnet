@@ -13,9 +13,9 @@ import 'OfflineDevicesScreen.dart';
 import 'VouchersScreen.dart';
 import '../theme/app_theme.dart';
 import '../widgets/modern_components.dart';
-import '../widgets/access_points_sheet.dart';
 import '../widgets/modern_drawer.dart';
 import '../widgets/q20_monitor_tab.dart';
+import '../widgets/mikrotik_monitor_tab.dart';
 import 'HomeInternetCustomersScreen.dart';
 import 'MikroTikMonitorScreen.dart';
 import 'RecentTechActivitiesScreen.dart';
@@ -60,6 +60,9 @@ class _HomeScreenState extends State<HomeScreen> {
   final Map<String, String> _prevMikroTikStatuses = {};
   bool _mikrotikInitialized = false;
   int _internetPaymentsDueCount = 0;
+  final GlobalKey<Q20MonitorContentState> _q20Key = GlobalKey<Q20MonitorContentState>();
+  final GlobalKey<MikroTikMonitorContentState> _mtKey = GlobalKey<MikroTikMonitorContentState>();
+  bool _refreshing = false;
 
   @override
   void initState() {
@@ -632,6 +635,37 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Future<void> _refreshCurrentTab(BuildContext context, {required bool hasMikroTikTab, required bool hasQ20Tab}) async {
+    if (_refreshing) return;
+    setState(() => _refreshing = true);
+    try {
+      final i = DefaultTabController.of(context).index;
+      final mtIndex = hasMikroTikTab ? 0 : -1;
+      final q20Index = hasQ20Tab ? (hasMikroTikTab ? 1 : 0) : -1;
+      if (i == mtIndex) {
+        final mt = _mtKey.currentState;
+        if (mt != null) {
+          await mt.refresh();
+        } else {
+          await _refreshData();
+        }
+      } else if (i == q20Index) {
+        final q20 = _q20Key.currentState;
+        if (q20 != null) {
+          await q20.refresh();
+        } else {
+          await _refreshData();
+        }
+      } else {
+        await _refreshData();
+      }
+    } catch (e) {
+      debugPrint('Error refreshing tab: $e');
+    } finally {
+      if (mounted) setState(() => _refreshing = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final role = _authController.userRole;
@@ -644,15 +678,18 @@ class _HomeScreenState extends State<HomeScreen> {
     return DefaultTabController(
       length: tabCount,
       initialIndex: 0,
-      child: Scaffold(
+      child: Builder(
+        builder: (context) => Scaffold(
         backgroundColor: AppTheme.backgroundColor,
         drawer: const ModernDrawer(),
         appBar: AppBar(
-          title: Text(
-            'lightNET',
-            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+          title: const Text(
+            'LIGHTNET',
+            style: TextStyle(
               color: Colors.white,
-              fontWeight: FontWeight.bold,
+              fontWeight: FontWeight.w800,
+              fontSize: 20,
+              letterSpacing: 1.4,
             ),
           ),
           elevation: 0,
@@ -662,15 +699,30 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
           actions: [
-            IconButton(
-              icon: const Icon(Icons.refresh_rounded, color: Colors.white),
-              onPressed: _refreshData,
-              tooltip: 'Refresh Data',
-            ),
+            if (_refreshing)
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+                child: SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2.2, color: Colors.white),
+                ),
+              )
+            else
+              IconButton(
+                icon: const Icon(Icons.refresh_rounded, color: Colors.white),
+                onPressed: () => _refreshCurrentTab(
+                  context,
+                  hasMikroTikTab: hasMikroTikTab,
+                  hasQ20Tab: hasQ20Tab,
+                ),
+                tooltip: 'Refresh',
+              ),
             const SizedBox(width: 8),
           ],
           bottom: TabBar(
             indicatorColor: Colors.white,
+            indicatorWeight: 3,
             labelColor: Colors.white,
             unselectedLabelColor: Colors.white70,
             isScrollable: tabCount > 2,
@@ -687,8 +739,8 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         body: TabBarView(
           children: [
-            if (hasMikroTikTab) const MikroTikMonitorContent(),
-            if (hasQ20Tab) const Q20MonitorContent(),
+            if (hasMikroTikTab) MikroTikMonitorContent(key: _mtKey),
+            if (hasQ20Tab) Q20MonitorContent(key: _q20Key),
             // Dashboard Tab
             RefreshIndicator(
               onRefresh: _refreshData,
@@ -734,10 +786,11 @@ class _HomeScreenState extends State<HomeScreen> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                'Welcome back!',
+                                'Dashboard',
                                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                                   color: Colors.white,
-                                  fontWeight: FontWeight.bold,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: 0.2,
                                 ),
                               ),
                               const SizedBox(height: 4),
@@ -1391,6 +1444,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         ),
       ),
+      ),
     );
   }
 
@@ -1466,305 +1520,6 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         );
       },
-    );
-  }
-}
-
-// MikroTik Monitor Content Widget (without AppBar)
-class MikroTikMonitorContent extends StatefulWidget {
-  const MikroTikMonitorContent({Key? key}) : super(key: key);
-
-  @override
-  State<MikroTikMonitorContent> createState() => _MikroTikMonitorContentState();
-}
-
-class _MikroTikMonitorContentState extends State<MikroTikMonitorContent> {
-  String _filterStatus = 'all';
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        _buildFilterChips(),
-        _buildSummaryCards(),
-        Expanded(child: _buildDevicesList()),
-      ],
-    );
-  }
-
-  Widget _buildFilterChips() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          children: [
-            _buildFilterChip('All', 'all'),
-            const SizedBox(width: 8),
-            _buildFilterChip('Online', 'online'),
-            const SizedBox(width: 8),
-            _buildFilterChip('Offline', 'offline'),
-            const SizedBox(width: 8),
-            _buildFilterChip('Unknown', 'unknown'),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildFilterChip(String label, String value) {
-    final isSelected = _filterStatus == value;
-    return FilterChip(
-      label: Text(label),
-      selected: isSelected,
-      onSelected: (selected) => setState(() => _filterStatus = value),
-      backgroundColor: Colors.grey[200],
-      selectedColor: AppTheme.primaryColor.withOpacity(0.2),
-      checkmarkColor: AppTheme.primaryColor,
-      labelStyle: TextStyle(
-        color: isSelected ? AppTheme.primaryColor : AppTheme.textPrimary,
-        fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-      ),
-    );
-  }
-
-  Widget _buildSummaryCards() {
-    return StreamBuilder<QuerySnapshot>(
-      stream: MikroTikMonitorService.getMikroTikDevices(),
-      builder: (context, snapshot) {
-        if (!snapshot.hasData) {
-          return const SizedBox(height: 80);
-        }
-
-        final devices = snapshot.data!.docs;
-        final onlineCount = devices.where((d) => d['status'] == 'online').length;
-        final offlineCount = devices.where((d) => d['status'] == 'offline').length;
-        final unknownCount = devices.where((d) => d['status'] == 'unknown').length;
-
-        return Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          child: Row(
-            children: [
-              Expanded(
-                child: _buildSummaryCard(
-                  'Online',
-                  onlineCount.toString(),
-                  Colors.green,
-                  Icons.check_circle_outline,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _buildSummaryCard(
-                  'Offline',
-                  offlineCount.toString(),
-                  Colors.red,
-                  Icons.cancel_outlined,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _buildSummaryCard(
-                  'Unknown',
-                  unknownCount.toString(),
-                  Colors.orange,
-                  Icons.help_outline,
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildSummaryCard(String label, String count, Color color, IconData icon) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withOpacity(0.3)),
-      ),
-      child: Column(
-        children: [
-          Icon(icon, color: color, size: 24),
-          const SizedBox(height: 4),
-          Text(
-            count,
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-              color: color,
-            ),
-          ),
-          Text(
-            label,
-            style: TextStyle(fontSize: 12, color: color.withOpacity(0.8)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildDevicesList() {
-    return StreamBuilder<QuerySnapshot>(
-      stream: _filterStatus == 'all'
-          ? MikroTikMonitorService.getMikroTikDevices()
-          : MikroTikMonitorService.getMikroTikDevicesByStatus(_filterStatus),
-      builder: (context, snapshot) {
-        if (snapshot.hasError) {
-          return Center(child: Text('Error: ${snapshot.error}'));
-        }
-
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
-
-        final devices = snapshot.data!.docs;
-
-        if (devices.isEmpty) {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.router_outlined, size: 64, color: Colors.grey[400]),
-                const SizedBox(height: 16),
-                Text(
-                  'No MikroTik devices found',
-                  style: TextStyle(fontSize: 16, color: Colors.grey[600]),
-                ),
-                const SizedBox(height: 8),
-                if (Get.find<AuthController>().userRole != 'technician')
-                  ElevatedButton.icon(
-                    onPressed: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => const MikroTikMonitorScreen()),
-                    ),
-                    icon: const Icon(Icons.add),
-                    label: const Text('Add Device'),
-                  ),
-              ],
-            ),
-          );
-        }
-
-        return ListView.builder(
-          padding: const EdgeInsets.all(16),
-          itemCount: devices.length,
-          itemBuilder: (context, index) => _buildDeviceCard(devices[index]),
-        );
-      },
-    );
-  }
-
-  Widget _buildDeviceCard(QueryDocumentSnapshot doc) {
-    final data = doc.data() as Map<String, dynamic>;
-    final status = data['status'] ?? 'unknown';
-    final name = data['name'] ?? 'Unknown';
-    final ipAddress = data['ipAddress'] ?? '';
-    final location = data['location'] ?? '';
-
-    Color statusColor;
-    IconData statusIcon;
-    switch (status) {
-      case 'online':
-        statusColor = Colors.green;
-        statusIcon = Icons.check_circle;
-        break;
-      case 'offline':
-        statusColor = Colors.red;
-        statusIcon = Icons.cancel;
-        break;
-      default:
-        statusColor = Colors.orange;
-        statusIcon = Icons.help;
-    }
-
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: () => showAccessPointsSheet(context, doc.id, data),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: statusColor.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(statusIcon, color: statusColor, size: 32),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            name,
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                              color: AppTheme.textPrimary,
-                            ),
-                          ),
-                        ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: statusColor.withOpacity(0.2),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Text(
-                            status.toUpperCase(),
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                              color: statusColor,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Row(
-                      children: [
-                        Icon(Icons.location_on_outlined, size: 14, color: Colors.grey[600]),
-                        const SizedBox(width: 4),
-                        Text(
-                          location,
-                          style: TextStyle(fontSize: 13, color: Colors.grey[600]),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 2),
-                    Row(
-                      children: [
-                        Icon(Icons.router_outlined, size: 14, color: Colors.grey[600]),
-                        const SizedBox(width: 4),
-                        Text(
-                          ipAddress,
-                          style: TextStyle(fontSize: 13, color: Colors.grey[600]),
-                        ),
-                      ],
-                    ),
-                    AccessPointLink(key: ValueKey(doc.id), deviceId: doc.id, data: data),
-                  ],
-                ),
-              ),
-              const Icon(Icons.chevron_right, color: AppTheme.textSecondary),
-            ],
-          ),
-        ),
-      ),
     );
   }
 }

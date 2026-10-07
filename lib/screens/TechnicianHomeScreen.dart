@@ -32,6 +32,9 @@ class _TechnicianHomeScreenState extends State<TechnicianHomeScreen> {
 
   int offlineDevicesCount = 0;
   List<Map<String, dynamic>> allDevices = [];
+  final GlobalKey<Q20MonitorContentState> _q20Key = GlobalKey<Q20MonitorContentState>();
+  final GlobalKey<MikroTikMonitorContentState> _mtKey = GlobalKey<MikroTikMonitorContentState>();
+  bool _refreshing = false;
 
   @override
   void initState() {
@@ -66,6 +69,35 @@ class _TechnicianHomeScreenState extends State<TechnicianHomeScreen> {
     }
   }
 
+  Future<void> _refreshCurrentTab(BuildContext context) async {
+    if (_refreshing) return;
+    setState(() => _refreshing = true);
+    try {
+      final i = DefaultTabController.of(context).index;
+      if (i == 1) {
+        final mt = _mtKey.currentState;
+        if (mt != null) {
+          await mt.refresh();
+        } else {
+          await _refreshData();
+        }
+      } else if (i == 2) {
+        final q20 = _q20Key.currentState;
+        if (q20 != null) {
+          await q20.refresh();
+        } else {
+          await _refreshData();
+        }
+      } else {
+        await _refreshData();
+      }
+    } catch (e) {
+      debugPrint('Error refreshing tab: $e');
+    } finally {
+      if (mounted) setState(() => _refreshing = false);
+    }
+  }
+
   void _nav(Widget screen) {
     Navigator.push(context, MaterialPageRoute(builder: (_) => screen));
   }
@@ -75,27 +107,40 @@ class _TechnicianHomeScreenState extends State<TechnicianHomeScreen> {
     return DefaultTabController(
       length: 3,
       initialIndex: 1, // Open MikroTik tab first (same as boss home)
-      child: Scaffold(
+      child: Builder(
+        builder: (context) => Scaffold(
         backgroundColor: AppTheme.backgroundColor,
         drawer: const ModernDrawer(),
         appBar: AppBar(
-          title: Text(
-            'Technician',
-            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                ),
+          title: const Text(
+            'LIGHTNET',
+            style: TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w800,
+              fontSize: 20,
+              letterSpacing: 1.4,
+            ),
           ),
           elevation: 0,
           flexibleSpace: Container(
             decoration: const BoxDecoration(gradient: AppGradients.primaryGradient),
           ),
           actions: [
-            IconButton(
-              icon: const Icon(Icons.refresh_rounded, color: Colors.white),
-              onPressed: _refreshData,
-              tooltip: 'Refresh',
-            ),
+            if (_refreshing)
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+                child: SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2.2, color: Colors.white),
+                ),
+              )
+            else
+              IconButton(
+                icon: const Icon(Icons.refresh_rounded, color: Colors.white),
+                onPressed: () => _refreshCurrentTab(context),
+                tooltip: 'Refresh',
+              ),
             const SizedBox(width: 8),
           ],
           bottom: const TabBar(
@@ -302,10 +347,11 @@ class _TechnicianHomeScreenState extends State<TechnicianHomeScreen> {
                 ],
               ),
             ),
-            const MikroTikMonitorContent(),
-            const Q20MonitorContent(),
+            MikroTikMonitorContent(key: _mtKey),
+            Q20MonitorContent(key: _q20Key),
           ],
         ),
+      ),
       ),
     );
   }

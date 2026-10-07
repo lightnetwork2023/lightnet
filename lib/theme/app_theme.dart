@@ -6,7 +6,7 @@ class AppTheme {
   static const Color primaryVariant = Color(0xFF1B5E20);
   static const Color secondaryColor = Color(0xFF4CAF50);
   static const Color accentColor = Color(0xFF81C784);
-  static const Color backgroundColor = Color(0xFFF8F9FA);
+  static const Color backgroundColor = Color(0xFFF3F5F7);
   static const Color surfaceColor = Color(0xFFFFFFFF);
   static const Color errorColor = Color(0xFFE53E3E);
   static const Color warningColor = Color(0xFFFF9800);
@@ -122,9 +122,11 @@ class AppTheme {
         elevation: 0,
         backgroundColor: primaryColor,
         foregroundColor: Colors.white,
+        centerTitle: false,
         titleTextStyle: TextStyle(
           fontSize: 20,
-          fontWeight: FontWeight.w600,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 1.2,
           color: Colors.white,
         ),
         iconTheme: IconThemeData(color: Colors.white),

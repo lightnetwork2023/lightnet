@@ -237,9 +237,10 @@ class _LoginScreenState extends State<LoginScreen> {
                         const SizedBox(height: 24),
                         // Welcome Text
                         Text(
-                          'lightNET',
+                          'LIGHTNET',
                           style: Theme.of(context).textTheme.displayMedium?.copyWith(
-                            fontWeight: FontWeight.bold,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 2,
                             color: AppTheme.textPrimary,
                           ),
                         ),

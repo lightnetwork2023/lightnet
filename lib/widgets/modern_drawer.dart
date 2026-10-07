@@ -94,10 +94,11 @@ class ModernDrawer extends StatelessWidget {
                       const SizedBox(height: 16),
                       // App Name
                       Text(
-                        'lightNET',
+                        'LIGHTNET',
                         style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                           color: Colors.white,
-                          fontWeight: FontWeight.bold,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 1.6,
                         ),
                       ),
                       const SizedBox(height: 4),
@@ -164,7 +165,7 @@ class ModernDrawer extends StatelessWidget {
                               _buildDrawerItem(
                                 context,
                                 icon: Icons.hub_outlined,
-                                title: 'LightNet Q20',
+                                title: 'LIGHTNET Q20',
                                 subtitle: 'Mesh status, adopt, login',
                                 onTap: () => _navigateTo(context, const Q20MonitorScreen()),
                               ),
@@ -340,7 +341,7 @@ class ModernDrawer extends StatelessWidget {
                             _buildDrawerItem(
                               context,
                               icon: Icons.hub_outlined,
-                              title: 'LightNet Q20',
+                              title: 'LIGHTNET Q20',
                               subtitle: 'Mesh status, adopt, login',
                               onTap: () => _navigateTo(context, const Q20MonitorScreen()),
                             ),

@@ -9,10 +9,15 @@ class Q20MonitorContent extends StatefulWidget {
   const Q20MonitorContent({super.key});
 
   @override
-  State<Q20MonitorContent> createState() => _Q20MonitorContentState();
+  State<Q20MonitorContent> createState() => Q20MonitorContentState();
 }
 
-class _Q20MonitorContentState extends State<Q20MonitorContent> {
+class Q20MonitorContentState extends State<Q20MonitorContent>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
+  Future<void> refresh() => _load();
   String _filter = 'all';
   String _query = '';
   bool _loading = true;
@@ -122,6 +127,7 @@ class _Q20MonitorContentState extends State<Q20MonitorContent> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     return Column(
       children: [
         _filters(),
@@ -144,11 +150,18 @@ class _Q20MonitorContentState extends State<Q20MonitorContent> {
           TextField(
             decoration: InputDecoration(
               hintText: 'Search name, MAC, IP…',
-              prefixIcon: const Icon(Icons.search),
+              prefixIcon: const Icon(Icons.search_rounded, size: 20),
               filled: true,
               fillColor: Colors.white,
-              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(14),
+                borderSide: const BorderSide(color: Color(0xFFE8ECF0)),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(14),
+                borderSide: const BorderSide(color: Color(0xFFE8ECF0)),
+              ),
             ),
             onChanged: (v) => setState(() => _query = v),
           ),
@@ -176,16 +189,29 @@ class _Q20MonitorContentState extends State<Q20MonitorContent> {
 
   Widget _chip(String label, String value) {
     final selected = _filter == value;
-    return FilterChip(
-      label: Text(label),
-      selected: selected,
-      onSelected: (_) => setState(() => _filter = value),
-      backgroundColor: Colors.grey[200],
-      selectedColor: AppTheme.primaryColor.withOpacity(0.2),
-      checkmarkColor: AppTheme.primaryColor,
-      labelStyle: TextStyle(
-        color: selected ? AppTheme.primaryColor : AppTheme.textPrimary,
-        fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+    return Material(
+      color: selected ? AppTheme.primaryColor : Colors.white,
+      borderRadius: BorderRadius.circular(20),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: () => setState(() => _filter = value),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: selected ? AppTheme.primaryColor : const Color(0xFFE5E7EB),
+            ),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: selected ? Colors.white : AppTheme.textPrimary,
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -268,12 +294,18 @@ class _Q20MonitorContentState extends State<Q20MonitorContent> {
     final online = r['online'] == true;
     final statusColor = online ? Colors.green : Colors.red;
     final name = r['name']?.toString() ?? r['hostname']?.toString() ?? 'Q20';
-    return Card(
+    return Container(
       margin: const EdgeInsets.only(bottom: 12),
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFEEF1F4)),
+        boxShadow: const [
+          BoxShadow(color: Color(0x0A0F172A), blurRadius: 12, offset: Offset(0, 4)),
+        ],
+      ),
       child: InkWell(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(16),
         onTap: () async {
           await Navigator.push(
             context,

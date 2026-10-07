@@ -13,12 +13,16 @@ class MikroTikMonitorContent extends StatefulWidget {
   const MikroTikMonitorContent({super.key, this.startWithOfflineFilter = true});
 
   @override
-  State<MikroTikMonitorContent> createState() => _MikroTikMonitorContentState();
+  State<MikroTikMonitorContent> createState() => MikroTikMonitorContentState();
 }
 
-class _MikroTikMonitorContentState extends State<MikroTikMonitorContent> {
+class MikroTikMonitorContentState extends State<MikroTikMonitorContent>
+    with AutomaticKeepAliveClientMixin {
   late String _filterStatus;
   late Stream<QuerySnapshot<Map<String, dynamic>>> _devicesStream;
+
+  @override
+  bool get wantKeepAlive => true;
 
   @override
   void initState() {
@@ -27,12 +31,26 @@ class _MikroTikMonitorContentState extends State<MikroTikMonitorContent> {
     _devicesStream = MikroTikMonitorService.getMikroTikDevices();
   }
 
+  Future<void> refresh() async {
+    setState(() {
+      _devicesStream = MikroTikMonitorService.getMikroTikDevices();
+    });
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+  }
+
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     return Column(
       children: [
         _buildFilterChips(),
-        Expanded(child: _buildDevicesBody()),
+        Expanded(
+          child: RefreshIndicator(
+            onRefresh: refresh,
+            color: AppTheme.primaryColor,
+            child: _buildDevicesBody(),
+          ),
+        ),
       ],
     );
   }
@@ -59,16 +77,29 @@ class _MikroTikMonitorContentState extends State<MikroTikMonitorContent> {
 
   Widget _buildFilterChip(String label, String value) {
     final isSelected = _filterStatus == value;
-    return FilterChip(
-      label: Text(label),
-      selected: isSelected,
-      onSelected: (selected) => setState(() => _filterStatus = value),
-      backgroundColor: Colors.grey[200],
-      selectedColor: AppTheme.primaryColor.withOpacity(0.2),
-      checkmarkColor: AppTheme.primaryColor,
-      labelStyle: TextStyle(
-        color: isSelected ? AppTheme.primaryColor : AppTheme.textPrimary,
-        fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+    return Material(
+      color: isSelected ? AppTheme.primaryColor : Colors.white,
+      borderRadius: BorderRadius.circular(20),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: () => setState(() => _filterStatus = value),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: isSelected ? AppTheme.primaryColor : const Color(0xFFE5E7EB),
+            ),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: isSelected ? Colors.white : AppTheme.textPrimary,
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -78,11 +109,23 @@ class _MikroTikMonitorContentState extends State<MikroTikMonitorContent> {
       stream: _devicesStream,
       builder: (context, snapshot) {
         if (snapshot.hasError) {
-          return Center(child: Text('Error: ${snapshot.error}'));
+          return ListView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            children: [
+              const SizedBox(height: 80),
+              Center(child: Text('Error: ${snapshot.error}')),
+            ],
+          );
         }
 
         if (!snapshot.hasData) {
-          return const Center(child: CircularProgressIndicator());
+          return ListView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            children: const [
+              SizedBox(height: 120),
+              Center(child: CircularProgressIndicator()),
+            ],
+          );
         }
 
         final devices = snapshot.data!.docs;
@@ -172,22 +215,23 @@ class _MikroTikMonitorContentState extends State<MikroTikMonitorContent> {
     }
 
     if (filtered.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.router_outlined, size: 64, color: Colors.grey[400]),
-            const SizedBox(height: 16),
-            Text(
-              'No MikroTik devices found',
-              style: TextStyle(fontSize: 16, color: Colors.grey[600]),
-            ),
-          ],
-        ),
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        children: [
+          const SizedBox(height: 80),
+          Icon(Icons.router_outlined, size: 64, color: Colors.grey[400]),
+          const SizedBox(height: 16),
+          Text(
+            'No MikroTik devices found',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 16, color: Colors.grey[600]),
+          ),
+        ],
       );
     }
 
     return ListView.builder(
+      physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.all(16),
       itemCount: filtered.length,
       itemBuilder: (context, index) => _buildDeviceCard(filtered[index]),
@@ -217,12 +261,18 @@ class _MikroTikMonitorContentState extends State<MikroTikMonitorContent> {
         statusIcon = Icons.help;
     }
 
-    return Card(
+    return Container(
       margin: const EdgeInsets.only(bottom: 12),
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFEEF1F4)),
+        boxShadow: const [
+          BoxShadow(color: Color(0x0A0F172A), blurRadius: 12, offset: Offset(0, 4)),
+        ],
+      ),
       child: InkWell(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(16),
         onTap: () => showAccessPointsSheet(context, doc.id, data),
         child: Padding(
           padding: const EdgeInsets.all(16),
