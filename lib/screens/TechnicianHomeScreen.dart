@@ -35,11 +35,34 @@ class _TechnicianHomeScreenState extends State<TechnicianHomeScreen> {
   final GlobalKey<Q20MonitorContentState> _q20Key = GlobalKey<Q20MonitorContentState>();
   final GlobalKey<MikroTikMonitorContentState> _mtKey = GlobalKey<MikroTikMonitorContentState>();
   bool _refreshing = false;
+  TabController? _tabs;
 
   @override
   void initState() {
     super.initState();
     _loadOfflineDevices();
+  }
+
+  @override
+  void dispose() {
+    _tabs?.removeListener(_onHomeTab);
+    super.dispose();
+  }
+
+  void _bindTabs(BuildContext context) {
+    final tabs = DefaultTabController.of(context);
+    if (_tabs == tabs) return;
+    _tabs?.removeListener(_onHomeTab);
+    _tabs = tabs;
+    _tabs!.addListener(_onHomeTab);
+  }
+
+  void _onHomeTab() {
+    final tabs = _tabs;
+    if (tabs == null || tabs.indexIsChanging) return;
+    if (tabs.index == 2) {
+      _q20Key.currentState?.refresh();
+    }
   }
 
   Future<void> _loadOfflineDevices() async {
@@ -108,7 +131,9 @@ class _TechnicianHomeScreenState extends State<TechnicianHomeScreen> {
       length: 3,
       initialIndex: 0,
       child: Builder(
-        builder: (context) => Scaffold(
+        builder: (context) {
+        _bindTabs(context);
+        return Scaffold(
         backgroundColor: AppTheme.backgroundColor,
         drawer: const ModernDrawer(),
         appBar: AppBar(
@@ -351,7 +376,8 @@ class _TechnicianHomeScreenState extends State<TechnicianHomeScreen> {
             Q20MonitorContent(key: _q20Key),
           ],
         ),
-      ),
+      );
+        },
       ),
     );
   }

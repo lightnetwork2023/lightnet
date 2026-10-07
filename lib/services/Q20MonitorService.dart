@@ -6,6 +6,9 @@ import 'package:http/http.dart' as http;
 class Q20MonitorService {
   static const String baseUrl = 'https://lightnet.lightnetwork.pro';
 
+  static bool flag(dynamic v) =>
+      v == true || v == 1 || v == 'true' || v == '1';
+
   static Future<Map<String, String>> _headers({bool jsonBody = false}) async {
     final token = await FirebaseAuth.instance.currentUser?.getIdToken();
     return {

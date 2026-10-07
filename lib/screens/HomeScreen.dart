@@ -65,6 +65,8 @@ class _HomeScreenState extends State<HomeScreen> {
   final GlobalKey<Q20MonitorContentState> _q20Key = GlobalKey<Q20MonitorContentState>();
   final GlobalKey<MikroTikMonitorContentState> _mtKey = GlobalKey<MikroTikMonitorContentState>();
   bool _refreshing = false;
+  TabController? _tabs;
+  int _q20TabIndex = -1;
 
   @override
   void initState() {
@@ -77,8 +79,26 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    _tabs?.removeListener(_onHomeTab);
     _mikrotikSub?.cancel();
     super.dispose();
+  }
+
+  void _bindTabs(BuildContext context, int q20Index) {
+    final tabs = DefaultTabController.of(context);
+    _q20TabIndex = q20Index;
+    if (_tabs == tabs) return;
+    _tabs?.removeListener(_onHomeTab);
+    _tabs = tabs;
+    _tabs!.addListener(_onHomeTab);
+  }
+
+  void _onHomeTab() {
+    final tabs = _tabs;
+    if (tabs == null || tabs.indexIsChanging) return;
+    if (_q20TabIndex >= 0 && tabs.index == _q20TabIndex) {
+      _q20Key.currentState?.refresh();
+    }
   }
 
   void _showTechCheckInSheet(BuildContext context) {
@@ -681,7 +701,9 @@ class _HomeScreenState extends State<HomeScreen> {
       length: tabCount,
       initialIndex: 0,
       child: Builder(
-        builder: (context) => Scaffold(
+        builder: (context) {
+        _bindTabs(context, hasQ20Tab ? (hasMikroTikTab ? 2 : 1) : -1);
+        return Scaffold(
         backgroundColor: AppTheme.backgroundColor,
         drawer: const ModernDrawer(),
         appBar: AppBar(
@@ -1487,7 +1509,8 @@ class _HomeScreenState extends State<HomeScreen> {
             if (!hasMikroTikTab) _buildSitesTab(),
           ],
         ),
-      ),
+      );
+        },
       ),
     );
   }

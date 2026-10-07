@@ -17,7 +17,7 @@ class Q20MonitorContentState extends State<Q20MonitorContent>
   @override
   bool get wantKeepAlive => true;
 
-  Future<void> refresh() => _load();
+  Future<void> refresh() => _load(prompt: true);
   String _filter = 'all';
   String _query = '';
   bool _loading = true;
@@ -27,14 +27,19 @@ class Q20MonitorContentState extends State<Q20MonitorContent>
   int _offline = 0;
   int _pendingAdopt = 0;
   int _updates = 0;
+  String? _latestLabelText;
+  String? _promptedBuild;
+  bool _upgradeBusy = false;
+
+  static bool flag(dynamic v) => Q20MonitorService.flag(v);
 
   @override
   void initState() {
     super.initState();
-    _load();
+    _load(prompt: true);
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool prompt = false}) async {
     setState(() {
       _loading = _routers.isEmpty;
       _error = null;
@@ -45,16 +50,42 @@ class Q20MonitorContentState extends State<Q20MonitorContent>
           .map((e) => Map<String, dynamic>.from(e as Map))
           .toList();
       if (!mounted) return;
+      final latest = data['latest'] is Map
+          ? Map<String, dynamic>.from(data['latest'] as Map)
+          : <String, dynamic>{};
+      final updates = data['updates'] is num
+          ? (data['updates'] as num).toInt()
+          : routers.where((r) => flag(r['update_available'])).length;
+      final label = _latestLabel({
+        'latest_fw_version': latest['fw_version'] ??
+            (routers.isNotEmpty ? routers.first['latest_fw_version'] : null),
+        'latest_fw_build': latest['fw_build'] ??
+            (routers.isNotEmpty ? routers.first['latest_fw_build'] : null),
+      });
       setState(() {
         _routers = routers;
-        _online = data['online'] as int? ?? routers.where((r) => r['online'] == true).length;
-        _offline = data['offline'] as int? ?? routers.where((r) => r['online'] != true).length;
-        _pendingAdopt = data['pending_adopt'] as int? ??
-            routers.where((r) => r['needs_adopt'] == true).length;
-        _updates = data['updates'] as int? ??
-            routers.where((r) => r['update_available'] == true).length;
+        _online = data['online'] is num
+            ? (data['online'] as num).toInt()
+            : routers.where((r) => flag(r['online'])).length;
+        _offline = data['offline'] is num
+            ? (data['offline'] as num).toInt()
+            : routers.where((r) => !flag(r['online'])).length;
+        _pendingAdopt = data['pending_adopt'] is num
+            ? (data['pending_adopt'] as num).toInt()
+            : routers.where((r) => flag(r['needs_adopt'])).length;
+        _updates = updates;
+        _latestLabelText = label;
         _loading = false;
       });
+      if (prompt && updates > 0) {
+        final build = (latest['fw_build'] ?? label).toString();
+        if (_promptedBuild != build) {
+          _promptedBuild = build;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) _askUpgrade(label);
+          });
+        }
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -67,13 +98,13 @@ class Q20MonitorContentState extends State<Q20MonitorContent>
   List<Map<String, dynamic>> get _filtered {
     var list = List<Map<String, dynamic>>.from(_routers);
     if (_filter == 'online') {
-      list = list.where((r) => r['online'] == true).toList();
+      list = list.where((r) => flag(r['online'])).toList();
     } else if (_filter == 'offline') {
-      list = list.where((r) => r['online'] != true).toList();
+      list = list.where((r) => !flag(r['online'])).toList();
     } else if (_filter == 'adopt') {
-      list = list.where((r) => r['needs_adopt'] == true).toList();
+      list = list.where((r) => flag(r['needs_adopt'])).toList();
     } else if (_filter == 'update') {
-      list = list.where((r) => r['update_available'] == true).toList();
+      list = list.where((r) => flag(r['update_available'])).toList();
     }
     final q = _query.trim().toLowerCase();
     if (q.isNotEmpty) {
@@ -94,8 +125,8 @@ class Q20MonitorContentState extends State<Q20MonitorContent>
       final aMesh = _meshOfflineCount(a);
       final bMesh = _meshOfflineCount(b);
       if (aMesh != bMesh) return bMesh.compareTo(aMesh);
-      final aOff = a['online'] == true ? 1 : 0;
-      final bOff = b['online'] == true ? 1 : 0;
+      final aOff = flag(a['online']) ? 1 : 0;
+      final bOff = flag(b['online']) ? 1 : 0;
       if (aOff != bOff) return aOff.compareTo(bOff);
       return (a['name'] ?? '').toString().compareTo((b['name'] ?? '').toString());
     });
@@ -117,7 +148,7 @@ class Q20MonitorContentState extends State<Q20MonitorContent>
     for (final item in mesh) {
       if (item is! Map) continue;
       if (item['role'] == 'main') continue;
-      final online = item['online'] == true || item['online'] == 1;
+      final online = flag(item['online']);
       if (online) continue;
       final label = (item['name'] ?? item['hostname'] ?? item['mac'] ?? 'AP').toString();
       if (label.trim().isNotEmpty) names.add(label);
@@ -251,6 +282,10 @@ class Q20MonitorContentState extends State<Q20MonitorContent>
             _summary('Offline', _offline.toString(), Colors.red, Icons.cancel_outlined),
           ],
         ),
+        if (_updates > 0) ...[
+          const SizedBox(height: 12),
+          _firmwareBanner(),
+        ],
         const SizedBox(height: 12),
         if (filtered.isEmpty)
           Padding(
@@ -291,7 +326,7 @@ class Q20MonitorContentState extends State<Q20MonitorContent>
   }
 
   Widget _card(Map<String, dynamic> r) {
-    final online = r['online'] == true;
+    final online = flag(r['online']);
     final statusColor = online ? Colors.green : Colors.red;
     final name = r['name']?.toString() ?? r['hostname']?.toString() ?? 'Q20';
     return Container(
@@ -361,11 +396,11 @@ class Q20MonitorContentState extends State<Q20MonitorContent>
                     ),
                     const SizedBox(height: 4),
                     _meshStatusLine(r),
-                    if (r['update_available'] == true) ...[
+                    if (flag(r['update_available'])) ...[
                       const SizedBox(height: 6),
                       _updateChip(r),
                     ],
-                    if (r['needs_adopt'] == true) ...[
+                    if (flag(r['needs_adopt'])) ...[
                       const SizedBox(height: 2),
                       const Text(
                         'Adopt available',
@@ -390,10 +425,96 @@ class Q20MonitorContentState extends State<Q20MonitorContent>
     return b.isEmpty ? 'new firmware' : b;
   }
 
+  List<Map<String, dynamic>> get _updatable =>
+      _routers.where((r) => flag(r['update_available']) && !flag(r['update_queued'])).toList();
+
+  Widget _firmwareBanner() {
+    final label = _latestLabelText ?? 'new firmware';
+    return Material(
+      color: AppTheme.infoColor.withOpacity(0.12),
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: _upgradeBusy ? null : () => _askUpgrade(label),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Row(
+            children: [
+              const Icon(Icons.system_update_alt, color: AppTheme.infoColor),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Firmware $label available',
+                      style: const TextStyle(fontWeight: FontWeight.w800, color: AppTheme.infoColor),
+                    ),
+                    Text(
+                      _updates == 1
+                          ? '1 Q20 can be updated. Tap to update.'
+                          : '$_updates Q20s can be updated. Tap to update.',
+                      style: const TextStyle(fontSize: 13, color: AppTheme.textSecondary),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right, color: AppTheme.infoColor),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _askUpgrade(String label) async {
+    if (!mounted || _upgradeBusy) return;
+    final targets = _updatable;
+    if (targets.isEmpty) return;
+    final names = targets.map((r) => r['name']?.toString() ?? 'Q20').join(', ');
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('New firmware'),
+        content: Text(
+          targets.length == 1
+              ? 'Install $label on $names? It will download, flash, then reboot. Keep it powered and online.'
+              : 'Install $label on ${targets.length} Q20s ($names)? Each will download, flash, then reboot. Keep them powered and online.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Later')),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Update')),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    setState(() => _upgradeBusy = true);
+    var queued = 0;
+    String? err;
+    for (final r in targets) {
+      try {
+        await Q20MonitorService.sendCommand((r['id'] as num).toInt(), 'upgrade');
+        queued++;
+      } catch (e) {
+        err = e.toString().replaceFirst('Exception: ', '');
+        break;
+      }
+    }
+    if (!mounted) return;
+    setState(() => _upgradeBusy = false);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(err == null ? 'Update queued on $queued Q20${queued == 1 ? '' : 's'}' : err),
+        backgroundColor: err == null ? AppTheme.primaryColor : AppTheme.errorColor,
+      ),
+    );
+    await _load();
+  }
+
   Future<void> _queueUpgrade(Map<String, dynamic> r) async {
     final name = r['name']?.toString() ?? 'this Q20';
     final latest = _latestLabel(r);
-    final queued = r['update_queued'] == true;
+    final queued = flag(r['update_queued']);
     if (queued) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Update already queued on $name'), backgroundColor: AppTheme.primaryColor),
@@ -413,7 +534,7 @@ class Q20MonitorContentState extends State<Q20MonitorContent>
     );
     if (ok != true) return;
     try {
-      await Q20MonitorService.sendCommand(r['id'] as int, 'upgrade');
+      await Q20MonitorService.sendCommand((r['id'] as num).toInt(), 'upgrade');
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Update queued on $name'), backgroundColor: AppTheme.primaryColor),
@@ -431,7 +552,7 @@ class Q20MonitorContentState extends State<Q20MonitorContent>
   }
 
   Widget _updateChip(Map<String, dynamic> r) {
-    final queued = r['update_queued'] == true;
+    final queued = flag(r['update_queued']);
     return Align(
       alignment: Alignment.centerLeft,
       child: Material(

@@ -57,11 +57,11 @@ class _Q20DeviceScreenState extends State<Q20DeviceScreen> {
     }
   }
 
-  bool get _online => _router['online'] == true;
+  bool get _online => Q20MonitorService.flag(_router['online']);
 
-  bool get _updateAvailable => _router['update_available'] == true;
+  bool get _updateAvailable => Q20MonitorService.flag(_router['update_available']);
 
-  bool get _updateQueued => _router['update_queued'] == true;
+  bool get _updateQueued => Q20MonitorService.flag(_router['update_queued']);
 
   String get _latestLabel {
     final v = _router['latest_fw_version']?.toString() ?? '';
@@ -347,7 +347,7 @@ class _Q20DeviceScreenState extends State<Q20DeviceScreen> {
                 style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: AppTheme.infoColor),
               ),
             ),
-          if (_router['needs_adopt'] == true)
+          if (Q20MonitorService.flag(_router['needs_adopt']))
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
