@@ -26,7 +26,6 @@ class Q20MonitorContentState extends State<Q20MonitorContent>
   int _online = 0;
   int _offline = 0;
   int _pendingAdopt = 0;
-  int _meshDown = 0;
 
   @override
   void initState() {
@@ -51,8 +50,6 @@ class Q20MonitorContentState extends State<Q20MonitorContent>
         _offline = data['offline'] as int? ?? routers.where((r) => r['online'] != true).length;
         _pendingAdopt = data['pending_adopt'] as int? ??
             routers.where((r) => r['needs_adopt'] == true).length;
-        _meshDown = data['mesh_down'] as int? ??
-            routers.where((r) => (r['mesh_offline'] as int? ?? 0) > 0).length;
         _loading = false;
       });
     } catch (e) {
@@ -72,8 +69,6 @@ class Q20MonitorContentState extends State<Q20MonitorContent>
       list = list.where((r) => r['online'] != true).toList();
     } else if (_filter == 'adopt') {
       list = list.where((r) => r['needs_adopt'] == true).toList();
-    } else if (_filter == 'mesh_down') {
-      list = list.where((r) => _meshOfflineCount(r) > 0).toList();
     }
     final q = _query.trim().toLowerCase();
     if (q.isNotEmpty) {
@@ -176,8 +171,6 @@ class Q20MonitorContentState extends State<Q20MonitorContent>
                 const SizedBox(width: 8),
                 _chip('Offline', 'offline'),
                 const SizedBox(width: 8),
-                _chip('Mesh down', 'mesh_down'),
-                const SizedBox(width: 8),
                 _chip('Needs adopt', 'adopt'),
               ],
             ),
@@ -247,8 +240,6 @@ class Q20MonitorContentState extends State<Q20MonitorContent>
             _summary('Online', _online.toString(), Colors.green, Icons.check_circle_outline),
             const SizedBox(width: 8),
             _summary('Offline', _offline.toString(), Colors.red, Icons.cancel_outlined),
-            const SizedBox(width: 8),
-            _summary('Mesh down', _meshDown.toString(), Colors.red, Icons.device_hub_outlined),
           ],
         ),
         const SizedBox(height: 12),
