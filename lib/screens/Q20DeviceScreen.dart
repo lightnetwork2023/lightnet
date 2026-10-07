@@ -59,6 +59,17 @@ class _Q20DeviceScreenState extends State<Q20DeviceScreen> {
 
   bool get _online => _router['online'] == true;
 
+  bool get _updateAvailable => _router['update_available'] == true;
+
+  bool get _updateQueued => _router['update_queued'] == true;
+
+  String get _latestLabel {
+    final v = _router['latest_fw_version']?.toString() ?? '';
+    final b = _router['latest_fw_build']?.toString() ?? '';
+    if (v.isNotEmpty) return v.replaceFirst(RegExp(r'^23\.05\.4-'), '');
+    return b;
+  }
+
   List<Map<String, dynamic>> get _pending {
     final raw = _router['pending_adopt'];
     if (raw is List) {
@@ -143,12 +154,12 @@ class _Q20DeviceScreenState extends State<Q20DeviceScreen> {
     });
   }
 
-  Future<void> _command(String type, String label) async {
+  Future<void> _command(String type, String label, {String? body}) async {
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: Text(label),
-        content: Text('Send $label to ${_router['name'] ?? 'this Q20'}?'),
+        content: Text(body ?? 'Send $label to ${_router['name'] ?? 'this Q20'}?'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
           TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Send')),
@@ -248,6 +259,10 @@ class _Q20DeviceScreenState extends State<Q20DeviceScreen> {
                       child: Text(_error!, style: const TextStyle(color: AppTheme.errorColor)),
                     ),
                   _statusCard(statusColor),
+                  if (_updateAvailable || _updateQueued) ...[
+                    const SizedBox(height: 12),
+                    _updateBanner(),
+                  ],
                   const SizedBox(height: 12),
                   _actions(),
                   const SizedBox(height: 16),
@@ -319,6 +334,19 @@ class _Q20DeviceScreenState extends State<Q20DeviceScreen> {
               ],
             ),
           ),
+          if (_updateAvailable)
+            Container(
+              margin: const EdgeInsets.only(right: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: AppTheme.infoColor.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                _updateQueued ? 'QUEUED' : 'NEW',
+                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: AppTheme.infoColor),
+              ),
+            ),
           if (_router['needs_adopt'] == true)
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -333,6 +361,51 @@ class _Q20DeviceScreenState extends State<Q20DeviceScreen> {
     );
   }
 
+  Widget _updateBanner() {
+    final queued = _updateQueued;
+    return Material(
+      color: AppTheme.infoColor.withOpacity(0.12),
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: _busy || queued
+            ? null
+            : () => _command(
+                  'upgrade',
+                  'Install $_latestLabel',
+                  body: 'This Q20 will download $_latestLabel, flash, then reboot. Keep it powered and online.',
+                ),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Row(
+            children: [
+              Icon(queued ? Icons.hourglass_top : Icons.system_update_alt, color: AppTheme.infoColor),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      queued ? 'Update queued' : 'New firmware',
+                      style: const TextStyle(fontWeight: FontWeight.w800, color: AppTheme.infoColor),
+                    ),
+                    Text(
+                      queued
+                          ? '$_latestLabel will flash on the next heartbeat.'
+                          : '$_latestLabel is available. Tap to update.',
+                      style: const TextStyle(fontSize: 13, color: AppTheme.textSecondary),
+                    ),
+                  ],
+                ),
+              ),
+              if (!queued) const Icon(Icons.chevron_right, color: AppTheme.infoColor),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _actions() {
     return Wrap(
       spacing: 8,
@@ -340,7 +413,16 @@ class _Q20DeviceScreenState extends State<Q20DeviceScreen> {
       children: [
         _actionChip(Icons.login, 'Open console', _openConsole),
         _actionChip(Icons.restart_alt, 'Reboot', () => _command('reboot', 'Reboot')),
-        _actionChip(Icons.system_update_alt, 'Upgrade', () => _command('upgrade', 'Firmware upgrade')),
+        if (_updateAvailable)
+          _actionChip(
+            Icons.system_update_alt,
+            _updateQueued ? 'Update queued' : 'Update',
+            () => _command(
+              'upgrade',
+              'Install $_latestLabel',
+              body: 'This Q20 will download $_latestLabel, flash, then reboot. Keep it powered and online.',
+            ),
+          ),
         _actionChip(Icons.sync, 'Re-provision', () => _command('reprovision', 'Re-provision')),
       ],
     );

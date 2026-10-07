@@ -26,6 +26,7 @@ class Q20MonitorContentState extends State<Q20MonitorContent>
   int _online = 0;
   int _offline = 0;
   int _pendingAdopt = 0;
+  int _updates = 0;
 
   @override
   void initState() {
@@ -50,6 +51,8 @@ class Q20MonitorContentState extends State<Q20MonitorContent>
         _offline = data['offline'] as int? ?? routers.where((r) => r['online'] != true).length;
         _pendingAdopt = data['pending_adopt'] as int? ??
             routers.where((r) => r['needs_adopt'] == true).length;
+        _updates = data['updates'] as int? ??
+            routers.where((r) => r['update_available'] == true).length;
         _loading = false;
       });
     } catch (e) {
@@ -69,6 +72,8 @@ class Q20MonitorContentState extends State<Q20MonitorContent>
       list = list.where((r) => r['online'] != true).toList();
     } else if (_filter == 'adopt') {
       list = list.where((r) => r['needs_adopt'] == true).toList();
+    } else if (_filter == 'update') {
+      list = list.where((r) => r['update_available'] == true).toList();
     }
     final q = _query.trim().toLowerCase();
     if (q.isNotEmpty) {
@@ -172,6 +177,10 @@ class Q20MonitorContentState extends State<Q20MonitorContent>
                 _chip('Offline', 'offline'),
                 const SizedBox(width: 8),
                 _chip('Needs adopt', 'adopt'),
+                if (_updates > 0) ...[
+                  const SizedBox(width: 8),
+                  _chip('New firmware', 'update'),
+                ],
               ],
             ),
           ),
@@ -352,6 +361,10 @@ class Q20MonitorContentState extends State<Q20MonitorContent>
                     ),
                     const SizedBox(height: 4),
                     _meshStatusLine(r),
+                    if (r['update_available'] == true) ...[
+                      const SizedBox(height: 6),
+                      _updateChip(r),
+                    ],
                     if (r['needs_adopt'] == true) ...[
                       const SizedBox(height: 2),
                       const Text(
@@ -364,6 +377,75 @@ class Q20MonitorContentState extends State<Q20MonitorContent>
               ),
               const Icon(Icons.chevron_right, color: AppTheme.textSecondary),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _latestLabel(Map<String, dynamic> r) {
+    final v = r['latest_fw_version']?.toString() ?? '';
+    final b = r['latest_fw_build']?.toString() ?? '';
+    if (v.isNotEmpty) return v.replaceFirst(RegExp(r'^23\.05\.4-'), '');
+    return b.isEmpty ? 'new firmware' : b;
+  }
+
+  Future<void> _queueUpgrade(Map<String, dynamic> r) async {
+    final name = r['name']?.toString() ?? 'this Q20';
+    final latest = _latestLabel(r);
+    final queued = r['update_queued'] == true;
+    if (queued) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Update already queued on $name'), backgroundColor: AppTheme.primaryColor),
+      );
+      return;
+    }
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('New firmware'),
+        content: Text('Install $latest on $name? It will download, flash, then reboot. Keep it powered and online.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Update')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await Q20MonitorService.sendCommand(r['id'] as int, 'upgrade');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Update queued on $name'), backgroundColor: AppTheme.primaryColor),
+      );
+      await _load();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(e.toString().replaceFirst('Exception: ', '')),
+          backgroundColor: AppTheme.errorColor,
+        ),
+      );
+    }
+  }
+
+  Widget _updateChip(Map<String, dynamic> r) {
+    final queued = r['update_queued'] == true;
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Material(
+        color: AppTheme.infoColor.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(20),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(20),
+          onTap: () => _queueUpgrade(r),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            child: Text(
+              queued ? 'UPDATE QUEUED' : 'NEW · tap to update',
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: AppTheme.infoColor),
+            ),
           ),
         ),
       ),
