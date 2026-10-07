@@ -411,23 +411,11 @@ class Q20MonitorContentState extends State<Q20MonitorContent>
         ),
       );
     }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    return Row(
       children: [
-        Row(
-          children: [
-            Icon(Icons.device_hub, size: 14, color: offline > 0 ? Colors.red : Colors.green),
-            const SizedBox(width: 4),
-            Expanded(child: count),
-          ],
-        ),
-        if (offlineNames.isNotEmpty) ...[
-          const SizedBox(height: 2),
-          Text(
-            offlineNames.map((n) => '$n offline').join(' · '),
-            style: const TextStyle(fontSize: 12, color: Colors.red, fontWeight: FontWeight.w600),
-          ),
-        ],
+        Icon(Icons.device_hub, size: 14, color: offline > 0 ? Colors.red : Colors.green),
+        const SizedBox(width: 4),
+        Expanded(child: count),
       ],
     );
   }

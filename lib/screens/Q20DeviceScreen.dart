@@ -312,7 +312,7 @@ class _Q20DeviceScreenState extends State<Q20DeviceScreen> {
                 if ((_router['mesh_offline'] as int? ?? 0) > 0) ...[
                   const SizedBox(height: 4),
                   Text(
-                    '${((_router['mesh_offline_names'] as List?) ?? []).join(', ')} offline',
+                    '${_router['mesh_offline']} meshed AP${(_router['mesh_offline'] as int? ?? 0) == 1 ? '' : 's'} offline',
                     style: const TextStyle(fontSize: 12, color: Colors.red, fontWeight: FontWeight.w700),
                   ),
                 ],
