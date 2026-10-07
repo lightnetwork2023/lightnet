@@ -28,6 +28,8 @@ import '../services/SiteService.dart';
 import 'SiteOverviewScreen.dart';
 import 'dart:async';
 import 'InternetPaymentsScreen.dart';
+import 'TechnicianGenerateUserScreen.dart';
+import 'TechnicianOneUserLogsScreen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -1154,10 +1156,51 @@ class _HomeScreenState extends State<HomeScreen> {
                           ],
                         ),
                       ),
+                      const SizedBox(height: 12),
+                      _technicianVoucherLogsCard(),
                     ],
                     const SizedBox(height: 12),
                     _authController.userRole == 'technician'
-                        ? ModernCard(
+                        ? Column(
+                            children: [
+                              ModernCard(
+                                onTap: () => Navigator.push(
+                                  context,
+                                  MaterialPageRoute(builder: (_) => const TechnicianGenerateUserScreen()),
+                                ),
+                                margin: EdgeInsets.zero,
+                                child: Row(
+                                  children: [
+                                    Container(
+                                      padding: const EdgeInsets.all(12),
+                                      decoration: BoxDecoration(
+                                        color: AppTheme.primaryColor.withOpacity(0.1),
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      child: const Icon(Icons.confirmation_number_outlined,
+                                          color: AppTheme.primaryColor, size: 24),
+                                    ),
+                                    const SizedBox(width: 16),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Text('Generate voucher',
+                                              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                                  fontWeight: FontWeight.w600)),
+                                          const SizedBox(height: 4),
+                                          Text('4 hours or 24 hours · location is your name',
+                                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                                  color: Colors.grey)),
+                                        ],
+                                      ),
+                                    ),
+                                    const Icon(Icons.arrow_forward_ios_rounded, color: Colors.grey, size: 16),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              ModernCard(
                             onTap: () => _showTechCheckInSheet(context),
                             margin: EdgeInsets.zero,
                             child: Row(
@@ -1190,6 +1233,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                     color: Colors.grey, size: 16),
                               ],
                             ),
+                          ),
+                            ],
                           )
                         : _authController.isMD
                         ? StreamBuilder<DocumentSnapshot>(
@@ -1444,6 +1489,76 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ),
       ),
+    );
+  }
+
+  Widget _technicianVoucherLogsCard() {
+    final now = DateTime.now();
+    final thisMonth = DateFormat('yyyy-MM').format(now);
+    final prevMonth = DateFormat('yyyy-MM').format(DateTime(now.year, now.month - 1));
+    return FutureBuilder<List<QuerySnapshot<Map<String, dynamic>>>>(
+      future: Future.wait([
+        FirebaseFirestore.instance
+            .collection('technician_one_user_monthly')
+            .where('month', isEqualTo: thisMonth)
+            .get(),
+        FirebaseFirestore.instance
+            .collection('technician_one_user_monthly')
+            .where('month', isEqualTo: prevMonth)
+            .get(),
+      ]),
+      builder: (context, snap) {
+        int sumCounts(QuerySnapshot<Map<String, dynamic>> s) {
+          var n = 0;
+          for (final d in s.docs) {
+            final c = d.data()['count'];
+            if (c is num) n += c.toInt();
+          }
+          return n;
+        }
+
+        final thisCount = snap.hasData ? sumCounts(snap.data![0]) : null;
+        final prevCount = snap.hasData ? sumCounts(snap.data![1]) : null;
+        return ModernCard(
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const TechnicianOneUserLogsScreen()),
+          ),
+          margin: EdgeInsets.zero,
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.indigo.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(Icons.confirmation_number_outlined, color: Colors.indigo, size: 24),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Technician vouchers',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      thisCount == null
+                          ? 'Monthly generation logs'
+                          : '$thisCount this month · $prevCount previous month',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.arrow_forward_ios_rounded, color: Colors.grey, size: 16),
+            ],
+          ),
+        );
+      },
     );
   }
 

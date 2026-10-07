@@ -36,6 +36,8 @@ import '../screens/SimCardManagementScreen.dart';
 import '../screens/DeviceInventoryScreen.dart';
 import '../screens/TechnicianAgentListScreen.dart';
 import '../screens/TechnicianVoucherScreen.dart';
+import '../screens/TechnicianGenerateUserScreen.dart';
+import '../screens/TechnicianOneUserLogsScreen.dart';
 import '../screens/DevicesInStoreScreen.dart';
 import '../screens/InternetPaymentsScreen.dart';
 import '../screens/MyAccountScreen.dart';
@@ -431,9 +433,16 @@ class ModernDrawer extends StatelessWidget {
                             ),
                             _buildDrawerItem(
                               context,
+                              icon: Icons.confirmation_number_outlined,
+                              title: 'Generate voucher',
+                              subtitle: '4 hours or 24 hours',
+                              onTap: () => _navigateTo(context, const TechnicianGenerateUserScreen()),
+                            ),
+                            _buildDrawerItem(
+                              context,
                               icon: Icons.add_card_outlined,
-                              title: 'Create Voucher',
-                              subtitle: 'Generate agent vouchers',
+                              title: 'Agent voucher',
+                              subtitle: '31-day agent vouchers',
                               onTap: () => _navigateTo(context, const TechnicianVoucherScreen()),
                             ),
                           ],
@@ -459,6 +468,13 @@ class ModernDrawer extends StatelessWidget {
                               title: 'Technician Analytics',
                               subtitle: 'View by Technician',
                               onTap: () => _navigateTo(context, const BossTechnicianAnalyticsScreen()),
+                            ),
+                            _buildDrawerItem(
+                              context,
+                              icon: Icons.confirmation_number_outlined,
+                              title: 'Technician vouchers',
+                              subtitle: 'Monthly generation logs',
+                              onTap: () => _navigateTo(context, const TechnicianOneUserLogsScreen()),
                             ),
                           ],
                         )

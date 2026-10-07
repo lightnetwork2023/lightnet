@@ -294,7 +294,7 @@ class _TechnicianHomeScreenState extends State<TechnicianHomeScreen> {
                         _shortcutTile(
                           context,
                           icon: Icons.person_add_alt_1_outlined,
-                          label: 'Generate one user',
+                          label: 'Generate voucher',
                           color: AppTheme.primaryColor,
                           onTap: () => _nav(const TechnicianGenerateUserScreen()),
                         ),

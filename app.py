@@ -51,11 +51,11 @@ except Exception as e:
 # Technician single-user generation (see /generateoneuser)
 TECHNICIAN_ONE_USER_MAX_PER_DAY = 10
 TECHNICIAN_ONE_USER_SPEED = '10M/10M'
-TECHNICIAN_ONE_USER_LOCATION = 'general'
-# duration_key -> session timeout in seconds (3 hours, 1 day)
+# duration_key -> session timeout in seconds (4 hours, 24 hours)
 TECHNICIAN_ONE_USER_DURATIONS_SEC = {
-    '3h': 3 * 3600,
+    '4h': 4 * 3600,
     '1d': 24 * 3600,
+    '3h': 4 * 3600,
 }
 
 @app.after_request
@@ -2140,27 +2140,25 @@ def _generateoneuser_decode_uid():
 
 
 def _generateoneuser_require_technician(uid):
-    """Return None if Firestore user has role technician; else (jsonify, http_status) error tuple."""
+    """Return (profile, None) or (None, (jsonify, http_status))."""
     if db is None:
-        return (jsonify({'error': 'Firestore is not available'}), 503)
+        return None, (jsonify({'error': 'Firestore is not available'}), 503)
     doc = db.collection('users').document(uid).get()
     if not doc.exists:
-        return (jsonify({'error': 'User profile not found in Firestore'}), 403)
-    role = str((doc.to_dict() or {}).get('role', '')).strip().lower()
+        return None, (jsonify({'error': 'User profile not found in Firestore'}), 403)
+    data = doc.to_dict() or {}
+    role = str(data.get('role', '')).strip().lower()
     if role != 'technician':
-        return (jsonify({'error': 'Technician role required'}), 403)
-    return None
+        return None, (jsonify({'error': 'Technician role required'}), 403)
+    return data, None
 
 
 @app.route('/generateoneuser', methods=['POST'])
 def generateoneuser():
     """
     Technician-only: create exactly one RADIUS/voucher user per request.
-    Fixed speed 10M/10M; location is always 'general'.
-    Allowed duration_key: 3h, 1d (3 hours, 1 day).
-    Requires Authorization: Bearer <Firebase ID token>; uid must have role 'technician' in Firestore users/{uid}.
-    Writes audit trail to Firestore: technician_one_user_logs, technician_one_user_daily, technician_one_user_monthly.
-    Enforces TECHNICIAN_ONE_USER_MAX_PER_DAY per technician (UTC calendar day).
+    Fixed speed 10M/10M; location is the technician's name.
+    Allowed duration_key: 4h, 1d (4 hours, 24 hours).
     """
     if db is None:
         return jsonify({'error': 'Firestore is not available; technician audit disabled.'}), 503
@@ -2168,19 +2166,21 @@ def generateoneuser():
     uid, err = _generateoneuser_decode_uid()
     if err is not None:
         return err
-    role_err = _generateoneuser_require_technician(uid)
+    profile, role_err = _generateoneuser_require_technician(uid)
     if role_err is not None:
         return role_err
 
     data = request.get_json(silent=True) or {}
     duration_key = (data.get('duration_key') or '').strip().lower()
-    location = TECHNICIAN_ONE_USER_LOCATION
+    if duration_key == '3h':
+        duration_key = '4h'
+    location = ' '.join(str((profile or {}).get('name') or (profile or {}).get('email') or 'technician').split())[:64]
 
     session_timeout = TECHNICIAN_ONE_USER_DURATIONS_SEC.get(duration_key)
     if session_timeout is None:
         return jsonify({
             'error': 'Invalid duration_key',
-            'allowed': sorted(TECHNICIAN_ONE_USER_DURATIONS_SEC.keys()),
+            'allowed': ['4h', '1d'],
         }), 400
 
     day_str = datetime.utcnow().strftime('%Y-%m-%d')
@@ -2252,6 +2252,7 @@ def generateoneuser():
     batch.set(daily_ref, {
         'count': new_daily,
         'technician_uid': uid,
+        'technician_name': location,
         'date': day_str,
         'last_username': username,
         'last_duration_key': duration_key,
@@ -2261,12 +2262,14 @@ def generateoneuser():
     batch.set(month_ref, {
         'count': new_month,
         'technician_uid': uid,
+        'technician_name': location,
         'month': month_str,
         'updated_at': now_ts,
     }, merge=True)
     log_ref = db.collection('technician_one_user_logs').document()
     batch.set(log_ref, {
         'technician_uid': uid,
+        'technician_name': location,
         'username': username,
         'location': location,
         'duration_key': duration_key,

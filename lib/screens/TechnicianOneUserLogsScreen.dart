@@ -48,6 +48,12 @@ class _TechnicianOneUserLogsScreenState
     return _monthFmt.format(d);
   }
 
+  String get _previousMonthKey {
+    final parts = _selectedMonth.split('-');
+    final d = DateTime(int.parse(parts[0]), int.parse(parts[1]) - 1);
+    return DateFormat('yyyy-MM').format(d);
+  }
+
   String _techLabel(String uid) => _techNames[uid] ?? uid;
 
   @override
@@ -146,7 +152,7 @@ class _TechnicianOneUserLogsScreenState
   @override
   Widget build(BuildContext context) {
     final auth = Get.find<AuthController>();
-    if (!auth.isBoss) {
+    if (!auth.isAdminLevel) {
       return Scaffold(
         appBar: AppBar(title: const Text('Generation logs')),
         body: const Center(child: Text('Boss access only.')),
@@ -175,6 +181,7 @@ class _TechnicianOneUserLogsScreenState
       body: Column(
         children: [
           _buildFilters(),
+          _buildMonthSummary(),
           const Divider(height: 1),
           Expanded(
             child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
@@ -203,6 +210,102 @@ class _TechnicianOneUserLogsScreenState
               },
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMonthSummary() {
+    return FutureBuilder<List<QuerySnapshot<Map<String, dynamic>>>>(
+      key: ValueKey(_selectedMonth),
+      future: Future.wait([
+        _firestore.collection('technician_one_user_monthly').where('month', isEqualTo: _selectedMonth).get(),
+        _firestore.collection('technician_one_user_monthly').where('month', isEqualTo: _previousMonthKey).get(),
+      ]),
+      builder: (context, snap) {
+        if (!snap.hasData) {
+          return const Padding(
+            padding: EdgeInsets.symmetric(vertical: 16),
+            child: Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))),
+          );
+        }
+        final thisDocs = snap.data![0].docs;
+        final prevDocs = snap.data![1].docs;
+        int sum(List<QueryDocumentSnapshot<Map<String, dynamic>>> docs) {
+          var n = 0;
+          for (final d in docs) {
+            final c = d.data()['count'];
+            if (c is num) n += c.toInt();
+          }
+          return n;
+        }
+
+        final thisTotal = sum(thisDocs);
+        final prevTotal = sum(prevDocs);
+        final perTech = thisDocs.map((d) {
+          final data = d.data();
+          final uid = data['technician_uid']?.toString() ?? d.id;
+          final name = (data['technician_name']?.toString() ?? '').trim();
+          final count = data['count'] is num ? (data['count'] as num).toInt() : 0;
+          return MapEntry(name.isNotEmpty ? name : _techLabel(uid), count);
+        }).toList()
+          ..sort((a, b) => b.value.compareTo(a.value));
+
+        return Container(
+          width: double.infinity,
+          color: const Color(0xFFF7F9FC),
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(child: _statTile('This month', thisTotal.toString(), AppTheme.primaryColor)),
+                  const SizedBox(width: 8),
+                  Expanded(child: _statTile('Previous month', prevTotal.toString(), Colors.blueGrey)),
+                ],
+              ),
+              if (perTech.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                Text(
+                  'By technician · ${_monthLabel(_selectedMonth)}',
+                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppTheme.textSecondary),
+                ),
+                const SizedBox(height: 6),
+                ...perTech.map((e) => Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Row(
+                        children: [
+                          Expanded(child: Text(e.key, style: const TextStyle(fontSize: 13))),
+                          Text(
+                            '${e.value}',
+                            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: AppTheme.primaryColor),
+                          ),
+                        ],
+                      ),
+                    )),
+              ],
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _statTile(String label, String value, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withOpacity(0.2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: TextStyle(fontSize: 12, color: color.withOpacity(0.9))),
+          const SizedBox(height: 2),
+          Text(value, style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: color)),
         ],
       ),
     );
@@ -414,9 +517,13 @@ class _TechnicianOneUserLogsScreenState
     final dur = d['duration_key']?.toString() ?? '';
     final speed = d['speed_limit']?.toString() ?? '10M/10M';
 
+    final location = d['location']?.toString() ?? '';
+    final storedName = d['technician_name']?.toString() ?? '';
+    final displayName = storedName.isNotEmpty ? storedName : techName;
     final durLabel = {
-      '3h': '3 hours',
-      '1d': '1 day',
+      '4h': '4 hours',
+      '1d': '24 hours',
+      '3h': '4 hours',
     }[dur] ?? dur;
 
     return Container(
@@ -479,7 +586,7 @@ class _TechnicianOneUserLogsScreenState
                       const Icon(Icons.person_outline, size: 13, color: AppTheme.textSecondary),
                       const SizedBox(width: 4),
                       Text(
-                        techName,
+                        displayName,
                         style: const TextStyle(fontSize: 13, color: AppTheme.textPrimary),
                       ),
                     ],
@@ -490,6 +597,8 @@ class _TechnicianOneUserLogsScreenState
                     spacing: 6,
                     children: [
                       _tag(Icons.timer_outlined, durLabel, AppTheme.infoColor),
+                      if (location.isNotEmpty)
+                        _tag(Icons.place_outlined, location, AppTheme.warningColor),
                       _tag(Icons.speed_outlined, speed, AppTheme.successColor),
                     ],
                   ),

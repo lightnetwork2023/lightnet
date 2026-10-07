@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:get/get.dart';
 
 import '../controllers/ApiService.dart';
+import '../controllers/auth_controller.dart';
 import '../theme/app_theme.dart';
-import '../widgets/modern_components.dart';
 
-/// One voucher per request at 10M/10M; location is always general on the server (`3h` or `1d`).
+/// One voucher per request at 10M/10M. Location is the technician's name.
 class TechnicianGenerateUserScreen extends StatefulWidget {
   const TechnicianGenerateUserScreen({super.key});
 
@@ -14,13 +15,20 @@ class TechnicianGenerateUserScreen extends StatefulWidget {
 }
 
 class _TechnicianGenerateUserScreenState extends State<TechnicianGenerateUserScreen> {
-  String _durationKey = '1d';
+  String _durationKey = '4h';
   bool _busy = false;
 
   static const Map<String, String> _durations = {
-    '3h': '3 hours',
-    '1d': '1 day',
+    '4h': '4 hours',
+    '1d': '24 hours',
   };
+
+  String get _techName {
+    final auth = Get.find<AuthController>();
+    final name = auth.userName.trim();
+    if (name.isNotEmpty) return name;
+    return auth.user?.email ?? 'Technician';
+  }
 
   Future<void> _submit() async {
     setState(() => _busy = true);
@@ -29,16 +37,13 @@ class _TechnicianGenerateUserScreenState extends State<TechnicianGenerateUserScr
       if (!mounted) return;
       final user = result['user'] as Map<String, dynamic>?;
       final username = user?['username']?.toString() ?? '';
+      final location = user?['location']?.toString() ?? _techName;
       final daily = result['daily_count_today'];
       final limit = result['daily_limit'];
+      final monthly = result['monthly_count'];
+      final durLabel = _durations[_durationKey] ?? _durationKey;
 
       final messenger = ScaffoldMessenger.of(context);
-
-      void copySnack(String label) {
-        messenger.showSnackBar(
-          SnackBar(content: Text('$label copied')),
-        );
-      }
 
       await showDialog<void>(
         context: context,
@@ -50,7 +55,7 @@ class _TechnicianGenerateUserScreenState extends State<TechnicianGenerateUserScr
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  'Location: general',
+                  'Location: $location',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary),
                 ),
                 const SizedBox(height: 12),
@@ -68,26 +73,26 @@ class _TechnicianGenerateUserScreenState extends State<TechnicianGenerateUserScr
                       icon: const Icon(Icons.copy_rounded),
                       onPressed: () async {
                         await Clipboard.setData(ClipboardData(text: username));
-                        copySnack('Voucher code');
+                        messenger.showSnackBar(const SnackBar(content: Text('Voucher code copied')));
                       },
                     ),
                   ],
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  'Password is not shown in the app.',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary),
-                ),
                 const SizedBox(height: 12),
+                Text('Duration: $durLabel'),
                 Text('Speed: ${user?['speed_limit'] ?? '10M/10M'}'),
-                Text('Session (seconds): ${user?['session_timeout'] ?? ''}'),
                 if (daily != null && limit != null) ...[
                   const SizedBox(height: 12),
                   Text(
-                    'Today: $daily / $limit generations',
+                    'Today: $daily / $limit',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary),
                   ),
                 ],
+                if (monthly != null)
+                  Text(
+                    'This month: $monthly',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary),
+                  ),
               ],
             ),
           ),
@@ -112,7 +117,7 @@ class _TechnicianGenerateUserScreenState extends State<TechnicianGenerateUserScr
     return Scaffold(
       backgroundColor: AppTheme.backgroundColor,
       appBar: AppBar(
-        title: const Text('Generate one user'),
+        title: const Text('Generate voucher'),
         flexibleSpace: Container(
           decoration: const BoxDecoration(gradient: AppGradients.primaryGradient),
         ),
@@ -121,25 +126,52 @@ class _TechnicianGenerateUserScreenState extends State<TechnicianGenerateUserScr
         padding: const EdgeInsets.all(20),
         children: [
           Text(
-            'Creates one voucher at location general (10 Mbps). Pick duration, then generate.',
+            'Creates one voucher at your name as location (10 Mbps). Choose 4 hours or 24 hours.',
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: AppTheme.textSecondary),
+          ),
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: const Color(0xFFE8ECF0)),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.badge_outlined, color: AppTheme.primaryColor),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Location', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary)),
+                      Text(_techName, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
           const SizedBox(height: 24),
           Text('Duration', style: Theme.of(context).textTheme.titleSmall),
           const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
+          Row(
             children: _durations.entries.map((e) {
               final selected = _durationKey == e.key;
-              return ChoiceChip(
-                label: Text(e.value),
-                selected: selected,
-                onSelected: _busy
-                    ? null
-                    : (sel) {
-                        if (sel) setState(() => _durationKey = e.key);
-                      },
+              return Expanded(
+                child: Padding(
+                  padding: EdgeInsets.only(right: e.key == '4h' ? 8 : 0),
+                  child: ChoiceChip(
+                    label: Center(child: Text(e.value)),
+                    selected: selected,
+                    onSelected: _busy
+                        ? null
+                        : (sel) {
+                            if (sel) setState(() => _durationKey = e.key);
+                          },
+                  ),
+                ),
               );
             }).toList(),
           ),
@@ -162,7 +194,7 @@ class _TechnicianGenerateUserScreenState extends State<TechnicianGenerateUserScr
                         Text('Please wait…'),
                       ],
                     )
-                  : const Text('Generate one voucher'),
+                  : const Text('Generate voucher'),
             ),
           ),
         ],
