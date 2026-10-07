@@ -106,7 +106,7 @@ class _TechnicianHomeScreenState extends State<TechnicianHomeScreen> {
   Widget build(BuildContext context) {
     return DefaultTabController(
       length: 3,
-      initialIndex: 1, // Open MikroTik tab first (same as boss home)
+      initialIndex: 0,
       child: Builder(
         builder: (context) => Scaffold(
         backgroundColor: AppTheme.backgroundColor,

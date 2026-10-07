@@ -640,8 +640,8 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() => _refreshing = true);
     try {
       final i = DefaultTabController.of(context).index;
-      final mtIndex = hasMikroTikTab ? 0 : -1;
-      final q20Index = hasQ20Tab ? (hasMikroTikTab ? 1 : 0) : -1;
+      final mtIndex = hasMikroTikTab ? 1 : -1;
+      final q20Index = hasQ20Tab ? (hasMikroTikTab ? 2 : 1) : -1;
       if (i == mtIndex) {
         final mt = _mtKey.currentState;
         if (mt != null) {
@@ -727,11 +727,11 @@ class _HomeScreenState extends State<HomeScreen> {
             unselectedLabelColor: Colors.white70,
             isScrollable: tabCount > 2,
             tabs: [
+              const Tab(icon: Icon(Icons.dashboard_rounded), text: 'Dashboard'),
               if (hasMikroTikTab)
                 const Tab(icon: Icon(Icons.router_rounded), text: 'MikroTik'),
               if (hasQ20Tab)
                 const Tab(icon: Icon(Icons.hub_outlined), text: 'Q20'),
-              const Tab(icon: Icon(Icons.dashboard_rounded), text: 'Dashboard'),
               if (!hasMikroTikTab)
                 const Tab(icon: Icon(Icons.location_city_rounded), text: 'Sites'),
             ],
@@ -739,8 +739,6 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         body: TabBarView(
           children: [
-            if (hasMikroTikTab) MikroTikMonitorContent(key: _mtKey),
-            if (hasQ20Tab) Q20MonitorContent(key: _q20Key),
             // Dashboard Tab
             RefreshIndicator(
               onRefresh: _refreshData,
@@ -1439,7 +1437,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
               ),
             ),
-            
+            if (hasMikroTikTab) MikroTikMonitorContent(key: _mtKey),
+            if (hasQ20Tab) Q20MonitorContent(key: _q20Key),
             if (!hasMikroTikTab) _buildSitesTab(),
           ],
         ),
