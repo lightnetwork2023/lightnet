@@ -121,6 +121,26 @@ class ApiService {
     return map;
   }
 
+  static Future<Map<String, dynamic>> fetchTechnicianActiveVouchers() async {
+    final token = await FirebaseAuth.instance.currentUser?.getIdToken();
+    final response = await http.get(
+      Uri.parse('$baseUrl/generateoneuser/active'),
+      headers: {
+        'Content-Type': 'application/json',
+        if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
+      },
+    );
+    final result = response.body.isEmpty ? <String, dynamic>{} : jsonDecode(response.body);
+    if (result is! Map) {
+      throw Exception('Unexpected generateoneuser/active response');
+    }
+    final map = Map<String, dynamic>.from(result);
+    if (response.statusCode >= 400) {
+      throw Exception(map['error']?.toString() ?? 'Failed to load active vouchers');
+    }
+    return map;
+  }
+
   static Future<List<dynamic>> fetchPayments() async {
     final uid = FirebaseAuth.instance.currentUser?.uid ?? 'anon';
     final cacheKey = 'payments_$uid';

@@ -2317,6 +2317,79 @@ def generateoneuser():
     }), 201
 
 
+@app.route('/generateoneuser/active', methods=['GET'])
+def generateoneuser_active():
+    uid, err = _generateoneuser_decode_uid()
+    if err is not None:
+        return err
+    profile, role_err = _generateoneuser_require_technician(uid)
+    if role_err is not None:
+        return role_err
+    location = ' '.join(str((profile or {}).get('name') or (profile or {}).get('email') or 'technician').split())[:64]
+    db_connection = None
+    cursor = None
+    try:
+        db_connection = mysql.connector.connect(**db_config)
+        cursor = db_connection.cursor(dictionary=True)
+        cursor.execute(
+            """
+            SELECT v.username, v.location, v.speed_limit, v.session_timeout,
+                   v.used, v.expire_time, v.first_login_time, v.created_at
+            FROM vouchers v
+            INNER JOIN location l ON l.username = v.username
+            WHERE v.location = %s
+              AND (v.expire_time IS NULL OR v.expire_time > NOW())
+            ORDER BY v.created_at DESC
+            LIMIT 100
+            """,
+            (location,),
+        )
+        rows = cursor.fetchall() or []
+    except mysql.connector.Error as err:
+        return jsonify({'error': f'MySQL Error: {err}'}), 500
+    finally:
+        if cursor is not None:
+            try:
+                cursor.close()
+            except Exception:
+                pass
+        if db_connection is not None and db_connection.is_connected():
+            try:
+                db_connection.close()
+            except Exception:
+                pass
+    vouchers = []
+    for row in rows:
+        used_raw = row.get('used')
+        used = used_raw in (1, True, '1', 'true', 'True')
+        expire = row.get('expire_time')
+        first = row.get('first_login_time')
+        created = row.get('created_at')
+        timeout = row.get('session_timeout')
+        try:
+            timeout = int(timeout) if timeout is not None else 0
+        except (TypeError, ValueError):
+            timeout = 0
+        if timeout in (4 * 3600, 3 * 3600):
+            duration_key = '4h'
+        elif timeout == 24 * 3600:
+            duration_key = '1d'
+        else:
+            duration_key = ''
+        vouchers.append({
+            'username': row.get('username'),
+            'location': row.get('location') or location,
+            'speed_limit': row.get('speed_limit') or TECHNICIAN_ONE_USER_SPEED,
+            'session_timeout': timeout,
+            'duration_key': duration_key,
+            'used': used,
+            'expire_time': expire.isoformat() if hasattr(expire, 'isoformat') else expire,
+            'first_login_time': first.isoformat() if hasattr(first, 'isoformat') else first,
+            'created_at': created.isoformat() if hasattr(created, 'isoformat') else created,
+        })
+    return jsonify({'success': True, 'location': location, 'vouchers': vouchers})
+
+
 @app.route('/insert_voucher', methods=['POST'])
 def insert_voucher():
     try:
