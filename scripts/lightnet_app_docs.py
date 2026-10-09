@@ -581,19 +581,47 @@ def public_location_id(doc):
     return loc_id
 
 
+def _location_id_for_owner(cur, loc_id, oid):
+    """Resolve a location name for this owner, including docs still keyed as oldOwner::name."""
+    loc_id = (loc_id or '').strip()
+    oid = coerce_owner_id(oid)
+    if not loc_id or oid is None:
+        return None
+    scoped = scoped_location_doc_id(oid, loc_id)
+    if get_doc(cur, 'locations', scoped):
+        return scoped
+    doc = get_doc(cur, 'locations', loc_id)
+    if doc and same_owner(oid, (doc.get('data') or {}).get('owner_id')):
+        return loc_id
+    like = '%::' + loc_id.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+    cur.execute(
+        "SELECT doc_id, data_json FROM app_docs WHERE collection='locations' "
+        "AND doc_id LIKE %s",
+        (like,),
+    )
+    rows = cur.fetchall() or []
+    for row in rows:
+        if isinstance(row, dict):
+            doc_id, raw = row.get('doc_id'), row.get('data_json')
+        else:
+            doc_id, raw = row[0], row[1]
+        try:
+            data = json.loads(raw or '{}') if isinstance(raw, str) else (raw or {})
+        except Exception:
+            continue
+        pub = public_location_id({'id': doc_id, 'data': data})
+        if pub == loc_id and same_owner(oid, data.get('owner_id')):
+            return str(doc_id)
+    return None
+
+
 def location_storage_id(cur, loc_id, owner_id=None):
     loc_id = (loc_id or '').strip()
     oid = coerce_owner_id(owner_id)
     if not loc_id:
         return None
     if oid is not None:
-        scoped = scoped_location_doc_id(oid, loc_id)
-        if get_doc(cur, 'locations', scoped):
-            return scoped
-        doc = get_doc(cur, 'locations', loc_id)
-        if doc and same_owner(oid, (doc.get('data') or {}).get('owner_id')):
-            return loc_id
-        return None
+        return _location_id_for_owner(cur, loc_id, oid)
     if get_doc(cur, 'locations', loc_id):
         return loc_id
     return None
