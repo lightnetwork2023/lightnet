@@ -128,132 +128,196 @@ class _SimCardManagementScreenState extends State<SimCardManagementScreen> {
   Future<void> _showSimForm({DocumentSnapshot<Map<String, dynamic>>? doc}) async {
     final formKey = GlobalKey<FormState>();
     String type = doc?.data()?['type'] ?? 'customer';
-    String msisdn = doc?.data()?['msisdn'] ?? '';
-    String imsi = doc?.data()?['imsi'] ?? '';
-    String location = doc?.data()?['location'] ?? '';
-    String customerName = doc?.data()?['customer_name'] ?? '';
-    String speedLimitStr = (doc?.data()?['speed_limit_mbps']?.toString() ?? '');
+    final msisdnCtrl = TextEditingController(text: (doc?.data()?['msisdn'] ?? '').toString());
+    final imsiCtrl = TextEditingController(text: (doc?.data()?['imsi'] ?? '').toString());
+    final locationCtrl = TextEditingController(text: (doc?.data()?['location'] ?? '').toString());
+    final customerCtrl = TextEditingController(text: (doc?.data()?['customer_name'] ?? '').toString());
+    final speedCtrl = TextEditingController(
+      text: (doc?.data()?['speed_limit_mbps']?.toString() ?? ''),
+    );
     bool saving = false;
 
-    await showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setStateDialog) {
-            return AlertDialog(
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-              title: const Text('SIM Card'),
-              content: Form(
-                key: formKey,
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      DropdownButtonFormField<String>(
-                        value: type,
-                        decoration: const InputDecoration(labelText: 'Type'),
-                        items: const [
-                          DropdownMenuItem(value: 'customer', child: Text('Customer/User')),
-                          DropdownMenuItem(value: 'company', child: Text('Company Use')),
-                        ],
-                        onChanged: (v) => setStateDialog(() => type = v ?? 'customer'),
-                      ),
-                      TextFormField(
-                        initialValue: msisdn,
-                        decoration: const InputDecoration(labelText: 'Phone Number (MSISDN)'),
-                        keyboardType: TextInputType.phone,
-                        validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
-                        onChanged: (v) => msisdn = v.trim(),
-                      ),
-                      TextFormField(
-                        initialValue: imsi,
-                        decoration: const InputDecoration(labelText: 'IMSI'),
-                        validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
-                        onChanged: (v) => imsi = v.trim(),
-                      ),
-                      TextFormField(
-                        initialValue: location,
-                        decoration: const InputDecoration(labelText: 'Location'),
-                        onChanged: (v) => location = v.trim(),
-                      ),
-                      if (type == 'customer')
-                        TextFormField(
-                          initialValue: customerName,
-                          decoration: const InputDecoration(labelText: 'Customer Name'),
-                          onChanged: (v) => customerName = v.trim(),
+    try {
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        useSafeArea: true,
+        enableDrag: !saving,
+        builder: (sheetContext) {
+          return StatefulBuilder(
+            builder: (context, setStateDialog) {
+              final inset = MediaQuery.viewInsetsOf(context).bottom;
+              return Padding(
+                padding: EdgeInsets.only(bottom: inset),
+                child: Form(
+                  key: formKey,
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Center(
+                          child: Container(
+                            width: 40,
+                            height: 4,
+                            margin: const EdgeInsets.only(bottom: 16),
+                            decoration: BoxDecoration(
+                              color: AppTheme.textTertiary.withOpacity(0.4),
+                              borderRadius: BorderRadius.circular(2),
+                            ),
+                          ),
                         ),
-                      TextFormField(
-                        initialValue: speedLimitStr,
-                        decoration: const InputDecoration(labelText: 'Speed Limit (Mbps)'),
-                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                        validator: (v) {
-                          if (v == null || v.trim().isEmpty) return null;
-                          return double.tryParse(v) == null ? 'Invalid number' : null;
-                        },
-                        onChanged: (v) => speedLimitStr = v.trim(),
-                      ),
-                    ],
+                        Text(
+                          doc == null ? 'Add SIM Card' : 'Edit SIM Card',
+                          style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        DropdownButtonFormField<String>(
+                          value: type,
+                          decoration: const InputDecoration(labelText: 'Type'),
+                          items: const [
+                            DropdownMenuItem(value: 'customer', child: Text('Customer/User')),
+                            DropdownMenuItem(value: 'company', child: Text('Company Use')),
+                          ],
+                          onChanged: saving
+                              ? null
+                              : (v) => setStateDialog(() => type = v ?? 'customer'),
+                        ),
+                        TextFormField(
+                          controller: msisdnCtrl,
+                          enabled: !saving,
+                          decoration: const InputDecoration(labelText: 'Phone Number (MSISDN)'),
+                          keyboardType: TextInputType.phone,
+                          textInputAction: TextInputAction.next,
+                          validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
+                        ),
+                        TextFormField(
+                          controller: imsiCtrl,
+                          enabled: !saving,
+                          decoration: const InputDecoration(labelText: 'IMSI'),
+                          textInputAction: TextInputAction.next,
+                          validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
+                        ),
+                        TextFormField(
+                          controller: locationCtrl,
+                          enabled: !saving,
+                          decoration: const InputDecoration(labelText: 'Location'),
+                          textCapitalization: TextCapitalization.words,
+                          textInputAction: TextInputAction.next,
+                        ),
+                        if (type == 'customer')
+                          TextFormField(
+                            controller: customerCtrl,
+                            enabled: !saving,
+                            decoration: const InputDecoration(labelText: 'Customer Name'),
+                            textCapitalization: TextCapitalization.words,
+                            textInputAction: TextInputAction.next,
+                          ),
+                        TextFormField(
+                          controller: speedCtrl,
+                          enabled: !saving,
+                          decoration: const InputDecoration(labelText: 'Speed Limit (Mbps)'),
+                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                          textInputAction: TextInputAction.done,
+                          validator: (v) {
+                            if (v == null || v.trim().isEmpty) return null;
+                            return double.tryParse(v.trim()) == null ? 'Invalid number' : null;
+                          },
+                        ),
+                        const SizedBox(height: 20),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: TextButton(
+                                onPressed: saving ? null : () => Navigator.pop(sheetContext),
+                                child: const Text('Cancel'),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: ElevatedButton(
+                                onPressed: saving
+                                    ? null
+                                    : () async {
+                                        if (!formKey.currentState!.validate()) return;
+                                        final msisdn = msisdnCtrl.text.trim();
+                                        final imsi = imsiCtrl.text.trim();
+                                        final location = locationCtrl.text.trim();
+                                        final customerName = customerCtrl.text.trim();
+                                        final speedLimitStr = speedCtrl.text.trim();
+                                        setStateDialog(() => saving = true);
+                                        try {
+                                          final msisdnQ = await FirebaseFirestore.instance
+                                              .collection('simcards')
+                                              .where('msisdn', isEqualTo: msisdn)
+                                              .get();
+                                          if (msisdnQ.docs.any((d) => d.id != doc?.id)) {
+                                            throw Exception('MSISDN already exists');
+                                          }
+                                          final imsiQ = await FirebaseFirestore.instance
+                                              .collection('simcards')
+                                              .where('imsi', isEqualTo: imsi)
+                                              .get();
+                                          if (imsiQ.docs.any((d) => d.id != doc?.id)) {
+                                            throw Exception('IMSI already exists');
+                                          }
+                                          final data = {
+                                            'type': type,
+                                            'msisdn': msisdn,
+                                            'imsi': imsi,
+                                            'location': location,
+                                            'customer_name': type == 'customer' ? customerName : null,
+                                            'speed_limit_mbps': speedLimitStr.isEmpty
+                                                ? null
+                                                : double.parse(speedLimitStr),
+                                            'updated_at': FieldValue.serverTimestamp(),
+                                            if (doc == null) 'created_at': FieldValue.serverTimestamp(),
+                                          };
+                                          if (doc == null) {
+                                            await FirebaseFirestore.instance.collection('simcards').add(data);
+                                          } else {
+                                            await FirebaseFirestore.instance
+                                                .collection('simcards')
+                                                .doc(doc.id)
+                                                .set(data, SetOptions(merge: true));
+                                          }
+                                          if (sheetContext.mounted) Navigator.pop(sheetContext);
+                                        } catch (e) {
+                                          if (sheetContext.mounted) {
+                                            ScaffoldMessenger.of(sheetContext).showSnackBar(
+                                              SnackBar(
+                                                content: Text(e.toString()),
+                                                backgroundColor: AppTheme.errorColor,
+                                              ),
+                                            );
+                                          }
+                                          setStateDialog(() => saving = false);
+                                        }
+                                      },
+                                child: Text(saving ? 'Saving…' : 'Save'),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: saving ? null : () => Navigator.pop(context),
-                  child: const Text('Cancel'),
-                ),
-                ElevatedButton(
-                  onPressed: saving
-                      ? null
-                      : () async {
-                          if (!formKey.currentState!.validate()) return;
-                          setStateDialog(() => saving = true);
-                          try {
-                            final msisdnQ = await FirebaseFirestore.instance
-                                .collection('simcards')
-                                .where('msisdn', isEqualTo: msisdn)
-                                .get();
-                            if (msisdnQ.docs.any((d) => d.id != doc?.id)) {
-                              throw Exception('MSISDN already exists');
-                            }
-                            final imsiQ = await FirebaseFirestore.instance
-                                .collection('simcards')
-                                .where('imsi', isEqualTo: imsi)
-                                .get();
-                            if (imsiQ.docs.any((d) => d.id != doc?.id)) {
-                              throw Exception('IMSI already exists');
-                            }
-                            final data = {
-                              'type': type,
-                              'msisdn': msisdn,
-                              'imsi': imsi,
-                              'location': location,
-                              'customer_name': type == 'customer' ? customerName : null,
-                              'speed_limit_mbps': speedLimitStr.isEmpty ? null : double.parse(speedLimitStr),
-                              'updated_at': FieldValue.serverTimestamp(),
-                              if (doc == null) 'created_at': FieldValue.serverTimestamp(),
-                            };
-                            if (doc == null) {
-                              await FirebaseFirestore.instance.collection('simcards').add(data);
-                            } else {
-                              await FirebaseFirestore.instance.collection('simcards').doc(doc.id).set(data, SetOptions(merge: true));
-                            }
-                            if (mounted) Navigator.pop(context);
-                          } catch (e) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text(e.toString()), backgroundColor: AppTheme.errorColor),
-                            );
-                            setStateDialog(() => saving = false);
-                          }
-                        },
-                  child: const Text('Save'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
+              );
+            },
+          );
+        },
+      );
+    } finally {
+      msisdnCtrl.dispose();
+      imsiCtrl.dispose();
+      locationCtrl.dispose();
+      customerCtrl.dispose();
+      speedCtrl.dispose();
+    }
   }
 
   Future<void> _confirmDelete(DocumentSnapshot<Map<String, dynamic>> doc) async {
@@ -310,6 +374,13 @@ class _SimCardManagementScreenState extends State<SimCardManagementScreen> {
             TextButton(
               onPressed: () => Navigator.pop(context),
               child: const Text('Close'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(context);
+                _showSimForm(doc: doc);
+              },
+              child: const Text('Edit'),
             ),
           ],
         );
@@ -439,10 +510,8 @@ class _SimCardManagementScreenState extends State<SimCardManagementScreen> {
               final customerName = (data['customer_name'] ?? '').toString();
               
               return ModernCard(
-                onTap: () => _showSimDetails(doc),
-                child: Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: Column(
+                onTap: () => _showSimForm(doc: doc),
+                child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Row(
@@ -554,52 +623,67 @@ class _SimCardManagementScreenState extends State<SimCardManagementScreen> {
                               ],
                             ),
                           ),
-                          PopupMenuButton<String>(
-                            icon: Container(
-                              padding: const EdgeInsets.all(8),
-                              decoration: BoxDecoration(
-                                color: AppTheme.backgroundColor,
-                                borderRadius: BorderRadius.circular(8),
-                                border: Border.all(
-                                  color: AppTheme.textTertiary.withOpacity(0.2),
-                                  width: 1,
+                          GestureDetector(
+                            onTap: () {},
+                            child: PopupMenuButton<String>(
+                              icon: Container(
+                                padding: const EdgeInsets.all(8),
+                                decoration: BoxDecoration(
+                                  color: AppTheme.backgroundColor,
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(
+                                    color: AppTheme.textTertiary.withOpacity(0.2),
+                                    width: 1,
+                                  ),
+                                ),
+                                child: Icon(
+                                  Icons.more_vert_rounded,
+                                  color: AppTheme.textSecondary,
+                                  size: 18,
                                 ),
                               ),
-                              child: Icon(
-                                Icons.more_vert_rounded,
-                                color: AppTheme.textSecondary,
-                                size: 18,
-                              ),
+                              onSelected: (value) {
+                                if (value == 'view') {
+                                  _showSimDetails(doc);
+                                } else if (value == 'edit') {
+                                  _showSimForm(doc: doc);
+                                } else if (value == 'delete') {
+                                  _confirmDelete(doc);
+                                }
+                              },
+                              itemBuilder: (context) => [
+                                PopupMenuItem(
+                                  value: 'view',
+                                  child: Row(
+                                    children: [
+                                      Icon(Icons.visibility_outlined, size: 18, color: AppTheme.textSecondary),
+                                      const SizedBox(width: 12),
+                                      const Text('View'),
+                                    ],
+                                  ),
+                                ),
+                                PopupMenuItem(
+                                  value: 'edit',
+                                  child: Row(
+                                    children: [
+                                      Icon(Icons.edit_outlined, size: 18, color: AppTheme.textSecondary),
+                                      const SizedBox(width: 12),
+                                      const Text('Edit'),
+                                    ],
+                                  ),
+                                ),
+                                PopupMenuItem(
+                                  value: 'delete',
+                                  child: Row(
+                                    children: [
+                                      Icon(Icons.delete_outline_rounded, size: 18, color: AppTheme.errorColor),
+                                      const SizedBox(width: 12),
+                                      Text('Delete', style: TextStyle(color: AppTheme.errorColor)),
+                                    ],
+                                  ),
+                                ),
+                              ],
                             ),
-                            onSelected: (value) {
-                              if (value == 'edit') {
-                                _showSimForm(doc: doc);
-                              } else if (value == 'delete') {
-                                _confirmDelete(doc);
-                              }
-                            },
-                            itemBuilder: (context) => [
-                              PopupMenuItem(
-                                value: 'edit',
-                                child: Row(
-                                  children: [
-                                    Icon(Icons.edit_outlined, size: 18, color: AppTheme.textSecondary),
-                                    const SizedBox(width: 12),
-                                    const Text('Edit'),
-                                  ],
-                                ),
-                              ),
-                              PopupMenuItem(
-                                value: 'delete',
-                                child: Row(
-                                  children: [
-                                    Icon(Icons.delete_outline_rounded, size: 18, color: AppTheme.errorColor),
-                                    const SizedBox(width: 12),
-                                    Text('Delete', style: TextStyle(color: AppTheme.errorColor)),
-                                  ],
-                                ),
-                              ),
-                            ],
                           ),
                         ],
                       ),
