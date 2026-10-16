@@ -52,7 +52,14 @@ class _SimCardManagementScreenState extends State<SimCardManagementScreen> {
       final imsi = (data['imsi'] ?? '').toString().toLowerCase();
       final customer = (data['customer_name'] ?? '').toString().toLowerCase();
       final loc = (data['location'] ?? '').toString().toLowerCase();
-      return msisdn.contains(lower) || imsi.contains(lower) || customer.contains(lower) || loc.contains(lower);
+      final linkId = (data['link_id'] ?? '').toString().toLowerCase();
+      final linkName = (data['link_name'] ?? '').toString().toLowerCase();
+      return msisdn.contains(lower) ||
+          imsi.contains(lower) ||
+          customer.contains(lower) ||
+          loc.contains(lower) ||
+          linkId.contains(lower) ||
+          linkName.contains(lower);
     }).toList();
   }
 
@@ -84,6 +91,8 @@ class _SimCardManagementScreenState extends State<SimCardManagementScreen> {
       sheet.appendRow([
         TextCellValue('IMSI'),
         TextCellValue('Phone Number'),
+        TextCellValue('Link ID'),
+        TextCellValue('Link Name'),
       ]);
 
       for (final doc in filtered) {
@@ -91,6 +100,8 @@ class _SimCardManagementScreenState extends State<SimCardManagementScreen> {
         sheet.appendRow([
           TextCellValue((data['imsi'] ?? '').toString()),
           TextCellValue((data['msisdn'] ?? '').toString()),
+          TextCellValue((data['link_id'] ?? '').toString()),
+          TextCellValue((data['link_name'] ?? '').toString()),
         ]);
       }
 
@@ -132,6 +143,8 @@ class _SimCardManagementScreenState extends State<SimCardManagementScreen> {
     final imsiCtrl = TextEditingController(text: (doc?.data()?['imsi'] ?? '').toString());
     final locationCtrl = TextEditingController(text: (doc?.data()?['location'] ?? '').toString());
     final customerCtrl = TextEditingController(text: (doc?.data()?['customer_name'] ?? '').toString());
+    final linkIdCtrl = TextEditingController(text: (doc?.data()?['link_id'] ?? '').toString());
+    final linkNameCtrl = TextEditingController(text: (doc?.data()?['link_name'] ?? '').toString());
     final speedCtrl = TextEditingController(
       text: (doc?.data()?['speed_limit_mbps']?.toString() ?? ''),
     );
@@ -208,6 +221,18 @@ class _SimCardManagementScreenState extends State<SimCardManagementScreen> {
                           textCapitalization: TextCapitalization.words,
                           textInputAction: TextInputAction.next,
                         ),
+                        TextFormField(
+                          controller: linkIdCtrl,
+                          enabled: !saving,
+                          decoration: const InputDecoration(labelText: 'Link ID'),
+                          textInputAction: TextInputAction.next,
+                        ),
+                        TextFormField(
+                          controller: linkNameCtrl,
+                          enabled: !saving,
+                          decoration: const InputDecoration(labelText: 'Link Name'),
+                          textInputAction: TextInputAction.next,
+                        ),
                         if (type == 'customer')
                           TextFormField(
                             controller: customerCtrl,
@@ -247,6 +272,8 @@ class _SimCardManagementScreenState extends State<SimCardManagementScreen> {
                                         final imsi = imsiCtrl.text.trim();
                                         final location = locationCtrl.text.trim();
                                         final customerName = customerCtrl.text.trim();
+                                        final linkId = linkIdCtrl.text.trim();
+                                        final linkName = linkNameCtrl.text.trim();
                                         final speedLimitStr = speedCtrl.text.trim();
                                         setStateDialog(() => saving = true);
                                         try {
@@ -270,6 +297,8 @@ class _SimCardManagementScreenState extends State<SimCardManagementScreen> {
                                             'imsi': imsi,
                                             'location': location,
                                             'customer_name': type == 'customer' ? customerName : null,
+                                            'link_id': linkId.isEmpty ? null : linkId,
+                                            'link_name': linkName.isEmpty ? null : linkName,
                                             'speed_limit_mbps': speedLimitStr.isEmpty
                                                 ? null
                                                 : double.parse(speedLimitStr),
@@ -316,6 +345,8 @@ class _SimCardManagementScreenState extends State<SimCardManagementScreen> {
       imsiCtrl.dispose();
       locationCtrl.dispose();
       customerCtrl.dispose();
+      linkIdCtrl.dispose();
+      linkNameCtrl.dispose();
       speedCtrl.dispose();
     }
   }
@@ -366,6 +397,8 @@ class _SimCardManagementScreenState extends State<SimCardManagementScreen> {
                 _buildDetailRow('IMSI', data['imsi']?.toString() ?? ''),
                 _buildDetailRow('Customer Name', data['customer_name']?.toString() ?? ''),
                 _buildDetailRow('Location', data['location']?.toString() ?? ''),
+                _buildDetailRow('Link ID', data['link_id']?.toString() ?? ''),
+                _buildDetailRow('Link Name', data['link_name']?.toString() ?? ''),
                 _buildDetailRow('Speed Limit', _formatSpeed(data['speed_limit_mbps'])),
               ],
             ),
@@ -453,7 +486,7 @@ class _SimCardManagementScreenState extends State<SimCardManagementScreen> {
                     title: const Text('Search'),
                     content: TextField(
                       controller: c,
-                      decoration: const InputDecoration(hintText: 'MSISDN, IMSI, Customer, Location'),
+                      decoration: const InputDecoration(hintText: 'MSISDN, IMSI, Customer, Location, Link ID, Link Name'),
                       autofocus: true,
                     ),
                     actions: [
@@ -508,6 +541,8 @@ class _SimCardManagementScreenState extends State<SimCardManagementScreen> {
               final msisdn = (data['msisdn'] ?? '').toString();
               final location = (data['location'] ?? '').toString();
               final customerName = (data['customer_name'] ?? '').toString();
+              final linkId = (data['link_id'] ?? '').toString();
+              final linkName = (data['link_name'] ?? '').toString();
               
               return ModernCard(
                 onTap: () => _showSimForm(doc: doc),
@@ -612,6 +647,29 @@ class _SimCardManagementScreenState extends State<SimCardManagementScreen> {
                                       Expanded(
                                         child: Text(
                                           location,
+                                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                            color: AppTheme.textSecondary,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                                if (linkName.isNotEmpty || linkId.isNotEmpty) ...[
+                                  const SizedBox(height: 4),
+                                  Row(
+                                    children: [
+                                      Icon(
+                                        Icons.link_rounded,
+                                        size: 16,
+                                        color: AppTheme.textSecondary,
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Expanded(
+                                        child: Text(
+                                          linkName.isNotEmpty
+                                              ? (linkId.isNotEmpty ? '$linkName ($linkId)' : linkName)
+                                              : linkId,
                                           style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                                             color: AppTheme.textSecondary,
                                           ),
