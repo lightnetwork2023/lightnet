@@ -662,11 +662,13 @@ class ApiService {
     String? type,
     String? parentLocation,
     bool clearParent = false,
+    String? name,
   }) async {
     final response = await http.patch(
       Uri.parse('$baseUrl/api/locations/${Uri.encodeComponent(id)}'),
       headers: await _jsonAuthHeaders(),
       body: jsonEncode({
+        if (name != null && name.trim().isNotEmpty) 'name': name.trim(),
         if (type != null) 'type': type,
         if (clearParent) 'parent_location': null,
         if (!clearParent && parentLocation != null) 'parent_location': parentLocation,

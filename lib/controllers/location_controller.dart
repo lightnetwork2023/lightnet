@@ -99,12 +99,14 @@ class LocationController extends GetxController {
     String? type,
     String? parentLocation,
     bool clearParent = false,
+    String? name,
   }) async {
     await ApiService.updateLocation(
       locationId,
       type: type,
       parentLocation: parentLocation,
       clearParent: clearParent,
+      name: name,
     );
     await loadLocations();
   }

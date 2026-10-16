@@ -60,6 +60,7 @@ class _LocationManagementScreenState extends State<LocationManagementScreen> {
   Future<void> _editLocation(LocationItem location) async {
     String? selectedType = location.type ?? 'main';
     String? selectedParent = location.parentLocation;
+    final nameCtrl = TextEditingController(text: location.name);
     
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
@@ -91,40 +92,17 @@ class _LocationManagementScreenState extends State<LocationManagementScreen> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Location Name Display
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.blue[50],
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.blue[200]!),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(Icons.location_on, color: Colors.blue[700]),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Location Name',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: Colors.grey[600],
-                                ),
-                              ),
-                              Text(
-                                location.name,
-                                style: const TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
+                  TextField(
+                    controller: nameCtrl,
+                    textCapitalization: TextCapitalization.words,
+                    decoration: InputDecoration(
+                      labelText: 'Location Name',
+                      prefixIcon: Icon(Icons.location_on, color: Colors.blue[700]),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      filled: true,
+                      fillColor: Colors.blue[50],
                     ),
                   ),
                   const SizedBox(height: 20),
@@ -276,7 +254,15 @@ class _LocationManagementScreenState extends State<LocationManagementScreen> {
                     return;
                   }
                   
+                  final name = nameCtrl.text.trim();
+                  if (name.isEmpty) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('⚠️ Location name is required')),
+                    );
+                    return;
+                  }
                   Navigator.pop(context, {
+                    'name': name,
                     'type': selectedType,
                     'parentLocation': selectedParent,
                   });
@@ -293,22 +279,25 @@ class _LocationManagementScreenState extends State<LocationManagementScreen> {
       ),
     );
     
+    nameCtrl.dispose();
     if (result != null) {
       await _updateLocation(
         location.id,
         result['type'] as String,
         result['parentLocation'] as String?,
+        result['name'] as String?,
       );
     }
   }
 
-  Future<void> _updateLocation(String locationId, String type, String? parentLocation) async {
+  Future<void> _updateLocation(String locationId, String type, String? parentLocation, [String? name]) async {
     try {
       await _locationController.updateLocation(
         locationId,
         type: type,
         parentLocation: parentLocation,
         clearParent: type != 'sublocation',
+        name: name,
       );
       
       ScaffoldMessenger.of(context).showSnackBar(

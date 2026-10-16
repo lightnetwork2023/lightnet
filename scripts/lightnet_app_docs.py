@@ -1099,7 +1099,47 @@ def create_location(cur, loc_id, loc_type=None, parent_location=None, owner_id=N
     return get_location(cur, loc_id, oid)
 
 
-def update_location(cur, loc_id, loc_type=None, parent_location=None, clear_parent=False, owner_id=None):
+_LOCATION_REF_KEYS = ('location', 'parent_location', 'location_id', 'location_name')
+
+
+def _retarget_location_references(cur, old_name, new_name, owner_id=None):
+    """Point children, vouchers, payments, and app docs at the new location name."""
+    old_name = (old_name or '').strip()
+    new_name = (new_name or '').strip()
+    if not old_name or not new_name or old_name == new_name:
+        return
+    oid = coerce_owner_id(owner_id)
+    for loc in list_locations(cur):
+        if (loc.get('parent_location') or '') != old_name:
+            continue
+        if oid is not None and not same_owner(oid, loc.get('owner_id')):
+            continue
+        child_oid = loc.get('owner_id') if oid is None else oid
+        sid = location_storage_id(cur, loc.get('id'), child_oid)
+        if sid:
+            set_doc(cur, 'locations', sid, {'parent_location': new_name}, merge=True)
+    for sql in (
+        "UPDATE vouchers SET location=%s WHERE location=%s",
+        "UPDATE payments SET location=%s WHERE location=%s",
+        "UPDATE omada_access_points SET location=%s WHERE location=%s",
+        "UPDATE mikrotik_payment_configs SET location_label=%s WHERE location_label=%s",
+    ):
+        try:
+            cur.execute(sql, (new_name, old_name))
+        except Exception:
+            pass
+    for collection in ('users', 'simcards', 'sim_cards', 'devices'):
+        for doc in list_docs(cur, collection):
+            data = doc.get('data') or {}
+            patch = {}
+            for key in _LOCATION_REF_KEYS:
+                if str(data.get(key) or '').strip() == old_name:
+                    patch[key] = new_name
+            if patch:
+                set_doc(cur, collection, doc['id'], patch, merge=True)
+
+
+def update_location(cur, loc_id, loc_type=None, parent_location=None, clear_parent=False, owner_id=None, name=None):
     loc_id = (loc_id or '').strip()
     oid = coerce_owner_id(owner_id)
     storage_id = location_storage_id(cur, loc_id, oid)
@@ -1107,6 +1147,8 @@ def update_location(cur, loc_id, loc_type=None, parent_location=None, clear_pare
     if not existing:
         raise KeyError('not found')
     patch = {}
+    new_name = (name or '').strip() or None
+    old_public = public_location_id(existing)
     if loc_type is not None:
         loc_type = str(loc_type).strip().lower()
         if loc_type not in ('main', 'sublocation'):
@@ -1125,7 +1167,7 @@ def update_location(cur, loc_id, loc_type=None, parent_location=None, clear_pare
             if 'type' not in patch:
                 patch['type'] = 'main'
         else:
-            if parent == loc_id:
+            if parent == loc_id or (new_name and parent == new_name):
                 raise ValueError('Location cannot be its own parent')
             parent_loc = get_location(cur, parent, oid)
             if not parent_loc:
@@ -1133,8 +1175,27 @@ def update_location(cur, loc_id, loc_type=None, parent_location=None, clear_pare
             patch['parent_location'] = parent_loc.get('id') or parent
             if 'type' not in patch:
                 patch['type'] = 'sublocation'
+    if new_name:
+        patch['name'] = new_name
     if not patch:
         return serialize_location(existing)
+    if new_name and new_name != old_public:
+        taken = location_storage_id(cur, new_name, oid)
+        if taken and taken != storage_id:
+            raise ValueError('Location already exists')
+        data = dict(existing.get('data') or {})
+        data.update({k: v for k, v in patch.items() if not _is_special(v)})
+        if patch.get('parent_location') and _is_special(patch.get('parent_location')):
+            data.pop('parent_location', None)
+        data['name'] = new_name
+        new_storage = location_storage_id_for_write(cur, new_name, oid)
+        if new_storage != storage_id:
+            set_doc(cur, 'locations', new_storage, data, merge=False)
+            delete_doc(cur, 'locations', storage_id)
+        else:
+            set_doc(cur, 'locations', storage_id, patch, merge=True)
+        _retarget_location_references(cur, old_public, new_name, oid)
+        return get_location(cur, new_name, oid)
     set_doc(cur, 'locations', storage_id, patch, merge=True)
     return get_location(cur, loc_id, oid)
 
@@ -1921,6 +1982,7 @@ def register_routes(app, db_config, firebase_auth=None):
                 parent_location=parent,
                 clear_parent=clear_parent,
                 owner_id=actor.get('mikrotik_owner_id'),
+                name=(data.get('name') or '').strip() or None,
             )
             conn.commit()
             return jsonify({'success': True, 'location': loc})
