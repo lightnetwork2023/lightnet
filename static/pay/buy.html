@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="sw">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#0a0a0a" />
+  <title>Internet WIFI — lightNET</title>
+  <style>
+    :root {
+      --bg: #f5f5f5;
+      --ink: #222;
+      --muted: #555;
+      --line: #ddd;
+      --accent: #e91e8c;
+      --footer: #1a1a1a;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      font-family: Arial, Helvetica, sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+    }
+    .ie-fixMinHeight {
+      flex: 1;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      padding: 12px 28px 24px;
+    }
+    .main { max-width: 400px; width: 100%; }
+    .logo {
+      display: block;
+      margin: 0 auto 18px;
+      width: 168px;
+      height: auto;
+      border-radius: 12px;
+    }
+    .form-group { margin-bottom: 14px; }
+    select, input[type="tel"], input[type="text"] {
+      width: 100%;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      margin-top: 4px;
+      background: #fff;
+      color: #000;
+      font-size: 16px;
+    }
+    select:disabled, input:disabled {
+      opacity: .75;
+      background: #f0f0f0;
+    }
+    button[type="submit"], .btn {
+      width: 100%;
+      padding: 13px 20px;
+      border: 0;
+      border-radius: 4px;
+      background: linear-gradient(90deg, #ff2d95, #e91e8c 45%, #7c4dff);
+      color: #fff;
+      font-size: 1.05em;
+      font-weight: 700;
+      cursor: pointer;
+      text-decoration: none;
+      display: block;
+      text-align: center;
+    }
+    button[type="submit"]:disabled { opacity: .65; cursor: wait; }
+    button[type="submit"]:hover:not(:disabled) { filter: brightness(1.05); }
+    .error {
+      color: #c62828;
+      margin-top: 12px;
+      text-align: center;
+      min-height: 1.2em;
+    }
+    .status-msg {
+      color: var(--muted);
+      margin-top: 10px;
+      text-align: center;
+      font-size: 0.95rem;
+      line-height: 1.4;
+      min-height: 1.2em;
+    }
+    .toggle-link {
+      display: block;
+      text-align: center;
+      margin-top: 22px;
+      color: var(--accent);
+      font-size: 1.05em;
+      font-weight: 700;
+      text-decoration: underline;
+      cursor: pointer;
+    }
+    .device-info {
+      background: #e0e0e0;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      padding: 8px;
+      margin-top: 18px;
+      text-align: center;
+      color: #555;
+      font-size: 0.75em;
+      word-break: break-all;
+    }
+    .loading-spinner {
+      display: none;
+      width: 28px; height: 28px;
+      margin: 14px auto 0;
+      border: 3px solid #eee;
+      border-top-color: #7c4dff;
+      border-radius: 50%;
+      animation: spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .code {
+      display: none;
+      font-family: monospace;
+      font-size: 1.1rem;
+      font-weight: 700;
+      background: #e0e0e0;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      padding: 12px;
+      margin: 12px 0 0;
+      text-align: center;
+      letter-spacing: .04em;
+    }
+    #paidActions { margin-top: 10px; }
+    footer {
+      background: transparent;
+      color: var(--muted);
+      text-align: center;
+      padding: 14px 28px 20px;
+      font-size: 14px;
+    }
+    footer a { color: var(--accent); text-decoration: none; font-weight: 700; }
+    .muted { color: var(--muted); text-align: center; font-size: 0.9em; margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <div class="ie-fixMinHeight">
+    <div class="main">
+      <img class="logo" src="/pay/img/lightnet2.png" alt="lightNET" />
+      <form id="buyForm" onsubmit="return submitBuy(event)">
+        <input type="hidden" id="owner_id" />
+        <input type="hidden" id="site_id" />
+        <input type="hidden" id="client_mac" />
+        <div class="form-group">
+          <select id="provider" required>
+            <option value="">Chagua mtandao</option>
+            <option>Mpesa</option>
+            <option>Tigo</option>
+            <option>Airtel</option>
+            <option>Halopesa</option>
+            <option>Azampesa</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <input type="tel" id="phone" placeholder="namba ya simu" inputmode="tel" autocomplete="tel" pattern="[0-9+]{9,13}" required />
+        </div>
+        <div class="form-group">
+          <select id="plan_id" required>
+            <option value="">Chagua Kifurushi</option>
+          </select>
+        </div>
+        <button type="submit" id="payBtn">Nunua Vocha</button>
+        <div class="loading-spinner" id="purchaseSpinner"></div>
+        <p class="status-msg" id="statusMsg"></p>
+        <p class="code" id="codeBox"></p>
+        <div id="paidActions"></div>
+        <div id="errorMessage" class="error"></div>
+      </form>
+      <p class="muted" id="empty" style="display:none">Hakuna vifurushi kwa sasa.</p>
+      <a class="toggle-link" id="voucherLink" href="http://192.168.88.1/login?stay=1">Tayari nina Code? Ingia</a>
+      <div class="device-info" id="deviceInfo"><span id="clientMac">...</span></div>
+    </div>
+  </div>
+  <footer>
+    <div>Msaada piga: <a id="supportTel" href="tel:"></a></div>
+  </footer>
+  <script>
+    var POLL_MS = 3000;
+    var MAX_POLLS = 40;
+    var pollTimer = null;
+    var pollCount = 0;
+    var pollDone = false;
+
+    function qs(n) {
+      try { return (new URL(location.href).searchParams.get(n) || '').trim(); }
+      catch (e) { return ''; }
+    }
+    function showErr(t) {
+      document.getElementById('errorMessage').textContent = t || '';
+    }
+    function setStatus(t) {
+      document.getElementById('statusMsg').textContent = t || '';
+    }
+    function setFormLocked(locked) {
+      ['provider', 'phone', 'plan_id'].forEach(function (id) {
+        document.getElementById(id).disabled = locked;
+      });
+      document.getElementById('payBtn').disabled = locked;
+      document.getElementById('purchaseSpinner').style.display = locked ? 'block' : 'none';
+    }
+    function unlockForm() {
+      pollDone = true;
+      if (pollTimer) clearTimeout(pollTimer);
+      setFormLocked(false);
+      setStatus('');
+      document.getElementById('codeBox').style.display = 'none';
+      document.getElementById('paidActions').innerHTML = '';
+    }
+    function detectProvider(phone) {
+      var p = (phone || '').replace(/\D/g, '');
+      if (p.startsWith('255')) p = '0' + p.slice(3);
+      var pref = p.slice(0, 3);
+      if (['072','074','075','076','079'].indexOf(pref) >= 0) return 'Mpesa';
+      if (['065','067','071'].indexOf(pref) >= 0) return 'Tigo';
+      if (['068','069'].indexOf(pref) >= 0) return 'Airtel';
+      if (['061','062'].indexOf(pref) >= 0) return 'Halopesa';
+      return '';
+    }
+    document.getElementById('phone').addEventListener('input', function () {
+      var d = detectProvider(this.value);
+      if (!d) return;
+      var sel = document.getElementById('provider');
+      for (var i = 0; i < sel.options.length; i++) {
+        if (sel.options[i].text === d) { sel.selectedIndex = i; break; }
+      }
+    });
+
+    function startStatusPoll(paymentId) {
+      pollDone = false;
+      pollCount = 0;
+      setFormLocked(true);
+      setStatus('Thibitisha malipo kwenye simu…');
+      document.getElementById('codeBox').style.display = 'none';
+      document.getElementById('paidActions').innerHTML = '';
+      pollOnce(paymentId);
+    }
+
+    function schedulePoll(paymentId) {
+      if (pollDone) return;
+      if (pollTimer) clearTimeout(pollTimer);
+      pollTimer = setTimeout(function () { pollOnce(paymentId); }, POLL_MS);
+    }
+
+    async function pollOnce(paymentId) {
+      if (pollDone) return;
+      pollCount += 1;
+      try {
+        var r = await fetch('/api/buy/status/' + paymentId, { cache: 'no-store' });
+        var data = await r.json();
+        if (!data.success || !data.payment) {
+          setStatus('Inaangalia tena…');
+          schedulePoll(paymentId);
+          return;
+        }
+        var p = data.payment;
+        if (p.status === 'paid' && p.voucher) {
+          pollDone = true;
+          document.getElementById('purchaseSpinner').style.display = 'none';
+          setStatus('Imelipwa — inakuunganisha kwenye Wi‑Fi…');
+          var codeBox = document.getElementById('codeBox');
+          codeBox.style.display = 'block';
+          codeBox.textContent = p.voucher;
+          var href = p.hotspot_login ||
+            (qs('uamport') ? ('http://' + (qs('uamip') || '192.168.88.1') + ':' + qs('uamport') + '/logon?username=' + encodeURIComponent(p.voucher) + '&password=ROCKY221122&userurl=http%3A%2F%2Fneverssl.com%2F')
+                             : ('http://192.168.88.1/login?username=' + encodeURIComponent(p.voucher)));
+          document.getElementById('paidActions').innerHTML =
+            '<a class="btn" href="' + href + '">Unganisha sasa</a>';
+          setTimeout(function () { location.replace(href); }, 2500);
+          return;
+        }
+        if (p.status === 'pending') {
+          setStatus('Thibitisha malipo kwenye simu…');
+          if (pollCount < MAX_POLLS) {
+            schedulePoll(paymentId);
+            return;
+          }
+          pollDone = true;
+          document.getElementById('purchaseSpinner').style.display = 'none';
+          setStatus('Bado inasubiri. Kama umelipa, bonyeza Angalia tena.');
+          document.getElementById('paidActions').innerHTML =
+            '<button type="button" class="btn" id="checkAgainBtn">Angalia tena</button>';
+          document.getElementById('checkAgainBtn').onclick = function () {
+            startStatusPoll(paymentId);
+          };
+          document.getElementById('payBtn').disabled = false;
+          return;
+        }
+        pollDone = true;
+        document.getElementById('purchaseSpinner').style.display = 'none';
+        setStatus('');
+        showErr('Malipo yameisha muda au yameshindikana. Jaribu tena.');
+        unlockForm();
+      } catch (err) {
+        setStatus('Muunganisho umeshindikana — inaendelea kujaribu…');
+        schedulePoll(paymentId);
+      }
+    }
+
+    async function boot() {
+      var owner = qs('owner');
+      var site = qs('site');
+      var mac = qs('mac');
+      document.getElementById('owner_id').value = owner;
+      document.getElementById('site_id').value = site;
+      document.getElementById('client_mac').value = mac;
+      // LightNet Q20 (CoovaChilli) passes uamip/uamport: voucher login goes to the chilli UAM, not the MikroTik /login
+      if (qs('uamport')) {
+        var vl = document.getElementById('voucherLink');
+        if (vl) {
+          var uam = 'http://' + (qs('uamip') || '192.168.88.1') + ':' + qs('uamport');
+          vl.href = '#';
+          vl.onclick = function () {
+            var box = document.getElementById('q20voucher');
+            if (!box) {
+              box = document.createElement('div');
+              box.id = 'q20voucher';
+              box.innerHTML =
+                '<div class="form-group"><input id="q20vcode" placeholder="Weka code yako" autocomplete="off" /></div>' +
+                '<button type="button" class="btn" id="q20vbtn">Ingia</button>';
+              vl.parentNode.insertBefore(box, vl.nextSibling);
+              document.getElementById('q20vbtn').onclick = function () {
+                var c = (document.getElementById('q20vcode').value || '').trim();
+                if (!c) return;
+                location.href = uam + '/logon?username=' + encodeURIComponent(c) +
+                  '&password=ROCKY221122&userurl=' + encodeURIComponent(qs('userurl') || 'http://neverssl.com/');
+              };
+            }
+            var i = document.getElementById('q20vcode');
+            if (i) i.focus();
+            return false;
+          };
+        }
+      }
+      document.getElementById('clientMac').textContent = mac || 'MAC haijapatikana';
+      if (!owner && !site) {
+        showErr('Kiungo cha mmiliki/tovuti hakipo');
+        document.getElementById('buyForm').style.display = 'none';
+        return;
+      }
+      try {
+        var r = await fetch('/api/buy/bootstrap?owner=' + encodeURIComponent(owner) + '&site=' + encodeURIComponent(site) + '&mac=' + encodeURIComponent(mac));
+        var data = await r.json();
+        if (!data.success) {
+          showErr(data.error || 'Kiungo si sahihi');
+          document.getElementById('buyForm').style.display = 'none';
+          return;
+        }
+        document.getElementById('owner_id').value = data.owner.id;
+        if (data.site) document.getElementById('site_id').value = data.site.id;
+        var ph = (data.site && data.site.contact_phone) || (data.owner && data.owner.phone) || '';
+        if (ph) {
+          document.getElementById('phone').placeholder = 'namba ya simu (mfano, ' + ph + ')';
+          var a = document.getElementById('supportTel');
+          if (a) { a.textContent = ph; a.href = 'tel:' + ph; }
+        }
+        var sel = document.getElementById('plan_id');
+        sel.innerHTML = '<option value="">Chagua Kifurushi</option>';
+        (data.plans || []).forEach(function (p, i) {
+          var opt = document.createElement('option');
+          opt.value = p.id;
+          opt.textContent = p.name + ' — ' + p.price_tzs + ' TSH';
+
+          sel.appendChild(opt);
+        });
+        if (!(data.plans || []).length) {
+          document.getElementById('buyForm').style.display = 'none';
+          document.getElementById('empty').style.display = 'block';
+        }
+      } catch (e) {
+        showErr('Imeshindikana kupakia vifurushi');
+      }
+    }
+
+    async function submitBuy(e) {
+      e.preventDefault();
+      showErr('');
+      setFormLocked(true);
+      setStatus('Inatuma ombi…');
+      try {
+        var r = await fetch('/api/buy', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            owner_id: Number(document.getElementById('owner_id').value),
+            site_id: Number(document.getElementById('site_id').value || 0),
+            plan_id: Number(document.getElementById('plan_id').value),
+            phone: document.getElementById('phone').value.trim(),
+            client_mac: document.getElementById('client_mac').value.trim(),
+          }),
+        });
+        var data = await r.json();
+        if (!data.success) throw new Error(data.error || 'Malipo yameshindikana');
+        // Same first page — only spinner + status text change; no navigation
+        startStatusPoll(data.payment_id);
+      } catch (err) {
+        showErr(err.message);
+        unlockForm();
+      }
+      return false;
+    }
+    boot();
+  </script>
+</body>
+</html>
